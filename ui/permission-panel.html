@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>解语花·知意权限状态</title>
+  <link rel="stylesheet" href="./assets/panel.css">
+</head>
+<body>
+  <main class="page permission-panel-page" aria-labelledby="permission-panel-title">
+    <header class="page-head">
+      <img class="mark" src="./assets/brand-mark.svg" alt="">
+      <div class="heading-copy">
+        <p class="eyebrow">解语花 · 知意</p>
+        <h1 id="permission-panel-title">权限状态</h1>
+        <p class="intro">查看知意当前能使用的 Hana 能力。</p>
+      </div>
+    </header>
+    <section class="settings-section" aria-labelledby="permission-panel-section-title">
+      <div class="section-heading">
+        <span class="section-mark" aria-hidden="true">权</span>
+        <div>
+          <p class="eyebrow">只读查看</p>
+          <h2 id="permission-panel-section-title">应用权限</h2>
+        </div>
+      </div>
+      <div id="permission-status-list" class="permission-grid" aria-live="polite"></div>
+      <div class="permission-actions">
+        <button id="permission-status-refresh" class="model-test" type="button">刷新状态</button>
+      </div>
+      <p id="permission-status-message" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+      <p class="setting-hint">状态来自 Hana 当前授权记录。「会话范围授权」表示按会话授予；此面板只读取状态，不会申请或更改权限。</p>
+    </section>
+  </main>
+  <script type="module">
+    import { hana } from './assets/sdk.js';
+    import { initPermissionStatus } from './assets/permission-status.js';
+    const themeLink = document.createElement('link');
+    themeLink.rel = 'stylesheet';
+    themeLink.dataset.hostTheme = 'true';
+    document.head.append(themeLink);
+    function syncHostTheme() {
+      const snapshot = hana.theme?.getSnapshot?.();
+      if (snapshot?.cssUrl && themeLink.href !== snapshot.cssUrl) themeLink.href = snapshot.cssUrl;
+      if (snapshot?.appearance === 'light' || snapshot?.appearance === 'dark') {
+        document.documentElement.dataset.appearance = snapshot.appearance;
+      }
+    }
+    hana.theme?.subscribe?.(syncHostTheme);
+    await hana.ready();
+    syncHostTheme();
+    initPermissionStatus();
+  </script>
+</body>
+</html>

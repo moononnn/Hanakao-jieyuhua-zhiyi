@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>知意 · 等你决定</title>
+<style>
+:root{--paper:#f8f5ed;--surface:#fffdfa;--ink:#345547;--muted:#687b70;--mint:#e8f2e9;--line:#dbe7dc;--deep:#477a66;font-family:'LXGW WenKai','Microsoft YaHei',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{max-width:600px;margin:auto;padding:44px 18px 18px}.eyebrow{font-size:12px;color:var(--deep);letter-spacing:.07em}h1{margin:8px 0;font-size:19px;line-height:1.45;overflow-wrap:anywhere}.question{font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 9px}.background{font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}.recommend{background:var(--mint);border-radius:12px;padding:10px 12px;margin:0 0 12px;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.recommend strong{color:var(--deep)}.options{display:grid;gap:8px}button{font:inherit;cursor:pointer}.option{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;padding:11px 12px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}.option:hover,.option:focus-visible,.option[aria-checked="true"]{border-color:var(--deep);background:var(--mint);outline:none}.option b{display:block;font-size:14px;overflow-wrap:anywhere}.option small{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.badge{flex:none;color:var(--deep);font-size:11px}.choice-mark{flex:none;min-width:18px;text-align:center;color:var(--deep);font-weight:700}.selection-hint{margin:8px 0 0;color:var(--muted);font-size:11px;line-height:1.5}.write{display:block;margin-top:14px;color:var(--deep);font-size:12px;font-weight:600}.write span{color:var(--muted);font-weight:400}textarea{display:block;margin:7px 0;width:100%;min-height:58px;resize:vertical;padding:9px 10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;color:var(--ink);font:inherit;font-size:12px}.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.actions button{border:0;border-radius:9px;padding:8px 11px;color:var(--deep);background:var(--mint);font-size:12px}.actions .confirm{background:var(--deep);color:#fff;font-weight:600}.actions .decline{background:transparent;color:var(--muted)}button:disabled,textarea:disabled{cursor:not-allowed;opacity:.55}.status{font-size:11px;color:var(--muted);margin:11px 0 0;min-height:16px}*[hidden]{display:none!important}*{scrollbar-width:thin;scrollbar-color:#c9dfd3 transparent}
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">知意 · 等你决定</div>
+  <h1 id="title">待展示的问题</h1>
+  <p class="question" id="question">问题会在这里展开；尚未绑定到对话时不能作答。</p>
+  <p class="background" id="background" hidden></p>
+  <div class="recommend" id="recommend" hidden><strong>建议方向</strong><div id="rec-text"></div><div id="reason"></div></div>
+  <div class="options" id="options" role="group" aria-label="选择项"></div>
+  <p class="selection-hint" id="selection-hint" hidden aria-live="polite"></p>
+  <label class="write" for="note">补充说明 <span>可不填；若想自己定方案，写完点「用我的答案」</span></label>
+  <textarea id="note" maxlength="500" placeholder="还有什么想告诉伙伴的？" disabled></textarea>
+  <div class="actions"><button type="button" class="confirm" id="confirm" hidden disabled>确认选择</button><button type="button" id="custom" disabled>用我的答案</button><button type="button" class="decline" id="decline" disabled>暂不决定</button></div>
+  <p class="status" id="status" role="status" aria-live="polite">等待与原对话绑定…</p>
+</main>
+<script type="application/json" data-card-manifest>{"spec":"1.0","display":{"preferredWidthPx":600,"styleProfile":"custom"},"toolBindings":{}}</script>
+<script type="application/json" data-card-state>{"uiLanguage":"zh","askId":"","title":"待展示的问题","question":"问题会在这里展开；尚未绑定到对话时不能作答。","background":"","recommendation":"","reason":"","options":[],"selectionMode":"single","minSelections":1,"maxSelections":1,"expiresAt":0}</script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  let snapshot={};try{snapshot=JSON.parse(document.querySelector('[data-card-state]').textContent||'{}')}catch{}
+  const choices=Array.isArray(snapshot.options)?snapshot.options.filter(o=>o&&typeof o.label==='string'):[];
+  const multiple=snapshot.selectionMode==='multiple';
+  const minSelections=multiple&&Number.isInteger(snapshot.minSelections)?snapshot.minSelections:1;
+  const maxSelections=multiple&&Number.isInteger(snapshot.maxSelections)?snapshot.maxSelections:choices.length;
+  const selected=new Set();
+  $('title').textContent=String(snapshot.title||'待展示的问题');
+  $('question').textContent=String(snapshot.question||'问题尚未送达。');
+  $('background').textContent=String(snapshot.background||'');$('background').hidden=!snapshot.background;
+  $('recommend').hidden=!snapshot.recommendation;
+  $('rec-text').textContent=String(snapshot.recommendation||'');
+  $('reason').textContent=snapshot.reason?'理由 · '+snapshot.reason:'';
+  const buttons=[],marks=[];
+  choices.forEach((option,index)=>{
+    const button=document.createElement('button');button.type='button';button.className='option';button.disabled=true;
+    if(multiple){button.setAttribute('role','checkbox');button.setAttribute('aria-checked','false')}
+    const copy=document.createElement('span'),label=document.createElement('b');label.textContent=option.label;copy.append(label);
+    if(option.detail){const detail=document.createElement('small');detail.textContent=option.detail;copy.append(detail)}
+    button.append(copy);
+    if(snapshot.recommendation===option.label){const badge=document.createElement('span');badge.className='badge';badge.textContent='推荐';button.append(badge)}
+    if(multiple){const mark=document.createElement('span');mark.className='choice-mark';mark.setAttribute('aria-hidden','true');mark.textContent='□';button.append(mark);marks.push(mark)}
+    button.addEventListener('click',()=>{
+      if(!multiple){void send('confirmed',option.label);return}
+      if(selected.has(index))selected.delete(index);
+      else if(selected.size>=maxSelections){status.textContent=`最多选择 ${maxSelections} 项。`;return}
+      else selected.add(index);
+      updateSelection();
+    });
+    $('options').append(button);buttons.push(button);
+  });
+  let home='',ready=false,sent=false;
+  const status=$('status'),note=$('note'),confirm=$('confirm'),selectionHint=$('selection-hint');
+  confirm.hidden=!multiple;
+  const controls=[...buttons,confirm,$('custom'),$('decline'),note];
+  function isUsable(){return ready&&!sent&&Number.isFinite(snapshot.expiresAt)&&Date.now()<snapshot.expiresAt}
+  function updateSelection(){
+    buttons.forEach((button,index)=>{
+      const checked=selected.has(index);
+      if(multiple)button.setAttribute('aria-checked',String(checked));
+      if(multiple)marks[index].textContent=checked?'✓':'□';
+    });
+    if(multiple){
+      selectionHint.hidden=false;
+      selectionHint.textContent=`可多选 · 至少 ${minSelections} 项，最多 ${maxSelections} 项 · 已选 ${selected.size} 项`;
+      confirm.disabled=!isUsable()||selected.size<minSelections;
+    }else selectionHint.hidden=true;
+  }
+  function refresh(){
+    const expired=!Number.isFinite(snapshot.expiresAt)||Date.now()>=snapshot.expiresAt;
+    const usable=ready&&!sent&&!expired;
+    controls.forEach(item=>item.disabled=!usable);
+    updateSelection();
+    if(expired)status.textContent='这道题已过期，请在对话里重新发问。';
+    else if(sent)status.textContent='已送达原对话，等伙伴接话。';
+    else if(!ready)status.textContent='正在与原对话绑定，暂不能作答。';
+    else status.textContent=multiple?'勾选符合条件的项目，再点「确认选择」；关闭卡片不会替你作决定。':'选一项，或写自己的答案；关闭卡片不会替你作决定。';
+  }
+  async function send(action,choice){
+    if(!isUsable())return refresh();
+    if(action==='custom'&&!choice.trim()){status.textContent='先写下你的答案。';return}
+    if(action==='confirmed'&&multiple&&(choice.length<minSelections||choice.length>maxSelections)){status.textContent=`请选择 ${minSelections}～${maxSelections} 项再确认。`;return}
+    sent=true;refresh();status.textContent='正在送回原对话…';
+    try{
+      const result=await window.card.emit('zhiyi_ask_answer',{askId:snapshot.askId,action,choice,note:action==='confirmed'?note.value.trim():''},home);
+      if(result&&result.ok===true){await window.card.state.set('zhiyiAnswerSent',true);refresh();return}
+    }catch{}
+    sent=false;refresh();status.textContent='没送达，选择仍在这里，可再试一次。';
+  }
+  confirm.addEventListener('click',()=>void send('confirmed',[...selected].sort((a,b)=>a-b).map(index=>choices[index].label)));
+  $('custom').addEventListener('click',()=>void send('custom',note.value.trim()));
+  $('decline').addEventListener('click',()=>void send('rejected',''));
+  function applyData(data){if(!data||data.askId!==snapshot.askId||data.ready!==true)return;
+    // homeSessionId 是可选的：卡片就嵌在原对话里，emit 不带目标时会发给嵌它的那个对话。
+    // 旧版把它当成必填，调用方一旦没传就永远不解锁，所有选项 disabled——整张卡点不动。
+    // 现在：有就用来定向，没有就交给默认路由。
+    home=typeof data.homeSessionId==='string'?data.homeSessionId:'';
+    ready=true;refresh()}
+  refresh();
+  if(!window.card){status.textContent='这张卡需要 Hana 才能送回选择。';return}
+  Promise.all([window.card.capabilities(),window.card.data.get(),window.card.state.get('zhiyiAnswerSent')]).then(([caps,doc,previous])=>{
+    if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){status.textContent='卡片回传不可用；请在对话里说明。';return}
+    sent=previous?.ok===true&&previous.result?.value===true;
+    applyData(doc.result?.data);
+    window.card.data.onChange(applyData);
+  }).catch(()=>{status.textContent='卡片连接失败，请在对话里说明。'});
+})();
+</script>
+</body>
+</html>

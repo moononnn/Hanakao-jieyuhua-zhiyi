@@ -1,0 +1,54 @@
+{
+  "manifestVersion": 2,
+  "id": "jiegehua-zhiyi",
+  "name": "\u89e3\u8bed\u82b1\u00b7\u77e5\u610f",
+  "version": "0.1.39",
+  "entry": "index.js",
+  "capabilities": [
+    "app/tools.expose-to-model",
+    "app/process.spawn",
+    "app/hooks.agent-before-start",
+    "app/hooks.messages-post-assistant",
+    "app/models.infer",
+    "app/sessions.read",
+    "app/sessions.manage",
+    "app/provider.credentials.read",
+    "app/services.provide"
+  ],
+  "network": {
+    "allowedHosts": [
+      "127.0.0.1",
+      "api.minimaxi.com",
+      "api.xiaomimimo.com",
+      "*.aliyuncs.com"
+    ],
+    "methods": ["GET", "POST"],
+    "allowLocalhost": true,
+    "defaultTimeoutMs": 5000,
+    "maxResponseBytes": 1048576
+  },
+  "contributes": {
+    "cards": [
+      {
+        "id": "panel",
+        "title": "\u89e3\u8bed\u82b1\u00b7\u77e5\u610f",
+        "route": "/panel.html",
+        "face": {
+          "image": "assets/cover.svg"
+        },
+        "realization": "page",
+        "siteNavEntry": true,
+        "fpFullPanel": true,
+        "functionPanel": {
+          "id": "permissions",
+          "label": "权限状态",
+          "route": "/permission-panel.html"
+        },
+        "cardForm": "flush",
+        "titlebar": "solid"
+      }
+    ]
+  },
+  "icon": "assets/icon.svg",
+  "minAppVersion": "0.1013.0"
+}

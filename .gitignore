@@ -1,0 +1,31 @@
+# 运行时与开发期产物，不进仓库
+app-data/
+data/
+dist/
+node_modules/
+*.log
+*.bak
+*.zip
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# 本机调试残留（传音樱窗口坐标缓存、桥日志等）
+x.json
+zhujian-api-dbg.log
+last-summary-error.json
+
+# 内部开发记录（含本机现场与私人称呼），不公开
+PROJECT_LOG.md
+
+# 宿主 SDK：随包带的是完整 SDK，但代码只用到 5 个文件（见下）。
+# 按表情包应用的做法，仓库只收这 5 个，其余不入库，避免升级 SDK 时产生大量无关 diff。
+sdk/
+
+# 上面忽略整个 sdk/ 之后，这几个是代码真实 import 链上的文件，强制收进来。
+# 依赖链：index.js → sdk/app-contract/server-client.js → bus-requests / model-stream / sdk-error / rpc-error
+!sdk/app-contract/server-client.js
+!sdk/app-contract/bus-requests.js
+!sdk/app-contract/model-stream.js
+!sdk/app-contract/sdk-error.js
+!sdk/app-contract/rpc-error.js

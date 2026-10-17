@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>知意 · 等你决定</title>
+  <link rel="stylesheet" href="./assets/ask-panel.css">
+</head>
+<body>
+  <main class="ask" aria-labelledby="ask-heading">
+    <header class="heading">
+      <img src="./assets/brand-mark.svg" alt="" class="mark">
+      <div class="heading-text">
+        <p class="eyebrow">知意 · 关键选择</p>
+        <h1 id="ask-heading">正在接收问题…</h1>
+      </div>
+    </header>
+    <div class="content">
+      <p id="ask-question" class="question"></p>
+      <p id="ask-background" class="background" hidden></p>
+      <section id="ask-recommend" class="recommend" aria-label="建议方向" hidden>
+        <strong>建议方向</strong>
+        <p id="ask-recommend-text"></p>
+        <p id="ask-reason" class="reason" hidden></p>
+      </section>
+      <fieldset class="choices">
+        <legend>选一个方向</legend>
+        <div id="ask-options" class="options"></div>
+      </fieldset>
+      <label for="ask-note" class="note-label">补充说明 <span>可不填</span></label>
+      <textarea id="ask-note" maxlength="500" rows="2" placeholder="还有什么想告诉伙伴的？"></textarea>
+      <p id="ask-status" class="status" role="status" aria-live="polite"></p>
+    </div>
+  </main>
+  <script type="module" src="./assets/ask-panel.js"></script>
+</body>
+</html>

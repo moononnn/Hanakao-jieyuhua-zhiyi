@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>解语花·知意设置</title>
+  <link rel="stylesheet" href="./assets/panel.css">
+</head>
+<body>
+  <main class="page" aria-labelledby="page-title">
+    <header class="page-head">
+      <img class="mark" src="./assets/brand-mark.svg" alt="">
+      <div class="heading-copy">
+        <p class="eyebrow">解语花 · 知意</p>
+        <h1 id="page-title">知意</h1>
+        <p class="intro">让重要的选择问得清楚，也让事情顺顺当当地接着做。</p>
+      </div>
+      <div class="head-actions">
+        <button id="ball-toggle" class="ball-toggle" type="button" aria-pressed="false" aria-label="桌面传音樱开关" title="开启桌面传音樱">
+          <span class="ball-toggle-label" id="ball-toggle-label">传音樱</span>
+          <span class="ball-toggle-switch" aria-hidden="true"><span class="ball-toggle-thumb"></span></span>
+        </button>
+        <button id="open-settings" class="settings-btn" type="button" aria-haspopup="dialog" aria-controls="settings-modal">设置</button>
+      </div>
+    </header>
+
+    <p id="ball-status" class="ball-status page-ball-status" role="status" aria-live="polite">正在读取传音樱状态…</p>
+
+    <aside class="permission-note">
+      <span class="note-icon" aria-hidden="true">i</span>
+      <div>
+        <strong>第一次使用</strong>
+        <p>请在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」审核需要的权限，并在目标伙伴的工具设置中启用知意。伙伴仍会自行处理低风险、可逆的小选择，不会为琐事频繁打断你。</p>
+      </div>
+    </aside>
+
+    <section class="settings-section" aria-labelledby="ask-title">
+      <div class="section-heading">
+        <span class="section-mark" aria-hidden="true">知</span>
+        <div>
+          <p class="eyebrow">核心能力</p>
+          <h2 id="ask-title">关键决策 Ask</h2>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <h3>遇事要不要问你</h3>
+          <p>遇到该由你拍板的分岔时，知意会弹一张卡让你选。关掉后这张卡不再出现，伙伴也不会再收到关于它的提示。</p>
+        </div>
+        <div class="segmented" id="ask-display" role="group" aria-label="关键 Ask 卡展示">
+          <button type="button" data-value="on" aria-pressed="true">展示</button>
+          <button type="button" data-value="off" aria-pressed="false">关闭</button>
+        </div>
+      </div>
+      <p id="ask-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <h3>回答后回到原任务</h3>
+          <p>你的选择会交回发起提问的对话；拒绝、关闭或超时都不会被当成同意。</p>
+        </div>
+        <span class="setting-badge">无需额外配置</span>
+      </div>
+    </section>
+
+    <section class="settings-section" id="recommendation-behavior" aria-labelledby="recommendation-behavior-title">
+      <div class="section-heading">
+        <span class="section-mark" aria-hidden="true">荐</span>
+        <div>
+          <p class="eyebrow">推荐回复</p>
+          <h2 id="recommendation-behavior-title">推荐什么、什么时候给</h2>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <h3>要不要推荐</h3>
+          <p>推荐只活在传音樱里：你想不出下一句的时候掀开球，点一下就有几条现成的可以照着发。聊天里不会突然冒卡片。关掉的话，球上那一块也会整块收起来。</p>
+        </div>
+        <div class="segmented" id="rec-display" role="group" aria-label="推荐展示方式">
+          <button type="button" data-value="ball" aria-pressed="true">传音樱内展示</button>
+          <button type="button" data-value="off" aria-pressed="false">关闭</button>
+        </div>
+      </div>
+      <div class="setting-row rec-only-card">
+        <div class="setting-copy">
+          <h3>推荐几条</h3>
+          <p>条数越多覆盖的方向越全，嫌吵就往少了调。</p>
+        </div>
+        <div class="segmented" id="rec-count" role="group" aria-label="推荐条数">
+          <button type="button" data-value="2" aria-pressed="false">2 条</button>
+          <button type="button" data-value="3" aria-pressed="true">3 条</button>
+          <button type="button" data-value="4" aria-pressed="false">4 条</button>
+        </div>
+      </div>
+      <div class="setting-row rec-only-card">
+        <div class="setting-copy">
+          <h3>推荐方向</h3>
+          <p>按当前条数从上往下取用。勾选几个都行，勾得太少会自动补齐默认轮转。</p>
+        </div>
+        <div class="style-list" id="rec-styles"></div>
+      </div>
+      <div class="setting-row rec-only-card">
+        <div class="setting-copy">
+          <h3>方向不太对？</h3>
+          <p>跟知意聊一句想怎么改，它会出一张对照卡给你看；你点「确认修改」它才真的换。</p>
+        </div>
+        <div class="model-controls">
+          <button id="rec-refine" class="model-test" type="button">和小花聊聊</button>
+          <button id="rec-restore" class="model-save" type="button">恢复默认</button>
+        </div>
+      </div>
+      <p id="rec-refine-status" class="ball-status" role="status" aria-live="polite"></p>
+      <p id="rec-status" class="ball-status" role="status" aria-live="polite">正在读取推荐设置…</p>
+    </section>
+
+    <section class="settings-section" aria-labelledby="summary-title">
+      <div class="section-heading">
+        <span class="section-mark" aria-hidden="true">简</span>
+        <div>
+          <p class="eyebrow">阅读负担</p>
+          <h2 id="summary-title">长回复速览</h2>
+        </div>
+      </div>
+      <div class="setting-row ball-row">
+        <div class="setting-copy">
+          <h3>达到阈值就附一段速览</h3>
+          <p>按中文字符数计。原文不会删改，速览作为附加内容显示在回复末尾。</p>
+        </div>
+        <div class="model-controls">
+          <label class="switch">
+            <input id="summary-enabled" type="checkbox" checked disabled />
+            <span>开启</span>
+          </label>
+        </div>
+      </div>
+      <div class="setting-row ball-row">
+        <div class="setting-copy">
+          <h3>多长算长</h3>
+          <p>每次调整 50 字；会保留当前数值，不会擅自改成固定档位。</p>
+        </div>
+        <div class="model-controls threshold-controls" role="group" aria-label="速览字符阈值">
+          <button id="summary-min-chars-down" class="stepper-button" type="button" aria-label="减少 50 字" disabled>−</button>
+          <output id="summary-min-chars" class="stepper-value" aria-live="polite">600</output>
+          <span class="unit">字</span>
+          <button id="summary-min-chars-up" class="stepper-button" type="button" aria-label="增加 50 字" disabled>＋</button>
+          <button id="summary-save" class="model-save" type="button" disabled>保存</button>
+        </div>
+      </div>
+      <div class="status-actions">
+        <p id="summary-status" class="ball-status" role="status" aria-live="polite">正在读取设置…</p>
+        <button id="summary-retry" class="model-test" type="button" hidden>重试读取</button>
+      </div>
+    </section>
+
+    <aside class="permission-note">
+      <span class="note-icon" aria-hidden="true">i</span>
+      <div>
+        <strong>第一次使用</strong>
+        <p>请在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」审核需要的权限，并在目标伙伴的工具设置中启用知意。伙伴仍会自行处理低风险、可逆的小选择，不会为琐事频繁打断你。</p>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 设置弹窗：不常用的一律收在这里，主页面只留常用开关 -->
+  <div class="modal-overlay" id="settings-modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+      <div class="modal-head">
+        <h2 id="settings-modal-title">设置</h2>
+        <button id="settings-close" class="modal-close" type="button" aria-label="关闭设置">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <section class="settings-section" aria-labelledby="content-model-title">
+          <div class="section-heading">
+            <span class="section-mark" aria-hidden="true">模</span>
+            <div>
+              <p class="eyebrow">模型</p>
+              <h2 id="content-model-title">内容模型</h2>
+            </div>
+          </div>
+          <div class="setting-row model-row">
+            <div class="setting-copy">
+              <h3>推荐回复、Ask 判断、速览共用这一条</h3>
+              <p>不选就跟随发起那一轮的当前模型，多数时候不用管。想省钱或图快，就单独挑一条轻量的。</p>
+            </div>
+            <div class="model-controls">
+              <div class="model-picker">
+                <button id="content-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="content-model-options">正在读取模型…</button>
+                <div id="content-model-options" class="model-options" role="listbox" aria-label="内容模型" hidden></div>
+              </div>
+              <button id="content-model-test" class="model-test" type="button" disabled>测试连接</button>
+              <button id="content-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
+            </div>
+          </div>
+          <p id="content-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+          <div class="tool-divider" role="presentation"></div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>用自己的接口跑</h3>
+              <p>开启后，上面没选模型时，知意改走你填的这条接口。上面选了 Hana 模型的仍然优先用你选的。</p>
+            </div>
+            <div class="segmented" id="custom-enabled" role="group" aria-label="是否使用自定义模型">
+              <button type="button" data-value="on" aria-pressed="false">开启</button>
+              <button type="button" data-value="off" aria-pressed="true">关闭</button>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="field field-wide">
+              <span>接口地址</span>
+              <input id="custom-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+            </label>
+            <label class="field">
+              <span>模型名</span>
+              <input id="custom-model-name" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-4o-mini">
+            </label>
+            <label class="field">
+              <span>API Key<span class="field-note" id="custom-key-note">用 Windows 系统加密保存</span></span>
+              <input id="custom-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你的 API Key">
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <p class="setting-hint">按 OpenAI 兼容的 <code>/chat/completions</code> 调用。Key 只存在本机知意的目录里，不发给 Hana，也不上传。</p>
+            </div>
+            <div class="model-controls">
+              <button id="custom-test" class="model-test" type="button">测试一下</button>
+              <button id="custom-save" class="model-save" type="button">保存</button>
+              <button id="custom-clear-key" class="model-test" type="button">清掉 Key</button>
+            </div>
+          </div>
+          <p id="custom-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+        </section>
+
+        <section class="settings-section" id="voice-section" aria-labelledby="voice-title">
+          <div class="section-heading">
+            <span class="section-mark" aria-hidden="true">声</span>
+            <div>
+              <p class="eyebrow">朗读</p>
+              <h2 id="voice-title">语音模型</h2>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>要不要允许朗读</h3>
+              <p>关掉后知意不合成任何语音，传音樱里的「念给我听」也会跟着收起来。已经生成好的音频不影响。</p>
+            </div>
+            <div class="segmented" id="voice-enabled" role="group" aria-label="是否允许朗读">
+              <button type="button" data-value="on" aria-pressed="true">允许</button>
+              <button type="button" data-value="off" aria-pressed="false">关闭</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>念哪一段</h3>
+              <p><strong>整条回复</strong>把可见正文都念一遍；<strong>只念引号台词</strong>只念对话里带引号的部分。选了台词却没找到引号时会退回整条。</p>
+            </div>
+            <div class="segmented" id="voice-scope" role="group" aria-label="朗读范围">
+              <button type="button" data-value="all" aria-pressed="true">整条回复</button>
+              <button type="button" data-value="quoted" aria-pressed="false">只念引号台词</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>语速</h3>
+              <p>三档就够用，不做细调。</p>
+            </div>
+            <div class="segmented" id="voice-speed" role="group" aria-label="语速">
+              <button type="button" data-value="0.85" aria-pressed="false">慢一点</button>
+              <button type="button" data-value="1" aria-pressed="true">正常</button>
+              <button type="button" data-value="1.15" aria-pressed="false">快一点</button>
+            </div>
+          </div>
+          <div class="tool-divider" role="presentation"></div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>朗读接口</h3>
+              <p>先挑一个现成模板把地址和模型名填好，再补上 Key。MiniMax 还需要填 GroupId，在它的控制台里能看到。</p>
+            </div>
+            <div class="segmented voice-presets" id="voice-presets" role="group" aria-label="朗读模型模板"></div>
+          </div>
+          <div class="field-grid">
+            <label class="field">
+              <span>接口协议</span>
+              <div class="segmented" id="voice-protocol" role="group" aria-label="接口协议">
+                <button type="button" data-value="t2a" aria-pressed="true">MiniMax</button>
+                <button type="button" data-value="chat" aria-pressed="false">OpenAI 兼容</button>
+              </div>
+            </label>
+            <label class="field">
+              <span>接口地址</span>
+              <input id="voice-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.minimaxi.com">
+            </label>
+            <label class="field">
+              <span>模型名</span>
+              <input id="voice-model" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="speech-2.8-hd">
+            </label>
+            <label class="field" id="voice-groupid-field">
+              <span>GroupId<span class="field-note">仅 MiniMax 需要</span></span>
+              <input id="voice-groupid" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="1234567890">
+            </label>
+            <label class="field field-wide">
+              <span>API Key<span class="field-note" id="voice-key-note">用 Windows 系统加密保存，不留在明文里</span></span>
+              <input id="voice-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴朗读模型的 API Key">
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>不想自己填 Key？</h3>
+              <p>勾上以后，知意每次合成都去问 Hana 要一次凭据，你自己一个 Key 都不用存。<strong>前提是</strong> Hana 里已经把这个服务商配好了，且在「应用权限」里允许了「读取凭据」；拿不到会直接告诉你。</p>
+            </div>
+            <div class="segmented" id="voice-hana-key" role="group" aria-label="是否用 Hana 里的凭据">
+              <button type="button" data-value="on" aria-pressed="false">用 Hana 的</button>
+              <button type="button" data-value="off" aria-pressed="true">我自己填</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <p class="setting-hint">朗读请求会把你选中那段文字发给你填的这个语音服务商；音频只留在本机知意的目录里，不上传到别处。想听哪一段，在传音樱面板里点「念给我听」。</p>
+            </div>
+            <div class="model-controls">
+              <button id="voice-test" class="model-test" type="button" disabled>测试一下</button>
+              <button id="voice-save" class="model-save" type="button" disabled>保存</button>
+            </div>
+          </div>
+          <p id="voice-model-status" class="ball-status" role="status" aria-live="polite">正在读取朗读设置…</p>
+          <div id="voice-player" class="voice-player" hidden>
+            <audio id="voice-audio" controls preload="none"></audio>
+            <p id="voice-caption" class="voice-caption"></p>
+          </div>
+          <div class="tool-divider" role="presentation"></div>
+          <div class="setting-row model-row">
+            <div class="setting-copy">
+              <h3>默认音色</h3>
+              <p>没有单独设置的伙伴都用这个。音色列表跟着你选的协议走。</p>
+            </div>
+            <div class="model-controls">
+              <div class="model-picker">
+                <button id="voice-tone-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="voice-tone-options">正在读取音色…</button>
+                <div id="voice-tone-options" class="model-options" role="listbox" aria-label="默认音色" hidden></div>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row model-row">
+            <div class="setting-copy">
+              <h3>给伙伴分开选音色</h3>
+              <p>这里只列出你最近聊过的伙伴。选「跟随默认」就是用上面的默认音色。</p>
+            </div>
+            <div class="model-controls">
+              <button id="voice-partner-refresh" class="model-test" type="button">刷新伙伴</button>
+            </div>
+          </div>
+          <div id="voice-partners" class="partner-voice-list"></div>
+          <p id="voice-status" class="ball-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="settings-section" id="resume-section" aria-labelledby="resume-title">
+          <div class="section-heading">
+            <span class="section-mark" aria-hidden="true">续</span>
+            <div>
+              <p class="eyebrow">断联</p>
+              <h2 id="resume-title">异常中断续接</h2>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>要不要管异常中断</h3>
+              <p>异常提醒由「提个醒」负责，知意不重复通知。这里只管一件事：发现那一轮停在半路了，要不要接一句「继续哈」让它自己接上。</p>
+            </div>
+            <div class="segmented" id="resume-enabled" role="group" aria-label="是否处理异常中断">
+              <button type="button" data-value="on" aria-pressed="true">开启</button>
+              <button type="button" data-value="off" aria-pressed="false">关闭</button>
+            </div>
+          </div>
+          <div class="setting-row resume-only-on">
+            <div class="setting-copy">
+              <h3>自动续接</h3>
+              <p>发现异常就直接发「继续哈」，不等你点。<strong>每接一次就是一次真实模型调用，会花钱也占对话上下文</strong>，所以默认关着。</p>
+            </div>
+            <div class="segmented" id="resume-auto" role="group" aria-label="自动续接">
+              <button type="button" data-value="off" aria-pressed="true">关</button>
+              <button type="button" data-value="on" aria-pressed="false">开</button>
+            </div>
+          </div>
+          <div class="setting-row resume-only-on">
+            <div class="setting-copy">
+              <h3>最多接几次</h3>
+              <p>接了这么多次仍然没有正文产出，就停下来不接了，只在传音樱上留一条提醒等你决定。</p>
+            </div>
+            <div class="segmented" id="resume-max" role="group" aria-label="最多续接几次">
+              <button type="button" data-value="1" aria-pressed="false">1 次</button>
+              <button type="button" data-value="2" aria-pressed="false">2 次</button>
+              <button type="button" data-value="3" aria-pressed="true">3 次</button>
+            </div>
+          </div>
+          <div class="setting-row resume-only-on">
+            <div class="setting-copy">
+              <h3>两次之间隔多久</h3>
+              <p>防止一次故障里反复发好几次。</p>
+            </div>
+            <div class="segmented" id="resume-cooldown" role="group" aria-label="续接间隔">
+              <button type="button" data-value="60000" aria-pressed="true">1 分钟</button>
+              <button type="button" data-value="180000" aria-pressed="false">3 分钟</button>
+            </div>
+          </div>
+          <div class="setting-row resume-only-on">
+            <div class="setting-copy">
+              <h3>开头多久没说话算异常</h3>
+              <p>说长文的伙伴要跑很久，档位调小容易误报。</p>
+            </div>
+            <div class="segmented" id="resume-stuck" role="group" aria-label="卡住判定">
+              <button type="button" data-value="60000" aria-pressed="false">1 分钟</button>
+              <button type="button" data-value="90000" aria-pressed="true">1 分半</button>
+              <button type="button" data-value="120000" aria-pressed="false">2 分钟</button>
+            </div>
+          </div>
+          <p id="resume-status" class="ball-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ball-title">
+          <div class="section-heading">
+            <span class="section-mark flower-mark" aria-hidden="true">✿</span>
+            <div>
+              <p class="eyebrow">可选体验</p>
+              <h2 id="ball-title">桌面传音樱</h2>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-copy">
+              <h3>开关在页面右上角</h3>
+              <p>传音樱里可以提问、挑推荐、捋一捋、起标题、念给我听。传音樱没运行时，伙伴会在原对话里放一张知意选择卡，点选后在新回合接着办。</p>
+            </div>
+            <span class="setting-badge" id="ball-modal-state">正在读取…</span>
+          </div>
+          <p class="setting-hint">启动需要在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」允许「运行外部程序」，并在本机 Python 环境安装 PyQt6。知意不会自动安装依赖；传音樱不可用时会退回聊天内的知意选择卡，配方卡也展示不了时才回退 Hana 原生确认卡。</p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="permission-status-title">
+          <div class="section-heading">
+            <span class="section-mark" aria-hidden="true">权</span>
+            <div>
+              <p class="eyebrow">运行状态</p>
+              <h2 id="permission-status-title">知意当前权限</h2>
+            </div>
+          </div>
+          <div id="permission-status-list" class="permission-grid" aria-live="polite"></div>
+          <div class="permission-actions">
+            <button id="permission-status-refresh" class="model-test" type="button">刷新状态</button>
+          </div>
+          <p id="permission-status-message" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+        </section>
+
+      </div>
+      <div class="modal-foot">
+        <p class="modal-note">Key 只存在本机，不上传。用哪条模型、花不花钱，你自己定。</p>
+        <button id="settings-done" class="model-save" type="button">好了</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('error', () => {
+      document.body.dataset.startupError = 'true';
+    }, true);
+  </script>
+  <script type="module" src="./assets/panel.js"></script>
+</body>
+</html>
