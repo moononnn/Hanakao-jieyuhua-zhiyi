@@ -1,5 +1,17 @@
 # 未发布改动
 
+- 2026-10-22 | 修复 | **断点续接每 20 秒拉一次全量会话名单，把宿主的事件循环吊在自己身上**（系统性问题：今天 1136 次「App RPC concurrency limit reached」，两个 App 的钩子被丢，排队发送接不上、续接提醒丢信号，一半毛病都从这儿长出来）。
+
+  实机取证：宿主日志一天打印 `sessions_list_timing` **3994 次**（几乎就是 86400/20 秒），每次 `sessionCount` 都在 326~342，单次 `listMs` 三四百毫秒、偶尔 3~5.8 秒，`eventLoopDelayMaxMs` 同时到 4123ms。原因就一处：`readResumeSessionIndex` 的缓存期是 20 秒，而 `resolveResumeTarget` 几乎每条会话事件都要走一次，于是只要 App 常驻、只要还有事件在流，就精确地每 20 秒拉一次全量名单。而这正是宿主最慢的那条路（三百多个会话一条条列），拉的时候事件循环一起等，钩子在后面排队堆到 App RPC 的 128 并发上限，被拒的那条直接当「没有决策」。
+
+  改法（四条，都是「别问不该问的」，没有新增保险）：
+  ① **只列活跃会话**：`lifecycle: "all"` → `"active"`。断点续接认的是「正在聊的那几段」，归档会话本来就不该参与（真要查归档，那也不是这一层的事）。单次开销跟着会话总数一起掉。
+  ② **缓存期 20 秒 → 5 分钟**，同一时刻只飞一个请求（并发调用共享结果），读失败退回 20 秒节流后再试（不停跳，也不添乱）。
+  ③ **复核的强制刷新也上节流**：卡住复核每 5 秒跑一次，以前每次都 `force`，等于绕着缓存把频率拉回来；现在 force 最短 20 秒一次。
+  ④ **事件里的编号已经能对上时，根本不问宿主**：新增 `resolveResumeTargetLite`，`turn_end` 三处（循环续接兜底、排队兜底、恢复分支）改走它。钩子那一层同时握着 `sessionId` 和 `path`，是全流程唯一不必问宿主就能建映射的地方，所以顺手在 `agent/before-start` 里登记（`resumePathAlias`，内存表，400 条封顶）。之后同一段对话的轮末事件直接命中本地映射，零 RPC。
+
+  验证：`node --test tests/app-tool.test.js` 50/50（新增 2 条钉住：① 只列 active、编号对上就不再拉；② 强制刷新有节流），`tests/resume-watch.test.js tests/continue-loop.test.js tests/send.test.js tests/queue-plan.test.js tests/session-title.test.js tests/voice-routes.test.js` 110/110，`node --check index.js` 通过。**实机验收未做**：重载后看宿主日志里 `sessions_list_timing` 的频率与 `sessionCount` 是不是都掉下来了（预期频率从 20 秒一次变成 5 分钟一次，sessionCount 从 342 变成活跃会话数）。manifest 版本、简介、README 未动。
+
 - 2026-10-22 | 修复 | **排队发送：第二轮接不上 + 明明排上了却报「知意那边没回话」**（用户实机：排 2 轮只发了一轮，弹窗报知意没回话）。经审查伙伴复核后定稿。
 
   实机证据：宿主日志 20:37:51.489「排队话单已开始：共 2 轮，第一句已直接发出」——第一轮确实发进去了；之后 20 分钟再没有「已送出第 2/2 轮」，话单在桥里一直卡着 `done=1/total=2/running`；球上弹窗报的是「知意那边没回话，再点一次试试」。

@@ -1464,3 +1464,55 @@ test("子代理会话报错不进账本：事件没带路径时也要按 target 
   })).session;
   assert.equal(status.pending, null, "子代理会话不该被记成待决");
 });
+
+// 2026-10-22 实机：这份名单一天被拉了 3994 次（几乎卡着 20 秒的缓存期跑满），
+// 每次要列三百多个会话、三四百毫秒、偶尔五秒，宿主的事件循环跟着一起等，
+// 钩子在这段时间堆到 App RPC 并发上限，被拒的就当成「没有决策」。
+// 两条闸门都得钉住：只列活跃会话；事件里的编号已经能对上时不再拉。
+test("断点续接的会话名单：只列活跃会话，编号已对上就不再拉", async () => {
+  const CASE_PATH = "D:/hana/agents/hanako/sessions/case.jsonl";
+  const START = 1_792_212_000_000;
+  const mock = createContext({
+    sessionList: [{ path: CASE_PATH, sessionId: "sess_case", agentId: "hanako", title: "测试窗口", modified: START }],
+    storageSeed: { resumeConfig: { enabled: true } },
+  });
+  await registeredTool(mock);
+
+  // 一、App 刚重载完，本地还没有映射：这一轮必须问一次宿主。
+  await mock.emitBus({ type: "turn_end", message: { content: [{ type: "text", text: "说完了" }], stopReason: "stop" } }, CASE_PATH);
+  await drainAsyncWork();
+  assert.equal(mock.sessionListCalls.length, 1, "本地对不上编号时还得问一次");
+  assert.equal(mock.sessionListCalls[0].lifecycle, "active", "只列活跃会话：归档的不需要断点续接");
+  assert.equal(mock.sessionListCalls[0].scope, "all", "会话归属仍然显式给全");
+
+  // 二、钩子这一层同时握着 sessionId 与 path，映射就此建立，之后同一段对话不必再问。
+  await mock.hook("agent/before-start")({
+    session: { sessionId: "sess_case", agentId: "hanako", path: CASE_PATH },
+  });
+  const before = mock.sessionListCalls.length;
+  await mock.emitBus({ type: "turn_end", message: { content: [{ type: "text", text: "又说完了" }], stopReason: "stop" } }, CASE_PATH);
+  await drainAsyncWork();
+  assert.equal(mock.sessionListCalls.length, before, "编号已经在本地对上，turn_end 不该再拉名单");
+});
+
+test("卡住复核的强制刷新也有节流：每 5 秒问一次比名单自己变还勤", async (t) => {
+  const START = 1_792_212_000_000;
+  const mock = createContext({
+    sessionList: [{ path: "D:/hana/agents/hanako/sessions/case.jsonl", sessionId: "sess_case", agentId: "hanako", modified: START }],
+    storageSeed: { resumeConfig: { enabled: true, stuckTimeoutMs: 30_000 } },
+  });
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
+  await registeredTool(mock);
+  // 只开一轮、不给正文：它会进卡住候选，pump 每 5 秒复核一次。
+  await mock.hook("agent/before-start")({ session: { sessionId: "sess_case", agentId: "hanako" } });
+  t.mock.timers.tick(31_000);
+  await drainAsyncWork();
+  const afterFirstReview = mock.sessionListCalls.length;
+  assert.equal(afterFirstReview, 1, "第一次复核要问一次");
+  // 再走三个 5 秒：名单还在缓存期，强制刷新也要等满节流才发第二发。
+  t.mock.timers.tick(5_000);
+  await drainAsyncWork();
+  t.mock.timers.tick(5_000);
+  await drainAsyncWork();
+  assert.equal(mock.sessionListCalls.length, afterFirstReview, "节流期内不重复拉名单");
+});

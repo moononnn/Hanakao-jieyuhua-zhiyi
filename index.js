@@ -673,6 +673,9 @@ export default defineApp(async (sdk) => {
         const hadNotice = resumeNoticeKey === resumeTracker.canonicalId(invocation.session.sessionId);
         if (hadNotice && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
       }
+      // 顺手把两套编号对上：钩子这一层同时握着 sessionId 和 path，是全流程里
+      // 唯一不必问宿主就能建映射的地方。事件路径（turn_end）靠它省下一次名单。
+      rememberSessionPath(resumeSessionPath, invocation.session.sessionId);
       resumeTracker.markStarted(invocation.session.sessionId);
     }
     // 每轮都现读开关：关掉后不必等重新加载，引导立刻不再注入。
@@ -1218,18 +1221,56 @@ activeFusionServiceDispose = disposeFusionService;
 
   // 宿主的两套编号（事件里的文件名、钩子里的 sess_xxx）靠这张索引对齐；
   // 顺带也是「这条提醒到底来自哪个窗口」的唯一来源——别再对着不存在的字段要名字。
-  const RESUME_INDEX_TTL_MS = 20_000;
+  //
+  // 2026-10-22 实机：这份索引一天拉了 3994 次（几乎卡着 20 秒 CD 跑满），每次要列
+  // 三百多个会话、三四百毫秒、偶尔五秒（宿主日志 sessions_list_timing）。而它和宿主
+  // 的事件循环是同一条路上的：拉的时候整个循环一起等，钩子在这段时间里排队、堆到
+  // App RPC 的 128 并发上限，被拒的那条就被当成「没有决策」。断点续接认的是「正在
+  // 聊的那几段对话」，不需要这么实时的全景。所以：只列活跃会话、缓存放长、失败退避、
+  // 同一时刻只飞一个请求。
+  const RESUME_INDEX_TTL_MS = 300_000;
+  // 复核要新证据（modified 变了没有），但不必每 5 秒拉一次全景。
+  const RESUME_INDEX_FORCE_MIN_MS = 20_000;
+  // 读失败后也得继续试，只是不能比复核节流还密：宿主要么在限流、要么正忙，
+  // 添乱只会让它更忙，但也不能停跳（那样卡住就一直没人看了）。
+  const RESUME_INDEX_FAIL_BACKOFF_MS = RESUME_INDEX_FORCE_MIN_MS;
   let resumeSessionIndex = { at: 0, freshAt: 0, index: null, stale: false };
+  let resumeIndexInflight = null;
+  let resumeIndexNextForceAt = 0;
+  let resumeIndexFailUntil = 0;
+  // 会话文件名（或裸 UUID）→ 稳定编号。钩子那边同时握有两套编号（invocation.session
+  // 的 sessionId 与 path），所以这张表是顺手就能填上的；填上以后事件路径就不必再去拉
+  // 名单核对了。表在内存里，App 重载后从空开始，第一轮先查一次，之后都走本地。
+  const resumePathAlias = new Map();
+  function rememberSessionPath(sessionPath, sessionId) {
+    const pathId = sessionIdFromPath(sessionPath);
+    const stable = String(sessionId || "");
+    if (!pathId || !stable || pathId === stable) return;
+    resumePathAlias.set(pathId, stable);
+    if (resumePathAlias.size > 400) {
+      // 只是缓存，长了就从头扔，不留脏数据也不用去做 LRU。
+      const oldest = resumePathAlias.keys().next();
+      if (!oldest.done) resumePathAlias.delete(oldest.value);
+    }
+  }
   async function readResumeSessionIndex({ force = false } = {}) {
     const stamp = Date.now();
-    if (!force && resumeSessionIndex.index && stamp - resumeSessionIndex.at < RESUME_INDEX_TTL_MS) {
-      return resumeSessionIndex;
-    }
+    const cachedFresh = Boolean(resumeSessionIndex.index) && stamp - resumeSessionIndex.at < RESUME_INDEX_TTL_MS;
+    if (!force && cachedFresh) return resumeSessionIndex;
+    // force 也得上限：卡住复核每 5 秒问一次，问得比名单自己变还勤没意义。
+    if (force && cachedFresh && stamp < resumeIndexNextForceAt) return resumeSessionIndex;
+    if (stamp < resumeIndexFailUntil) return resumeSessionIndex;
+    // 并发合并：同一次刷新只发一个请求，其余调用等它的结果。
+    if (resumeIndexInflight) return resumeIndexInflight;
+    resumeIndexInflight = (async () => {
     try {
-      const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "all" }, { timeoutMs: 6_000 });
+      const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "active" }, { timeoutMs: 6_000 });
       const rows = Array.isArray(listed) ? listed : listed?.sessions;
       resumeSessionIndex = { at: stamp, freshAt: stamp, index: buildSessionIndex(rows), stale: false };
+      resumeIndexNextForceAt = stamp + RESUME_INDEX_FORCE_MIN_MS;
     } catch (error) {
+      resumeIndexFailUntil = stamp + RESUME_INDEX_FAIL_BACKOFF_MS;
+      resumeIndexNextForceAt = stamp + RESUME_INDEX_FORCE_MIN_MS;
       // 读不到就沿用旧索引；连旧的都没有时留给调用方按「查不到」处理，不编名字。
       // stale 是给复核用的：这份索引的 modified 是过期值，不能拿它证明「这一轮没进展」。
       // 并发时两次读取可能先后写同一个缓存，所以这里连同 at 一起返回给调用方绑定，
@@ -1244,6 +1285,27 @@ activeFusionServiceDispose = disposeFusionService;
       });
     }
     return resumeSessionIndex;
+    })();
+    try {
+      return await resumeIndexInflight;
+    } finally {
+      resumeIndexInflight = null;
+    }
+  }
+  // 事件自己带着稳定编号（sess_xxx）时就不必去拉名单：那是宿主最慢的一条路，
+  // 每轮都拉一次等于把 App 的钩子挂在它后面排队。名单只用来干两件事——
+  // 把「只有路径/裸 UUID」的事件对到稳定编号，以及拿标题/首句做提醒文案；
+  // 编号已经够用时这两件都不需要。
+  const STABLE_SESSION_ID = /^sess_/i;
+  async function resolveResumeTargetLite({ sessionId = "", sessionPath = "" } = {}) {
+    const id = String(sessionId || "");
+    // 稳定编号在位时它是权威：事件里那个 sessionPath 只是个文件名，拿它对编号就得拉名单。
+    if (STABLE_SESSION_ID.test(id)) return { sessionId: id };
+    // 钩子早就把两套编号对上过：本地查得到就不再问宿主。
+    const pathId = sessionIdFromPath(sessionPath);
+    const mapped = pathId ? resumePathAlias.get(pathId) : "";
+    if (mapped) return { sessionId: mapped };
+    return resolveResumeTarget({ sessionId: id, sessionPath });
   }
   async function resolveResumeTarget({ sessionId = "", sessionPath = "" } = {}, { force = false } = {}) {
     const snapshot = await readResumeSessionIndex({ force });
@@ -1253,6 +1315,7 @@ activeFusionServiceDispose = disposeFusionService;
     // sess_xxx。查到稳定编号后把这层对应关系交给状态机，否则同一个对话会记成两本账——
     // 开头记在 sess_xxx 上，事件收尾只清掉 uuid 那本，90 秒后好好的会话被判成断联。
     if (hit?.sessionId) {
+      rememberSessionPath(sessionPath, hit.sessionId);
       for (const alias of [sessionId, sessionPath ? String(sessionPath).split(/[\\/]/).pop().replace(/\.jsonl$/i, "") : ""]) {
         if (alias) resumeTracker.registerAlias(alias, hit.sessionId);
       }
@@ -2020,7 +2083,7 @@ activeFusionServiceDispose = disposeFusionService;
           if (hasToolCall || (stopReason && stopReason !== "stop")) return;
           const text = assistantTextOf(event.message);
           if (!text) return;
-          const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+          const target = await resolveResumeTargetLite({ sessionId: String(event.sessionId || ""), sessionPath });
           const sid = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
           if (!sid || !loopRegistry.get(sid)) return;
           await fireContinueLoop(sid, text, {
@@ -2037,7 +2100,7 @@ activeFusionServiceDispose = disposeFusionService;
     if (event.type === "turn_end" && queuePlans.list().length) {
       void (async () => {
         try {
-          const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+          const target = await resolveResumeTargetLite({ sessionId: String(event.sessionId || ""), sessionPath });
           let sid = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
           if (!queuePlans.get(sid)) {
             // 认不出是哪段对话就别就此作罢：只有一份话单在跑时，它就是那份。
@@ -2131,7 +2194,7 @@ activeFusionServiceDispose = disposeFusionService;
       const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
       const stopReason = String(event.message?.stopReason || "");
       if (hasToolCall || (stopReason && stopReason !== "stop")) return;
-      const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+      const target = await resolveResumeTargetLite({ sessionId: String(event.sessionId || ""), sessionPath });
       if (stale()) return;
       const sessionId = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
       if (!sessionId) return;
