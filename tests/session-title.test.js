@@ -4,12 +4,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applySessionTitle,
   buildTitleContext,
   buildTitlePrompt,
   cleanContextText,
   cleanTitleFallbackText,
   cleanTitleOutput,
   detectConversationLang,
+  messagePlainText,
+  pickTitleModel,
   stripHiddenMetaBlocks,
 } from "../lib/session-title.js";
 
@@ -75,4 +78,69 @@ test("标题上下文按开头+最近截断，不把中段挤掉", () => {
 
 test("上下文清洗会挡掉只有元信息的会话", () => {
   assert.equal(buildTitleContext([{ role: "user", content: "<mood>只有情绪</mood>" }]), "");
+});
+
+test("消息 content 是数组时也要拼出上下文（只认字符串会让标题永远只能兜底）", () => {
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "帮我看看这个标题" }] },
+    { role: "assistant", content: [{ type: "text", text: "好的" }, { type: "tool_use", id: "t1", name: "read" }] },
+  ];
+  assert.equal(buildTitleContext(messages), "用户: 帮我看看这个标题\n助手: 好的");
+  // 兜底路径同样要能从数组里取到用户原话
+  assert.equal(messagePlainText({ content: [{ type: "text", text: "我觉得都做一下哈" }] }), "我觉得都做一下哈");
+  assert.equal(cleanTitleFallbackText(messagePlainText({ content: [{ type: "text", text: "我觉得都做一下哈" }] })), "我觉得都做一下哈");
+  assert.equal(messagePlainText({ content: "纯字符串" }), "纯字符串");
+  assert.equal(messagePlainText({ content: [{ type: "image" }] }), "");
+  assert.equal(messagePlainText({}), "");
+});
+
+test("模型列表直接返回数组时也能选到标题模型（以前只看 catalog.models）", async () => {
+  const sdk = {
+    models: { list: async () => [{ provider: "openai-codex", model: "gpt-6-luna", isCurrent: true }] },
+    storage: { global: { get: async () => null } },
+  };
+  assert.deepEqual(await pickTitleModel(sdk), { provider: "openai-codex", model: "gpt-6-luna" });
+});
+
+test("选过内容模型就用选的那条，没选则跟随当前模型", async () => {  const catalog = {
+    models: [
+      { provider: "openai-codex", model: "gpt-6-luna", isCurrent: true },
+      { provider: "deepseek", model: "deepseek-flash" },
+    ],
+  };
+  const withChoice = {
+    models: { list: async () => catalog },
+    storage: { global: { get: async (key) => (key === "askJudgeModel" ? { provider: "deepseek", model: "deepseek-flash" } : null) } },
+  };
+  assert.deepEqual(await pickTitleModel(withChoice), { provider: "deepseek", model: "deepseek-flash" });
+
+  const followCurrent = {
+    models: { list: async () => catalog },
+    storage: { global: { get: async () => null } },
+  };
+  assert.deepEqual(await pickTitleModel(followCurrent), { provider: "openai-codex", model: "gpt-6-luna" });
+
+  const empty = { models: { list: async () => [] }, storage: { global: { get: async () => null } } };
+  await assert.rejects(() => pickTitleModel(empty), /模型列表为空/);
+});
+
+test("写入标题要把旧值记下来，否则「还原」永远报没改过", async () => {
+  // 实机（2026-10-22）：起过名之后点还原，永远得到「这段对话没有改过标题」。
+  // 病根：记账那段的条件写反了，只有「没传旧标题」才记，而两个真入口都会传。
+  const store = new Map();
+  const sdk = {
+    storage: { global: {
+      get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback),
+      set: async (key, value) => { store.set(key, value); },
+    } },
+    bus: { request: async () => ({ ok: true, sessionId: "sess_1" }) },
+  };
+  await applySessionTitle(sdk, { sessionId: "sess_1", title: "新名字", previousTitle: "旧名字" });
+  const record = store.get("titleUndo");
+  assert.equal(record.sess_1.previousTitle, "旧名字");
+  assert.equal(record.sess_1.currentTitle, "新名字");
+
+  // 确实没有旧标题时记 null（表示从没起过），不能因此就不记。
+  await applySessionTitle(sdk, { sessionId: "sess_2", title: "另一段", previousTitle: "" });
+  assert.equal(store.get("titleUndo").sess_2.previousTitle, "");
 });

@@ -4,8 +4,11 @@ const PERMISSIONS = [
   { capability: 'app/tools.expose-to-model', title: '让伙伴调用知意工具', detail: '关键提问与推荐回复等工具是否可供伙伴使用。' },
   { capability: 'app/hooks.agent-before-start', title: '生成前加入知意引导', detail: '在伙伴开始回复前提醒其留意重要分岔。' },
   { capability: 'app/hooks.messages-post-assistant', title: '回复后附加速览', detail: '按设置在伙伴回复末尾附上长回复速览。' },
+  { capability: 'app/hooks.provider-before-request', title: '发出前清理旧速览', detail: '旧版留下的速览卡会从发给模型的历史里去掉，避免伙伴跟着模仿。' },
   { capability: 'app/models.infer', title: '调用 Hana 已配置模型', detail: '用于 Ask 判断、推荐回复与长回复速览。' },
   { capability: 'app/sessions.read', title: '读取会话文字', detail: '推荐回复只读取发起对话最近的可见文字。' },
+  { capability: 'app/agents.read', title: '读取伙伴名单', detail: '朗读前确定该叫哪个伙伴；未授权时会退回用会话名单冒充。' },
+  { capability: 'app/session.start-turn', title: '在会话里发起对话回合', detail: '把传音樱上的答案送回来源对话并唤起伙伴回复；也用于明确点击的发送和续接。' },
   { capability: 'app/process.spawn', title: '运行桌面传音樱', detail: '还需要本机具备 Python 与 PyQt6。' },
 ];
 

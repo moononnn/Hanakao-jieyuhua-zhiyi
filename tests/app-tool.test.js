@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import vm from "node:vm";
 import app from "../index.js";
 import { permissionPresentation } from "../ui/assets/permission-status.js";
 
@@ -17,9 +18,17 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   const historyCalls = [];
   const updateCalls = [];
   const sendCalls = [];
+  const sessionListCalls = [];
+  const inputStatusCalls = [];
+  const panelShows = [];
+  const panelDismisses = [];
+  const logs = { info: [], warn: [], debug: [] };
+  let busHandler = null;
   const context = {
     dataDir: "C:/isolated-test/app-data",
-    bus: { request: async (type, input) => {
+    bus: {
+      subscribe: async (handler) => { busHandler = handler; return { ready: Promise.resolve(), dispose() {} }; },
+      request: async (type, input) => {
       if (type === "app:capabilities") {
         capabilityCalls.push(input);
         if (capabilityError) throw capabilityError;
@@ -34,6 +43,9 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
         { role: "assistant", content: "先看土壤干湿，再沿盆边慢慢浇。", entryId: "e2" },
       ] }; }
       if (type === "session:list") {
+        sessionListCalls.push(input);
+        // 数组给固定名单；函数形式每次现取，既能换数据也能在函数里抛错模拟读不到。
+        if (typeof sessionList === "function") return { sessions: sessionList() };
         if (sessionList === null) throw new Error("测试里没有给会话名单");
         return { sessions: sessionList };
       }
@@ -49,7 +61,11 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
       }
       return null;
     } },
-    logger: { info: async () => {}, warn: async () => {}, debug: async () => {} },
+    logger: {
+      info: async (message, detail) => { logs.info.push({ message, detail }); },
+      warn: async (message, detail) => { logs.warn.push({ message, detail }); },
+      debug: async (message, detail) => { logs.debug.push({ message, detail }); },
+    },
     tools: {
       register: async (spec) => {
         registrations.set(spec.name, spec);
@@ -75,6 +91,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
         ] };
       },
     },
+    inputStatus: { set: async (input) => { inputStatusCalls.push({ ...input }); } },
     resources: {
       stage: async (input) => {
         stagedFiles.push({ ...input, content: await readFile(input.path, "utf8") });
@@ -106,6 +123,8 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
         if (askError) throw askError;
         return answer ?? { action: "confirmed", value: { choice: "先做校验" } };
       },
+      show: async (value) => { panelShows.push(value); return { panelId: "panel-test" }; },
+      dismiss: async (value) => { panelDismisses.push(value); return { ok: true }; },
     },
     storage: {
       global: {
@@ -124,6 +143,15 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     historyCalls,
     updateCalls,
     sendCalls,
+    sessionListCalls,
+    inputStatusCalls,
+    panelShows,
+    panelDismisses,
+    logs,
+    /** 把一条宿主事件喂给 App 的订阅处理器。 */
+    emitBus(event, sessionPath = "") {
+      return busHandler ? busHandler(event, sessionPath) : Promise.resolve(null);
+    },
     get registration() { return registrations.get('jiegehua_zhiyi_ask'); },
     tool(name) { return registrations.get(name); },
     hook(word) { return hooks.get(word); },
@@ -155,6 +183,273 @@ async function registeredTool(mock) {
   assert.ok(mock.registration, "app should register its Ask tool");
   return mock.registration;
 }
+
+test("no longer declares a chat-selection context menu or a read-aloud status item", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.contributes.ui.contextMenus, undefined, "聊天区右键朗读已撤掉");
+  assert.equal(manifest.contributes.ui.messageActions, undefined, "朗读入口已从回复末尾移入输入框面板");
+  assert.equal(manifest.contributes.ui.inputStatus.some((item) => item.id === "read-aloud-status"), false, "输入栏不再摆「就绪」状态位");
+  assert.ok(manifest.contributes.ui.inputStatus.some((item) => item.id === "zhiyi-suggest"), "知意按钮要留着");
+});
+
+test("panel ES module parses as a whole without duplicate bindings", { skip: !vm.SourceTextModule }, async () => {
+  const source = await readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8");
+  assert.doesNotThrow(() => new vm.SourceTextModule(source));
+  assert.equal((source.match(/async function refreshResumeStatus\(/g) || []).length, 1);
+  assert.doesNotMatch(source, /loadResumeConfig|saveResumeConfig|startResumePolling|resumeCooldownGroup|resumeSessionId/);
+});
+
+test("panel full-module resume initialization and DOM interactions", { skip: !vm.SourceTextModule }, async (t) => {
+  class Element {
+    constructor(tag = "div") {
+      Object.assign(this, { tagName: tag.toUpperCase(), dataset: {}, disabled: false, hidden: false,
+        checked: false, value: "", textContent: "", children: [], listeners: new Map(), attributes: new Map(),
+        style: {}, classList: { toggle() {}, add() {}, remove() {} } });
+    }
+    setAttribute(key, value) { this.attributes.set(key, String(value)); }
+    getAttribute(key) { return this.attributes.get(key) ?? null; }
+    hasAttribute(key) { return this.attributes.has(key); }
+    removeAttribute(key) { this.attributes.delete(key); }
+    querySelectorAll(selector) { return selector.includes("button") ? this.children.filter(child => child.tagName === "BUTTON") : []; }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    addEventListener(type, handler) { const list = this.listeners.get(type) || []; list.push(handler); this.listeners.set(type, list); }
+    append(...nodes) { this.children.push(...nodes); }
+    appendChild(node) { this.children.push(node); return node; }
+    replaceChildren(...nodes) { this.children = nodes; }
+    closest() { return this; }
+    contains(node) { return this === node || this.children.includes(node); }
+    focus() {}
+    pause() {}
+  }
+  const [source, html] = await Promise.all([
+    readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8"),
+    readFile(new URL("../ui/panel.html", import.meta.url), "utf8"),
+  ]);
+  const elements = new Map();
+  // All real page IDs are present, including the IDs that used to wake the legacy controller.
+  for (const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    assert.ok(!elements.has(match[2]), `duplicate HTML id: ${match[2]}`);
+    const element = new Element(match[1]);
+    // 认一下标签上的 hidden：不然构造器默认的 false 会把“这一段本来就该藏起来”掩盖掉。
+    if (/\shidden(\s|>|$)/.test(match[0])) element.hidden = true;
+    elements.set(match[2], element);
+  }
+  for (const match of html.matchAll(/<div\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/div>/g)) {
+    const group = elements.get(match[1]);
+    if (!group) continue;
+    for (const buttonMatch of match[2].matchAll(/<button\b[^>]*data-value="([^"]+)"[^>]*>/g)) {
+      const button = new Element("button");
+      button.dataset.value = buttonMatch[1];
+      group.append(button);
+    }
+  }
+  const document = new Element();
+  document.head = new Element("head");
+  document.body = new Element("body");
+  document.documentElement = new Element("html");
+  document.querySelector = selector => elements.get(selector.replace(/^#/, "")) || null;
+  document.querySelectorAll = () => [];
+  document.createElement = tag => new Element(tag);
+  let config = { enabled: false, autoResume: false, maxConsecutive: 3 };
+  // 断点续接默认冻结（2026-10-19）：设置页不显示、不读设置、不读结果。
+  let frozen = true;
+  const FREEZE_PHRASE = "面板测试暗号";
+  let failPut = false;
+  let legacyResults = false;
+  let recommendationConfig = { display: "ball", count: 3, styles: [], selectedByCount: {} };
+  let fastTestResult = { ok: true, modelName: "openai-codex/gpt-6-luna", effort: "", reasoningTokens: 0, elapsedMs: 3595, sample: "短任务正文" };
+  const recommendationPuts = [];
+  const puts = [], calls = [], intervals = [];
+  const items = [
+    { agentName: "测试伙伴A", title: "测试窗口A", attempt: 1, maxConsecutive: 3, status: "waiting" },
+    { agentName: "测试伙伴B", title: "测试窗口B", attempt: 3, maxConsecutive: 3, status: "limit" },
+  ];
+  const hana = {
+    ready: async () => {}, theme: { getSnapshot: () => ({ appearance: "light" }), subscribe() {} },
+    api: { fetch: async (url, options = {}) => {
+      calls.push({ url, method: options.method || "GET" });
+      if (url === "/resume-config" && options.method === "PUT") {
+        const body = JSON.parse(options.body);
+        puts.push(body);
+        if (failPut) return { ok: false, json: async () => ({ ok: false, error: "测试失败" }) };
+        config = { ...config, ...body.config };
+      }
+      if (url === "/resume-freeze" && options.method === "POST") {
+        const body = JSON.parse(options.body);
+        if (body.phrase !== FREEZE_PHRASE) {
+          return { ok: false, json: async () => ({ ok: false, error: "暗号不对，冻结状态没变。" }) };
+        }
+        frozen = body.frozen === true;
+        return { ok: true, json: async () => ({ ok: true, frozen }) };
+      }
+      if (url === "/recommendation-config" && options.method === "PUT") {
+        const body = JSON.parse(options.body);
+        recommendationPuts.push(body);
+        recommendationConfig = { ...recommendationConfig, ...body };
+      }
+      const payload = url === "/fast-model/test" ? fastTestResult
+        : url === "/fast-model" ? { ok: true, models: [{ key: "openai-codex/gpt-6-luna", provider: "openai-codex", model: "gpt-6-luna", name: "6luna" }], modelRef: { provider: "openai-codex", model: "gpt-6-luna" } }
+        : url === "/recommendation-config" ? { ok: true, ...recommendationConfig }
+        : url === "/resume-config" ? { ok: true, config, frozen }
+        : url === "/resume-status" ? { ok: true, config, ...(legacyResults ? { items } : { progress: items }) }
+          : { ok: true, config: { enabled: false, minChars: 600 }, models: [], items: [], styles: [],
+            display: "off", count: 3, selectedByCount: {}, partners: [], voices: [], presets: [], running: false };
+      return { ok: true, json: async () => payload };
+    } },
+  };
+  const context = vm.createContext({ document, HTMLElement: Element, hana, console,
+    setTimeout, clearTimeout, setInterval: (...args) => { intervals.push(args); return intervals.length; },
+    clearInterval() {}, URL, Blob, atob });
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(async specifier => {
+    if (specifier === "./sdk.js") return new vm.SyntheticModule(["hana"], function () { this.setExport("hana", hana); }, { context });
+    if (specifier === "./permission-status.js") return new vm.SyntheticModule(["initPermissionStatus"], function () {
+      this.setExport("initPermissionStatus", () => {});
+    }, { context });
+    throw new Error(`unexpected import ${specifier}`);
+  });
+  await module.evaluate();
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
+  await flush();
+  const get = id => elements.get(id);
+  const click = async (id, value) => {
+    const element = get(id);
+    const target = value === undefined ? element : element.children.find(child => child.dataset.value === value);
+    assert.ok(target);
+    assert.equal(target.disabled, false, `click on disabled ${id}`);
+    for (const handler of element.listeners.get("click") || []) await handler({ target });
+    await flush();
+  };
+  // 不带 data-value 的普通元素（标题连点）走这条，不查 disabled。
+  const fire = async (id) => {
+    const element = get(id);
+    for (const handler of element.listeners.get("click") || []) await handler({ target: element });
+    await flush();
+  };
+  await t.test("fast test result clearly reports success and seconds without treating zero as proof of no thinking", async () => {
+    await click("fast-model-test");
+    const text = get("fast-model-status").textContent;
+    assert.match(text, /测试通过/);
+    assert.match(text, /3\.6 秒/);
+    assert.match(text, /模型默认档/);
+    assert.doesNotMatch(text, /思考用了 0|已关思考|已关闭思考/);
+  });
+  await t.test("fast test result distinguishes requested thinking level and reported positive usage", async () => {
+    fastTestResult = { ...fastTestResult, effort: "low", reasoningTokens: 12 };
+    await click("fast-model-test");
+    const text = get("fast-model-status").textContent;
+    assert.match(text, /低思考档/);
+    assert.match(text, /思考用了 12 token/);
+  });
+  await t.test("recommendation ball mode loads with an enabled status instead of the removed card mode", () => {
+    assert.equal(get("rec-display").children.find(button => button.dataset.value === "ball").getAttribute("aria-pressed"), "true");
+    assert.match(get("rec-status").textContent, /^已开启/);
+  });
+  await t.test("recommendation off mode saves and renders the confirmed off response", async () => {
+    await click("rec-display", "off");
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await flush();
+    assert.equal(recommendationPuts.length, 1);
+    assert.equal(recommendationPuts.at(-1).display, "off");
+    assert.equal(recommendationConfig.display, "off");
+    assert.equal(get("rec-display").children.find(button => button.dataset.value === "off").getAttribute("aria-pressed"), "true");
+    assert.match(get("rec-status").textContent, /^已关闭/);
+  });
+  await t.test("recommendation ball mode saves and renders the confirmed enabled response", async () => {
+    await click("rec-display", "ball");
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await flush();
+    assert.equal(recommendationPuts.length, 2);
+    assert.equal(recommendationPuts.at(-1).display, "ball");
+    assert.equal(recommendationConfig.display, "ball");
+    assert.equal(get("rec-display").children.find(button => button.dataset.value === "ball").getAttribute("aria-pressed"), "true");
+    assert.match(get("rec-status").textContent, /^已开启/);
+  });
+  await t.test("startup executes the whole module with one resume controller", () => {
+    assert.equal(document.documentElement.dataset.ready, "true");
+    for (const id of ["resume-enabled", "resume-auto", "resume-max-down", "resume-max-up", "resume-save", "resume-refresh-status"]) {
+      assert.equal(get(id).listeners.get("click")?.length, 1, `duplicate listener ${id}`);
+    }
+    assert.equal(intervals.length, 0, "legacy resume polling must not be started");
+  });
+  await t.test("冻结时整段不显示，也不读设置与结果", () => {
+    assert.equal(get("resume-section").hidden, true);
+    assert.equal(get("resume-freeze-gate").hidden, true);
+    assert.equal(calls.filter(call => call.url === "/resume-config").length, 1, "只读一次冻结状态");
+    assert.equal(calls.filter(call => call.url === "/resume-status").length, 0, "冻结期不去读续接结果");
+    assert.equal(calls.filter(call => call.url === "/resume-freeze").length, 0);
+  });
+  await t.test("暗号不对时冻结状态不动", async () => {
+    for (let i = 0; i < 5; i++) await fire("page-title");
+    assert.equal(get("resume-freeze-gate").hidden, false, "连点五次标题才露出入口");
+    get("resume-freeze-phrase").value = "猜错的";
+    await click("resume-freeze-toggle");
+    assert.match(get("resume-freeze-status").textContent, /暗号不对/);
+    assert.equal(get("resume-section").hidden, true, "暗号不对不许解冻");
+  });
+  await t.test("暗号对了才解冻并把整段接回来", async () => {
+    get("resume-freeze-phrase").value = FREEZE_PHRASE;
+    await click("resume-freeze-toggle");
+    assert.equal(get("resume-section").hidden, false);
+    assert.match(get("resume-freeze-status").textContent, /已解除冻结/);
+    assert.equal(get("resume-freeze-toggle").textContent, "重新冻结", "解冻后按钮要改口成重新冻结");
+    assert.equal(calls.filter(call => call.url === "/resume-config").length, 2);
+    assert.equal(calls.filter(call => call.url === "/resume-status").length, 1, "解冻后补读一次结果");
+    assert.equal(get("resume-auto").children[0].disabled, true);
+    // 总开关这时还关着，结果列表就该是空的；真正渲染两行的那两条在后面把开关打开之后。
+    assert.equal(get("resume-results").hidden, true);
+  });
+  await t.test("enabled toggle sends exactly one enabled-only PUT", async () => {
+    const count = puts.length;
+    await click("resume-enabled", "on");
+    assert.equal(puts.length, count + 1);
+    assert.deepEqual(puts.at(-1), { config: { enabled: true } });
+  });
+  await t.test("auto toggle sends exactly one auto-only PUT", async () => {
+    const count = puts.length;
+    await click("resume-auto", "on");
+    assert.equal(puts.length, count + 1);
+    assert.deepEqual(puts.at(-1), { config: { autoResume: true } });
+  });
+  await t.test("max-only save preserves concurrent ball auto change and redraws response", async () => {
+    config.autoResume = false;
+    await click("resume-max-up");
+    await click("resume-save");
+    assert.deepEqual(puts.at(-1), { config: { maxConsecutive: 4 } });
+    assert.equal(config.autoResume, false);
+    assert.equal(get("resume-auto").children.find(button => button.dataset.value === "off").getAttribute("aria-pressed"), "true");
+  });
+  await t.test("max stepper clamps to 1-10", async () => {
+    for (let i = 0; i < 20 && !get("resume-max-up").disabled; i++) await click("resume-max-up");
+    assert.equal(get("resume-max").textContent, "10");
+    assert.equal(get("resume-max-up").disabled, true);
+    for (let i = 0; i < 20 && !get("resume-max-down").disabled; i++) await click("resume-max-down");
+    assert.equal(get("resume-max").textContent, "1");
+    assert.equal(get("resume-max-down").disabled, true);
+    await click("resume-save");
+  });
+  await t.test("failed PUT restores saved settings without legacy overwrite", async () => {
+    failPut = true;
+    const count = puts.length;
+    await click("resume-enabled", "off");
+    assert.equal(puts.length, count + 1);
+    assert.equal(get("resume-enabled").children.find(button => button.dataset.value === "on").getAttribute("aria-pressed"), "true");
+    assert.match(get("resume-status").textContent, /测试失败/);
+  });
+  await t.test("progress renders all windows from the no-session endpoint", async () => {
+    const count = calls.filter(call => call.url === "/resume-status").length;
+    await click("resume-refresh-status");
+    assert.equal(calls.filter(call => call.url === "/resume-status").length, count + 1);
+    assert.equal(get("resume-results").children.length, 2);
+    assert.match(get("resume-results").children[0].children[1].textContent, /已发送 1\/3/);
+    assert.match(get("resume-results").children[1].children[1].textContent, /达到上限/);
+  });
+  await t.test("items compatibility fallback still renders the full list", async () => {
+    legacyResults = true;
+    await click("resume-refresh-status");
+    assert.equal(get("resume-results").children.length, 2);
+  });
+});
 
 test("panel preserves running/stopping state when an API request fails", async () => {
   const panel = await readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8");
@@ -453,6 +748,54 @@ test("model connectivity test calls the selected model without saving its select
   assert.equal(mock.stored("askJudgeModel"), undefined);
 });
 
+test("fast-model test uses the current unsaved selection instead of stored fast model", async () => {
+  const saved = { provider: "minimax", model: "MiniMax-M3.1-Flash-Preview" };
+  const selected = { provider: "openai-codex", model: "gpt-6-luna" };
+  const mock = createContext({ storageSeed: { fastTaskModel: saved } });
+  mock.context.models.list = async () => ({ models: [saved, selected] });
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/fast-model/test")({
+    req: { json: async () => ({ modelRef: selected }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(result.data.ok, true);
+  assert.equal(mock.modelCalls.length, 1);
+  assert.equal(mock.modelCalls[0].provider, selected.provider);
+  assert.equal(mock.modelCalls[0].model, selected.model);
+  assert.deepEqual(mock.stored("fastTaskModel"), saved, "testing must not persist selection");
+});
+
+test("fast-model follow test bypasses saved fast model and uses Ask selection", async () => {
+  const saved = { provider: "minimax", model: "MiniMax-M3.1-Flash-Preview" };
+  const ask = { provider: "test-provider", model: "test-model" };
+  const mock = createContext({ storageSeed: { fastTaskModel: saved, askJudgeModel: ask } });
+  mock.context.models.list = async () => ({ models: [saved, ask] });
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/fast-model/test")({
+    req: { json: async () => ({ modelRef: null }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(result.data.ok, true);
+  assert.equal(mock.modelCalls.length, 1);
+  assert.equal(mock.modelCalls[0].provider, ask.provider);
+  assert.equal(mock.modelCalls[0].model, ask.model);
+  assert.deepEqual(mock.stored("fastTaskModel"), saved);
+  assert.deepEqual(mock.stored("askJudgeModel"), ask);
+});
+
+test("fast-model test refuses a missing selected model without silently using saved one", async () => {
+  const saved = { provider: "test-provider", model: "test-model" };
+  const mock = createContext({ storageSeed: { fastTaskModel: saved } });
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/fast-model/test")({
+    req: { json: async () => ({ modelRef: { provider: "missing", model: "missing" } }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(result.data.ok, false);
+  assert.equal(mock.modelCalls.length, 0);
+  assert.deepEqual(mock.stored("fastTaskModel"), saved);
+});
+
 test("the recommendation display setting only offers the ball and off", async () => {
   const mock = createContext();
   await registeredTool(mock);
@@ -529,7 +872,7 @@ test("polish route refuses empty input and a missing model instead of guessing o
     json: (data, status) => ({ data, status }),
   });
   assert.equal(noModel.data.ok, false);
-  assert.match(noModel.data.error, /还没有选润色模型/);
+  assert.match(noModel.data.error, /还没有选模型/);
   assert.equal(noModelMock.modelCalls.length, 0, "没选模型就不该调模型");
 });
 
@@ -563,6 +906,38 @@ test("polish route rewrites through the configured model and reports a safety fa
   assert.equal(unsafe.data.text, "就按那个来就行", "丢了指代的改写必须退回原文");
   assert.equal(unsafe.data.fellBack, true);
   assert.equal(unsafe.data.reason, "safety");
+});
+
+test("输入栏 🌸 按钮是开关：第二下收起，面板自己关掉后下次点又是打开", async () => {
+  const mock = createContext({
+    sessionList: [{ path: "D:/hana/agents/hanako/sessions/s1.jsonl", sessionId: "sess_s1", agentId: "hanako", modified: 1 }],
+  });
+  await registeredTool(mock);
+  const tool = mock.tool("jiegehua.zhiyi_suggest");
+  assert.ok(tool, "应该有输入栏面板工具");
+  const call = { context: { sessionPath: "D:/hana/agents/hanako/sessions/s1.jsonl" } };
+
+  await tool.execute(call);
+  assert.equal(mock.panelShows.length, 1, "第一下应该挂出面板");
+  assert.equal(mock.panelDismisses.length, 0);
+
+  await tool.execute(call);
+  assert.equal(mock.panelDismisses.length, 1, "第二下应该收起面板");
+  assert.equal(mock.panelDismisses[0].id, "zhiyi-suggest-panel");
+  assert.equal(mock.panelDismisses[0].sessionId, "sess_s1");
+  assert.equal(mock.panelShows.length, 1, "收起这一下不该再挂一遍");
+
+  await tool.execute(call);
+  assert.equal(mock.panelShows.length, 2, "第三下应该重新打开");
+
+  // 面板自己被宿主关掉时前端会报一声，之后点按钮应该是打开而不是收起
+  await mock.route("POST", "/suggest-panel/hidden")({
+    req: { query: (key) => (key === "sessionId" ? "sess_s1" : "") },
+    json: (data, status = 200) => ({ data, status }),
+  });
+  await tool.execute(call);
+  assert.equal(mock.panelShows.length, 3, "面板已经关了，这一下应该打开");
+  assert.equal(mock.panelDismisses.length, 1);
 });
 
 test("session title reads the most recently active session and cleans the model output", async () => {
@@ -654,6 +1029,41 @@ test("writing the title back goes through session:update and explains a permissi
     assert.equal(guarded.data.ok, false);
   }
   assert.equal(guardMock.updateCalls.length, 0);
+});
+
+test("面板「起名」只改面板所在那段对话，不用「最近活跃那段」现猜", async () => {
+  const mock = createContext({
+    storageSeed: { askJudgeModel: { provider: "test-provider", model: "test-model" } },
+    modelText: "给面板起个名字。",
+    sessionList: [
+      { path: "D:/hana/agents/hanako/sessions/a.jsonl", sessionId: "sess_this", agentId: "hanako", title: "旧名字", modified: 10 },
+      { path: "D:/hana/agents/hanako/sessions/b.jsonl", sessionId: "sess_other", agentId: "hanako", modified: 999 },
+    ],
+  });
+  await registeredTool(mock);
+  const renamed = await mock.route("POST", "/suggest-panel/rename")({
+    req: { json: async () => ({ sessionId: "sess_this" }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(renamed.data.ok, true, renamed.data.error);
+  assert.equal(renamed.data.title, "给面板起个名字");
+  // 名单里 sess_other 更新，但面板就在 sess_this 上，绝不能去改另一段。
+  assert.deepEqual(mock.updateCalls, [{ sessionId: "sess_this", scope: "all", title: "给面板起个名字" }]);
+  assert.equal(mock.historyCalls[0].sessionId, "sess_this");
+  // 旧标题要落在撤回记录里，不然「还原」只能退回「未命名对话」。
+  assert.equal(mock.stored("titleUndo").sess_this.previousTitle, "旧名字");
+
+  // 没带会话编号时一次都不该去动宿主。
+  const guardMock = createContext({ sessionList: [] });
+  await registeredTool(guardMock);
+  const refused = await guardMock.route("POST", "/suggest-panel/rename")({
+    req: { json: async () => ({}) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(refused.data.ok, false);
+  assert.match(refused.data.error, /哪段对话/);
+  assert.equal(guardMock.updateCalls.length, 0);
+  assert.equal(guardMock.modelCalls.length, 0, "不知道改哪段就不该先花一次模型钱");
 });
 
 test("queued send goes through session:send with followUp, no local queue state", async () => {
@@ -849,4 +1259,208 @@ test("does not treat a host display failure as consent and avoids echoing the er
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /原生确认卡也未能确认结果/);
   assert.doesNotMatch(result.content[0].text, /private session details/);
+});
+
+// 下面两条走完整的 App 装配（registeredTool），把 hook、定时器、名单读取和状态机串起来跑。
+// 构造数据是合成的：START 只是 mock timer 的起点，窗口名与伙伴名一律匿名，不对应任何实机记录。
+
+function resumeCaseHarness(sessionList) {
+  // 卡住阈值走合法下界 30 秒（默认是 90 秒），让 tick 能跨过它而不必真等。
+  // 断点总开关现在默认关，这两条测的就是开启后的行为，所以显式 seed true。
+  return createContext({ sessionList, storageSeed: { resumeConfig: { enabled: true, stuckTimeoutMs: 30_000 } } });
+}
+
+async function drainAsyncWork(times = 12) {
+  for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("卡住复核：名单读不到时只能沿用旧索引，这一轮不记账也不推提醒", async (t) => {
+  const START = 1_792_212_000_000;
+  let modified = START + 60_000;
+  let listFails = false;
+  const mock = resumeCaseHarness(() => {
+    if (listFails) { const error = new Error("会话名单超时了"); error.code = "APP_RPC_TIMEOUT"; throw error; }
+    return [{
+      path: "D:/hana/agents/hanako/sessions/case.jsonl",
+      sessionId: "sess_case", agentId: "hanako", agentName: "测试伙伴", title: "测试窗口", modified,
+    }];
+  });
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
+  await registeredTool(mock);
+
+  const startTurn = () => mock.hook("agent/before-start")({ session: { sessionId: "sess_case", agentId: "hanako" } });
+  const status = async () => (await mock.route("GET", "/resume-status")({
+    req: { query: () => "sess_case" }, json: (data) => data,
+  })).session;
+
+  // 一、名单新鲜、这份 modified 比本轮起点新：算有进展，同时把索引热起来。
+  await startTurn();
+  t.mock.timers.tick(31_000);
+  await drainAsyncWork();
+  assert.equal((await status()).pending, null, "有进展就不该记成待决");
+
+  // 二、时间走过那份 modified 后再开一轮；这次名单读不到，沿用的旧快照比本轮起点还早。
+  // 没有新鲜度判断时，这里会拿旧 modified 判「没进展」并 markStuck。
+  t.mock.timers.tick(40_000);
+  await startTurn();
+  listFails = true;
+  t.mock.timers.tick(31_000);
+  await drainAsyncWork();
+
+  assert.equal((await status()).pending, null, "旧快照证明不了没进展，这一轮不能记账");
+  assert.ok(mock.logs.debug.some((entry) => String(entry.message).includes("stale-index")), "要明确走 stale-index 分支，而不是当成没进展");
+  const reviewLog = mock.logs.debug.find((entry) => entry.detail?.indexStale === true);
+  assert.ok(reviewLog, "复核日志要标出这份索引不新鲜");
+  assert.equal(typeof reviewLog.detail.reviewedAt, "number", "复核日志要带 reviewedAt，便于下次对时");
+  assert.ok(mock.sessionListCalls.length > 0);
+  const failures = () => mock.logs.debug.filter((entry) => String(entry.message).includes("续接读不到会话名单"));
+  assert.ok(failures().length > 0, "名单读失败要留一条 debug");
+  const freshAt = failures()[0].detail.cacheFreshAt;
+  assert.ok(freshAt > 0);
+  t.mock.timers.tick(25_000);
+  await drainAsyncWork();
+  assert.ok(failures().length > 1, "持续超时要再次走复核");
+  assert.equal(failures().at(-1).detail.cacheFreshAt, freshAt, "失败重试不能把旧缓存标成刚刚读取成功");
+});
+
+test("断点续接默认关着：不检测、不留进度，开关和上限只合并不改丢别的", async () => {
+  const mock = createContext({
+    sessionList: [{ path: "D:/hana/agents/hanako/sessions/x.jsonl", sessionId: "sess_x", agentId: "hanako", modified: 1 }],
+  });
+  await registeredTool(mock);
+
+  const status = await mock.route("GET", "/resume-status")({
+    req: { query: () => "" }, json: (data, code) => ({ data, status: code }),
+  });
+  assert.equal(status.data.config.enabled, false, "默认不能替用户拿主意去插话");
+  assert.deepEqual(status.data.progress, [], "关着的时候没有进度可查");
+
+  // 只改自动：总开关和上限都不能被洗掉。
+  const saved = await mock.route("PUT", "/resume-config")({
+    req: { json: async () => ({ config: { enabled: true, autoResume: true, maxConsecutive: 4 } }) },
+    json: (data, status2) => ({ data, status: status2 }),
+  });
+  assert.equal(saved.data.config.enabled, true);
+  assert.equal(saved.data.config.autoResume, true);
+  assert.equal(saved.data.config.maxConsecutive, 4);
+
+  const partial = await mock.route("PUT", "/resume-config")({
+    req: { json: async () => ({ config: { maxConsecutive: 6 } }) },
+    json: (data, status2) => ({ data, status: status2 }),
+  });
+  assert.equal(partial.data.config.autoResume, true, "只改上限不该把自动洗成关");
+  assert.equal(partial.data.config.maxConsecutive, 6);
+});
+
+test("续接没有会话编号时不发：空编号会回退到最近那几段对话", async () => {
+  const mock = createContext({
+    sessionList: [{ path: "D:/hana/agents/hanako/sessions/x.jsonl", sessionId: "sess_x", agentId: "hanako", modified: 1 }],
+    storageSeed: { resumeConfig: { enabled: true } },
+  });
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/resume/continue")({
+    req: { json: async () => ({ sessionId: "" }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(mock.sendCalls.length, 0, "没有编号就不能发，宁可不续也不能插错窗口");
+  assert.equal(result.data.ok, false);
+});
+
+import { RESUME_TEXT } from "../lib/resume-watch.js";
+
+test("自动续接：发到上限为止，等不到就安静停着并把结果记进进度", async (t) => {
+  const START = 1_792_212_000_000;
+  const SESSION_PATH = "D:/hana/agents/hanako/sessions/case.jsonl";
+  const mock = createContext({
+    sessionList: [{ path: SESSION_PATH, sessionId: "sess_case", agentId: "hanako", agentName: "测试伙伴", title: "测试窗口", modified: START + 600_000 }],
+    storageSeed: { resumeConfig: { enabled: true, autoResume: true, maxConsecutive: 1, cooldownMs: 10_000, stuckTimeoutMs: 30_000 } },
+  });
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
+  await registeredTool(mock);
+  const status = async () => (await mock.route("GET", "/resume-status")({
+    req: { query: () => "sess_case" }, json: (data, code) => ({ data, status: code }),
+  })).data;
+
+  // 宿主报一次异常 → 自动模式下自己发一句。
+  await mock.emitBus({ type: "turn_end", message: { content: [], stopReason: "error" } }, SESSION_PATH);
+  await drainAsyncWork();
+  t.mock.timers.tick(6_000);
+  await drainAsyncWork();
+  assert.equal(mock.sendCalls.length, 1, "自动模式应该自己发一句「继续哈」");
+  assert.equal(mock.sendCalls[0].deliverAs, "steer");
+
+  const waiting = await status();
+  assert.equal(waiting.progress[0].status, "waiting", "发出去之后要看得见 1/1 在等");
+  assert.equal(waiting.progress[0].attempt, 1);
+  assert.equal(waiting.progress[0].maxConsecutive, 1);
+
+  // 宿主开始处理「继续哈」那一轮：进度不能被新一轮开始吃掉。
+  await mock.hook("agent/before-start")({ session: { sessionId: "sess_case", agentId: "hanako" }, prompt: RESUME_TEXT });
+  await drainAsyncWork();
+  const stillThere = await status();
+  assert.equal(stillThere.progress.length, 1, "故障轮没真结束前，1/N 的进度不能消失");
+  assert.equal(stillThere.progress[0].status, "waiting");
+
+  // 等不到回复：到上限，安静停着，不再发第二次。
+  t.mock.timers.tick(35_000);
+  await drainAsyncWork();
+  assert.equal(mock.sendCalls.length, 1, "到了上限不该再发第二次");
+  const limit = await status();
+  assert.equal(limit.progress[0].status, "limit");
+  assert.equal(limit.progress[0].attempt, 1);
+});
+
+test("卡住复核：名单恢复正常后，确证没进展的会话仍会被记成待决", async (t) => {
+  const START = 1_792_212_000_000;
+  let modified = START - 60_000;
+  const mock = resumeCaseHarness(() => [{
+    path: "D:/hana/agents/hanako/sessions/case.jsonl",
+    sessionId: "sess_case", agentId: "hanako", agentName: "测试伙伴", title: "测试窗口", modified,
+  }]);
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
+  await registeredTool(mock);
+
+  await mock.hook("agent/before-start")({ session: { sessionId: "sess_case", agentId: "hanako" } });
+  t.mock.timers.tick(31_000);
+  await drainAsyncWork();
+
+  const pendingFirst = (await mock.route("GET", "/resume-status")({
+    req: { query: () => "sess_case" }, json: (data) => data,
+  })).session;
+  assert.equal(pendingFirst.pending, null, "第一次看到没进展只进观察窗，不立刻记账（长任务可能还在写盘）");
+
+  // 再过一轮阈值仍然没进展：这才确证卡住。
+  t.mock.timers.tick(31_000);
+  await drainAsyncWork();
+  const status = (await mock.route("GET", "/resume-status")({
+    req: { query: () => "sess_case" }, json: (data) => data,
+  })).session;
+  assert.equal(status.pending, "stuck", "连续两轮都没进展时，不能因为加观察窗就把真卡住也放过");
+});
+
+test("子代理会话报错不进账本：事件没带路径时也要按 target 认得出来", async (t) => {
+  const START = 1_792_212_000_000;
+  const SUB_PATH = "D:/hana/agents/hanako/subagent-sessions/direct/case.jsonl";
+  const mock = createContext({
+    sessionList: [{
+      path: SUB_PATH, sessionId: "sess_sub", agentId: "yuzuki", agentName: "柚月",
+      kind: "subagent_child", modified: START,
+    }],
+    storageSeed: { resumeConfig: { enabled: true, autoResume: true, maxConsecutive: 3, stuckTimeoutMs: 30_000 } },
+  });
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
+  await registeredTool(mock);
+
+  // 事件回调的 sessionPath 有时是空的（实机就这样），入口那道正则挡不住；
+  // 这条走的是异常信号分支，必须拿到 session:list 的条目再认一次。
+  await mock.emitBus({ type: "turn_end", sessionId: "sess_sub", message: { content: [], stopReason: "error" } }, "");
+  await drainAsyncWork();
+  t.mock.timers.tick(6_000);
+  await drainAsyncWork();
+
+  assert.equal(mock.sendCalls.length, 0, "自动续接开着也不能往子代理会话里塞「继续哈」");
+  const status = (await mock.route("GET", "/resume-status")({
+    req: { query: () => "sess_sub" }, json: (data) => data,
+  })).session;
+  assert.equal(status.pending, null, "子代理会话不该被记成待决");
 });

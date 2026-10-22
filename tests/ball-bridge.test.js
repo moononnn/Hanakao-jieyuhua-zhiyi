@@ -67,21 +67,56 @@ function createHarness({
   return { bridge, ball, pushes, storage, modelCalls };
 }
 
-test("跟随模式：取最近活跃的对话，候选按时间倒序，并复用推荐链路生成", async () => {
-  const { bridge, pushes, modelCalls } = createHarness();
+test("球重启后请求序号归零，刷新推荐仍然有效", async () => {
+  const { bridge, ball, pushes, modelCalls } = createHarness();
+  ball.setRequest({ kind: "refresh", seq: 5 });
+  await bridge.tick();
+  const first = modelCalls.length;
+  assert.ok(first >= 1, "第一次刷新应该真的调一次模型");
+  // 球重启：桥上的 requestSeq 从 0 重数，而 App 这边还记着 5。
+  ball.setRequest({ kind: "refresh", seq: 1 });
+  await bridge.tick();
+  assert.equal(modelCalls.length, first + 1, "序号倒退后不能把新请求当成旧的丢掉");
+  assert.equal(pushes.at(-1).suggestions.length, 2);
+});
+
+test("球重启后序号归零，固定目标也仍然生效", async () => {
+  const { bridge, ball, storage } = createHarness();
+  ball.setRequest({ kind: "pin", sessionId: "sess_mid", seq: 9 });
+  await bridge.tick();
+  assert.equal(storage.get(BALL_TARGET_KEY)?.pinned?.sessionId, "sess_mid");
+  ball.setRequest({ kind: "pin", sessionId: "sess_old", seq: 2 });
+  await bridge.tick();
+  assert.equal(storage.get(BALL_TARGET_KEY)?.pinned?.sessionId, "sess_old", "倒退后点固定不能没反应");
+});
+
+test("跟随模式：取最近活跃的对话，候选按时间倒序", async () => {
+  const { bridge, pushes } = createHarness();
   await bridge.tick();
   const last = pushes.at(-1);
   assert.equal(last.target.sessionId, "sess_new");
   assert.equal(last.target.mode, "auto");
   assert.equal(last.target.stale, false);
   assert.deepEqual(last.candidates.map((row) => row.sessionId), ["sess_new", "sess_mid", "sess_old"]);
-  assert.equal(last.suggestions.length, 2);
-  assert.equal(last.generating, false);
-  assert.equal(modelCalls.length, 1, "推荐只调一次模型");
+});
+
+test("纯手动：光开面板、不过期，都不调模型", async () => {
+  const { bridge, ball, pushes, modelCalls } = createHarness();
+  await bridge.tick();
+  await bridge.tick();
+  await bridge.tick();
+  assert.equal(modelCalls.length, 0, "没点刷新就不该调模型");
+  assert.deepEqual(pushes.at(-1).suggestions, [], "没生成过就没有可显示的推荐");
+  // 只有球上明确来了刷新请求才生成
+  ball.setRequest({ kind: "refresh", seq: 1 });
+  await bridge.tick();
+  assert.equal(modelCalls.length, 1);
+  assert.equal(pushes.at(-1).suggestions.length, 2);
 });
 
 test("生成中先推一次空列表，生成完再推结果", async () => {
-  const { bridge, pushes } = createHarness();
+  const { bridge, ball, pushes } = createHarness();
+  ball.setRequest({ kind: "refresh", seq: 1 });
   await bridge.tick();
   assert.equal(pushes.length, 2);
   assert.equal(pushes[0].generating, true);
@@ -125,12 +160,42 @@ test("取消固定：回到跟随模式，目标切回最近活跃", async () =>
 
 test("点刷新：同一目标也强制重新生成一次", async () => {
   const { bridge, ball, pushes, modelCalls } = createHarness();
+  ball.setRequest({ kind: "refresh", seq: 1 });
   await bridge.tick();
   assert.equal(modelCalls.length, 1);
-  ball.setRequest({ kind: "refresh", seq: 1 });
+  ball.setRequest({ kind: "refresh", seq: 2 });
   await bridge.tick();
   assert.equal(modelCalls.length, 2, "刷新必须再调一次模型");
   assert.equal(pushes.at(-1).suggestions.length, 2);
+});
+
+test("点清空：球上列表清掉，且不会被下一轮推回旧的", async () => {
+  const { bridge, ball, pushes, modelCalls } = createHarness();
+  ball.setRequest({ kind: "refresh", seq: 1 });
+  await bridge.tick();
+  assert.equal(pushes.at(-1).suggestions.length, 2);
+
+  ball.setRequest({ kind: "clear", seq: 2 });
+  await bridge.tick();
+  assert.deepEqual(pushes.at(-1).suggestions, [], "清空后这一轮就该是空的");
+
+  await bridge.tick();
+  await bridge.tick();
+  assert.deepEqual(pushes.at(-1).suggestions, [], "清空之后不能自己长回来");
+  assert.equal(modelCalls.length, 1, "清空不该再调模型");
+});
+
+test("换目标：旧列表作废，但不自动生成新的", async () => {
+  const { bridge, ball, pushes, modelCalls } = createHarness();
+  ball.setRequest({ kind: "refresh", seq: 1 });
+  await bridge.tick();
+  assert.equal(pushes.at(-1).suggestions.length, 2);
+
+  ball.setRequest({ kind: "pin", sessionId: "sess_old", seq: 2 });
+  await bridge.tick();
+  assert.equal(pushes.at(-1).target.sessionId, "sess_old");
+  assert.deepEqual(pushes.at(-1).suggestions, [], "旧目标的推荐不能留在新目标下");
+  assert.equal(modelCalls.length, 1, "换了目标也不自动生成，要点刷新");
 });
 
 test("重复的请求序号不重复处理", async () => {
@@ -174,12 +239,15 @@ test("固定目标掉出最近 5 个：目标保留并说明已不在最近列�
   assert.match(last.notice, /不在最近 5 个里/);
 });
 
-test("推荐生成失败：把原因写进 notice，不静默吞掉", async () => {
-  const { bridge, pushes } = createHarness({ modelError: new Error("模型连接失败") });
+test("推荐生成失败：球面提示说人话，供应商原文不挤进去", async () => {
+  const { bridge, ball, pushes } = createHarness({ modelError: new Error("模型连接失败") });
+  ball.setRequest({ kind: "refresh", seq: 1 });
   await bridge.tick();
   const last = pushes.at(-1);
   assert.deepEqual(last.suggestions, []);
-  assert.match(last.notice, /模型连接失败/);
+  // 2026-10-20 起球面只给人话，原文改挂到日志；面板和球就这么高，长句会把控件挤没。
+  assert.match(last.notice, /内容模型/);
+  assert.equal(last.notice.includes("模型连接失败"), false, "供应商原文不塞进球面提示");
 });
 
 test("推荐在设置里关掉时：不调模型、不留提示，只告诉球把那一块收起来", async () => {

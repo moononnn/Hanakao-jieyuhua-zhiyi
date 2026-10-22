@@ -1,30 +1,46 @@
 import { defineApp } from "./sdk/app-contract/server-client.js";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createBallManager } from "./lib/ball.js";
+import { createBallAskWatcher } from "./lib/ball-ask-watch.js";
 import { registerFusionService } from "./lib/fusion-service.js";
 import { createBallBridge, RECOMMEND_POLL_MS } from "./lib/ball-bridge.js";
 import { createCardAskRegistry } from "./lib/card-handoff.js";
 import { appendAskGuidance } from "./lib/ask-guidance.js";
+// 「活干完帮我关」的守门人：采样在 lib/idle-watch.js，判定在 lib/sleep-guard.js。
+import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setRealEnabled } from "./lib/sleep-guard.js";
+// 开发期只读探针：连续拍忙闲快照，肉眼对时间线用。
+// 发布前连同 lib/idle-probe.js 与下面的工具注册一起删掉（见 PENDING_CHANGES），不影响守门功能。
+import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from "./lib/idle-probe.js";
+import { sampleIdleSnapshot, summarizeSnapshot } from "./lib/idle-watch.js";
+import { ContinueLoopRegistry, describeLoop, shouldJudgeLoop } from "./lib/continue-loop.js";
+// 排队话单：球上写一句或一串话，等 ta 这一轮说完就送进去；一串话一轮一条往下推。
+import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRounds, watchdogDecision } from "./lib/queue-plan.js";
 import {
   DEFAULT_MIN_CHARS,
   MAX_MIN_CHARS,
-  appendSummaryBlock,
   buildSummaryBlock,
+  hasToolCalls,
   lastUserMessage,
   normalizeMinChars,
   normalizeSummaryConfig,
   readBodyText,
   recordSummaryFailure,
+  replaceSummaryBlock,
   saveOriginalArchive,
+  stripMoodBlock,
   shouldSummarize,
+  stripSummaryBlocks,
+  stripSummaryFromPayload,
+  stripSummaryInMessage,
   resolveSummaryModelRef,
   summarizeReply,
 } from "./lib/length-summary.js";
 import { chatModelOptions, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
-import { POLISH_LEVEL_OPTIONS, polishText } from "./lib/polish.js";
+import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
+import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
 import { encryptionAvailable, encryptionStatus, protectKey } from "./lib/crypto.js";
 import {
@@ -33,14 +49,19 @@ import {
   isMaskedKey,
   isValidClipId,
   maskVoiceConfig,
+  clipExists,
+  clipFile,
   normalizeVoiceConfig,
   readClip,
+  readClipMeta,
   resolveVoiceIdForAgent,
   saveClip,
+  saveClipMeta,
   synthesizeVoice,
   voicesForProtocol,
 } from "./lib/voice.js";
-import { listSpeakableReplies, prepareSpeakText, resolveSpeakTarget } from "./lib/voice-replies.js";
+import { listSpeakableReplies, prepareDraftText, prepareSpeakText, readFullReplyText, resolveSpeakTarget } from "./lib/voice-replies.js";
+import { normalizeBallTargetState } from "./lib/ball-target.js";
 import {
   applyDrops,
   createDraft,
@@ -60,20 +81,41 @@ import {
   RESUME_TEXT,
   assistantTextOf,
   buildResumeExplanation,
+  buildSessionIndex,
   createResumeTracker,
+  describeResumeSource,
+  isSubagentSessionPath,
+  isSubagentSessionTarget,
   isUserInitiatedAbortReason,
+  lookupSession,
   normalizeResumeConfig,
+  openedAtSnippet,
   parseAutoRetryStart,
   parseResumeSignal,
+  reviewStuckCandidate,
   sessionIdFromPath,
 } from "./lib/resume-watch.js";
-import { friendlySendError, sendToConversation } from "./lib/send.js";
+import { friendlySendError, newestSession, sendToConversation } from "./lib/send.js";
 import {
   COUNT_CHOICES,
   DEFAULT_STYLES,
   DISPLAY_MODES,
+  normalizeQuickReplies,
   normalizeRecommendationConfig,
 } from "./lib/recommendation-config.js";
+import { generateRecommendations, resolveSessionIdByPath } from "./lib/recommendation.js";
+import {
+  SUGGEST_INPUT_STATUS_ID,
+  SUGGEST_PANEL_ID,
+  SUGGEST_PANEL_ROUTE,
+  SUGGEST_PANEL_STATE_KEY,
+  buildPanelPresentation,
+  buildPanelState,
+  estimatePanelHeight,
+  normalizeSuggestionTexts,
+  pickEditableText,
+  readPanelState,
+} from "./lib/suggest-panel.js";
 import {
   ASK_TOOL_SCHEMA,
   buildAskMessage,
@@ -83,6 +125,70 @@ import {
 } from "./lib/ask.js";
 
 export const name = "jiegehua-zhiyi";
+
+// 输入栏那个 🌸 按钮做成开关：面板开着就收起，关着就挂出来。
+// 面板自己被收起/关掉时，前端会报 /suggest-panel/hidden 把这条清掉，
+// 不然下次点按钮会被当成「收起」，看着像点了没反应。
+const openSuggestPanels = new Map();
+
+// ─── 断点续接的对外可见性（2026-10-19 与用户定下）───
+// 冻结的是「界面上看不看得见」，不是这套功能本身：判定、记账、日志全部照跑，
+// 只是不再往设置页和球上送。当前 Hana 版本里真断联极少，弹出来的绝大多数是
+// 子代理会话、模型限流、宿主自己重试——都不该打扰用户，先收起来观察。
+// 解除入口留在设置页（标题连点五次），暗号只存哈希：源码里不落明文。
+const RESUME_FROZEN_DEFAULT = true;
+const RESUME_FROZEN_KEY = "resumeUiFrozen";
+const RESUME_UNFREEZE_SHA256 = "9fcc76bb555e29958888d5e438f463078b8420b01fe5da11f0330650341e5ab6";
+
+function phraseMatches(phrase, expectedHash = RESUME_UNFREEZE_SHA256) {
+  const text = String(phrase || "").trim();
+  if (!text) return false;
+  return createHash("sha256").update(text, "utf8").digest("hex") === expectedHash;
+}
+
+// ─── 语音收藏（2026-10-17 补回）───
+// 只存引用不复制音频：合成好的 clip 已经落在本机，收藏只记 clipId + 文本 + 音色 +
+// 来源伙伴，试听直接读原 clip。旧版是把 base64 音频再存一份，这里没那个必要。
+const VOICE_FAVORITES_KEY = "voiceFavorites";
+const VOICE_FAVORITES_LIMIT = 200;
+
+async function listVoiceFavorites(sdk) {
+  const raw = await sdk.storage.global.get(VOICE_FAVORITES_KEY, []);
+  return Array.isArray(raw) ? raw.filter((item) => item && typeof item === "object" && item.clipId) : [];
+}
+
+async function favoriteVoiceClip(sdk, body) {
+  const clipId = String(body?.clipId || "");
+  const text = String(body?.text || "").trim();
+  const format = String(body?.format || "mp3") === "wav" ? "wav" : "mp3";
+  if (!isValidClipId(clipId)) {
+    const error = new Error("这段音频没法收藏，重新朗读一次。");
+    error.code = "VOICE_FAV_BAD_ID";
+    throw error;
+  }
+  if (!readClip(sdk, clipId, format)) {
+    const error = new Error("这段音频已经不在了，重新朗读一次。");
+    error.code = "VOICE_FAV_NOT_FOUND";
+    throw error;
+  }
+  const items = await listVoiceFavorites(sdk);
+  // 同一段重复收藏就当已收藏，不让列表堆重复条目。
+  const existing = items.find((item) => item.clipId === clipId && item.text === text);
+  if (existing) return { already: true, item: existing, message: "这段已经收藏过了" };
+  const item = {
+    id: `fav_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    clipId,
+    text: text.slice(0, 500),
+    format,
+    voiceId: String(body?.voiceId || ""),
+    agentId: String(body?.agentId || ""),
+    agentName: String(body?.agentName || ""),
+    createdAt: Date.now(),
+  };
+  await sdk.storage.global.set(VOICE_FAVORITES_KEY, [...items, item].slice(-VOICE_FAVORITES_LIMIT));
+  await sdk.logger?.info?.(`已收藏一段语音：${item.id}`);
+  return { item, message: "已收藏 ♡ 设置页「语音收藏」里能听" };
+}
 
 const ASK_TOOL_NAME = "jiegehua_zhiyi_ask";
 const STYLE_REFINE_TOOL_NAME = "jiegehua_zhiyi_refine_recommendation_styles";
@@ -96,28 +202,93 @@ const CARD_FALLBACK_TOOL = "jiegehua_zhiyi_native_fallback";
 const APP_ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 // 朗读合成：页面与传音樱共用同一条路，定位失败就报，不静默改念另一句。
-async function speakByEntry(sdk, { sessionId = "", entryId = "", text = "" } = {}) {
+//
+// 缓存：同一段话、同一个音色与语速合成的音频不该重复收费。key 走「清洗后文本 +
+// 实际音色 + 会影响声音的配置」的哈希；命中时只读回原来那份 clip 与 sidecar 里的词级时间戳，
+// 不重新合成、不改声音。音频文件没了、配置变了（换音色/语速/协议/模型）就照常重合成。
+const VOICE_CLIP_CACHE_KEY = "voiceClipCache";
+const VOICE_CLIP_CACHE_LIMIT = 80;
+
+function voiceFingerprint(text, voiceId, config) {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      text,
+      voiceId,
+      protocol: config.protocol,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      groupId: config.groupId,
+      speed: config.speed,
+      scope: config.scope,
+    }))
+    .digest("base64url")
+    .slice(0, 40);
+}
+
+async function readClipCacheIndex(sdk) {
+  const raw = await sdk.storage.global.get(VOICE_CLIP_CACHE_KEY, {});
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+
+async function rememberCachedSpeak(sdk, fingerprint, clipId) {
+  const index = await readClipCacheIndex(sdk);
+  const entries = Object.entries(index).filter(([key]) => key !== fingerprint);
+  entries.push([fingerprint, clipId]);
+  // 只留最近这些；被挤掉的旧音频文件不删（语音收藏还引用着它的 clipId）。
+  await sdk.storage.global.set(VOICE_CLIP_CACHE_KEY, Object.fromEntries(entries.slice(-VOICE_CLIP_CACHE_LIMIT)));
+}
+
+async function readCachedSpeak(sdk, fingerprint) {
+  const clipId = String((await readClipCacheIndex(sdk))[fingerprint] || "");
+  if (!clipId) return null;
+  const meta = readClipMeta(sdk, clipId);
+  if (!meta || meta.fingerprint !== fingerprint) return null;
+  if (!clipExists(sdk, clipId, meta.format || "mp3")) return null;
+  // clipId 就是 sidecar 的文件名，读回来时补上。
+  return { ...meta, clipId };
+}
+
+async function speakByEntry(sdk, { sessionId = "", entryId = "", entryIds = [], text = "", draft = false, allowCache = true } = {}) {
   const config = normalizeVoiceConfig(await sdk.storage.global.get("voiceConfig", {}));
-  const target = await resolveSpeakTarget(sdk, { sessionId, entryId, text });
-  const prepared = prepareSpeakText(target.raw, config);
+  const target = await resolveSpeakTarget(sdk, { sessionId, entryId, entryIds, text });
+  // draft：前端改过稿的正文。那是她亲手删过的，不能再套字数上限或「只念引号」。
+  const prepared = draft ? prepareDraftText(target.raw) : prepareSpeakText(target.raw, config);
   if (!prepared.text) throw new Error("清洗之后没有可以朗读的内容。");
   const voiceId = resolveVoiceIdForAgent(config, target.agentId);
+  const fingerprint = voiceFingerprint(prepared.text, voiceId, config);
+  const shape = {
+    voiceId,
+    agentId: target.agentId,
+    sessionId: target.sessionId,
+    // 改稿走文字通道时 target.entryId 是空的，但回执还得带上原编号：
+    // 传音樱靠它认领回包，不然球上永远等不到结果。
+    entryId: target.entryId || entryId,
+    text: prepared.text,
+    matched: prepared.matched,
+    truncated: prepared.truncated,
+  };
+  if (allowCache) {
+    const hit = await readCachedSpeak(sdk, fingerprint);
+    if (hit) {
+      await sdk.logger.info(`朗读命中缓存：${String(hit.clipId)} / ${hit.format} / 词级标记 ${hit.timings?.length ?? 0} 条 / 音频约 ${Math.round(Number(hit.durationMs) || 0)} ms / 时间戳首尾 ${Math.round(Number(hit.timings?.[0]?.start) || 0)}-${Math.round(Number(hit.timings?.at?.(-1)?.end) || 0)}`);
+      return { ...shape, clipId: hit.clipId, file: clipFile(sdk, hit.clipId, hit.format || "mp3"), format: hit.format || "mp3", durationMs: hit.durationMs, timings: hit.timings || null, cached: true };
+    }
+  }
   const result = await synthesizeVoice(sdk, { text: prepared.text, config, voiceId });
   const clipId = `clip_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const file = saveClip(sdk, clipId, result.audio, result.format);
-  await sdk.logger.info(`朗读已合成：${prepared.text.length} 字 / ${result.format} / 词级标记 ${result.timings?.length ?? 0} 条`);
+  saveClipMeta(sdk, clipId, { fingerprint, format: result.format, durationMs: result.durationMs, timings: result.timings || null, voiceId });
+  if (allowCache) await rememberCachedSpeak(sdk, fingerprint, clipId);
+  const timings = result.timings || [];
+  await sdk.logger.info(`朗读已合成：${prepared.text.length} 字 / ${result.format} / 词级标记 ${timings.length} 条 / 音频约 ${Math.round(Number(result.durationMs) || 0)} ms / 时间戳首尾 ${Math.round(Number(timings[0]?.start) || 0)}-${Math.round(Number(timings.at(-1)?.end) || 0)}`);
   return {
     clipId,
     file,
     format: result.format,
     durationMs: result.durationMs,
     timings: result.timings || null,
-    voiceId,
-    agentId: target.agentId,
-    sessionId: target.sessionId,
-    text: prepared.text,
-    matched: prepared.matched,
-    truncated: prepared.truncated,
+    cached: false,
+    ...shape,
   };
 }
 
@@ -126,7 +297,7 @@ async function speakByEntry(sdk, { sessionId = "", entryId = "", text = "" } = {
 const VOICE_BRIDGE_POLL_MS = 1500;
 const VOICE_BRIDGE_LIST_TTL_MS = 60_000;
 let voiceBridgeTimer = null;
-const voiceBridgeState = { lastSelectionSeq: 0, pushedAt: 0 };
+const voiceBridgeState = { lastSelectionSeq: 0, pushedAt: 0, lastFavSeq: 0, lastForcePushAt: 0, lastTextSeq: 0 };
 
 function scheduleVoiceBridgeTick(sdk, ball) {
   if (voiceBridgeTimer) return;
@@ -138,9 +309,61 @@ async function voiceBridgeTick(sdk, ball) {
   if (!ball.state().running) { voiceBridgeState.pushedAt = 0; return; }
   try {
     const state = await ball.bridgeRequest("/voice/state");
+    // 语音收藏：球点了「♡ 收藏」就挂在朗读这条桥上，不另开通道。
+    const favSeq = Number(state?.favSeq) || 0;
+    const fav = state?.fav || null;
+    // 球重启后 favSeq 从 0 重数，App 这边还记着旧号会永远不满足 >，收藏点击就好像没反应。
+    if (favSeq < voiceBridgeState.lastFavSeq) voiceBridgeState.lastFavSeq = 0;
+    if (fav && favSeq > voiceBridgeState.lastFavSeq) {
+      voiceBridgeState.lastFavSeq = favSeq;
+      let favResult;
+      try {
+        const added = await favoriteVoiceClip(sdk, fav);
+        favResult = {
+          ok: true, seq: favSeq, already: added.already,
+          message: added.message || "已收藏 ♡ 设置页「语音收藏」里能听",
+        };
+      } catch (error) {
+        await sdk.logger.warn("球内语音收藏失败", { code: error?.code || "VOICE_FAVORITE_ERROR" });
+        favResult = { ok: false, seq: favSeq, error: String(error?.message || "收藏失败了，再试一次").slice(0, 200) };
+      }
+      try {
+        await ball.bridgeRequest("/voice/fav-result", { method: "POST", body: favResult });
+      } catch (error) {
+        await sdk.logger.debug?.("语音收藏结果未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+      }
+    }
     if (state?.readOpen) {
-      if (!voiceBridgeState.pushedAt || Date.now() - voiceBridgeState.pushedAt > VOICE_BRIDGE_LIST_TTL_MS) {
-        const listed = await listSpeakableReplies(sdk, { limit: 8 });
+      // 球点「改稿」要全文：列表里的 text 只带前 1200 字，这里按请求把整条取回。
+      const textRequest = state?.textRequest;
+      const textSeq = Number(state?.textSeq) || 0;
+      if (textSeq < voiceBridgeState.lastTextSeq) voiceBridgeState.lastTextSeq = 0; // 桥重启后序号归零
+      if (textRequest && typeof textRequest === "object" && textSeq > voiceBridgeState.lastTextSeq) {
+        voiceBridgeState.lastTextSeq = textSeq;
+        const requestSessionId = String(textRequest.sessionId || state?.sessionId || "");
+        const requestEntryId = String(textRequest.entryId || "");
+        try {
+          const full = await readFullReplyText(sdk, { sessionId: requestSessionId, entryId: requestEntryId });
+          await ball.bridgeRequest("/voice/text-result", {
+            method: "POST",
+            body: { seq: textSeq, text: full.text, chars: full.chars },
+          });
+        } catch (error) {
+          await ball.bridgeRequest("/voice/text-result", {
+            method: "POST",
+            body: { seq: textSeq, error: String(error?.message || error).slice(0, 200) },
+          });
+        }
+      }
+      // 球上换了目标（或点了刷新）会给一个 forcePushAt 时间戳：比上次大就重拉，不吃 60 秒缓存。
+      // 以前是一个「读到即清」的布尔，但球自己也读这个接口，抢先把信号吃掉，App 就永远不重拉。
+      const forcePushAt = Number(state?.forcePushAt) || 0;
+      if (forcePushAt > voiceBridgeState.lastForcePushAt || !voiceBridgeState.pushedAt || Date.now() - voiceBridgeState.pushedAt > VOICE_BRIDGE_LIST_TTL_MS) {
+        // 以前这里永远不传 sessionId，于是不管球上固定了哪段对话，列表都取「最近活跃」那条。
+        // 实机：固定了 A，朗读窗里却念出了 B 的内容。现在按球上的固定状态取，跟随最近才取最近。
+        const targetState = normalizeBallTargetState(await sdk.storage.global.get("ballTarget", {}));
+        const pinnedSessionId = targetState.mode === "pinned" && targetState.pinned ? targetState.pinned.sessionId : "";
+        const listed = await listSpeakableReplies(sdk, { sessionId: pinnedSessionId, limit: 8 });
         await ball.bridgeRequest("/voice/push", {
           method: "POST",
           body: {
@@ -150,13 +373,21 @@ async function voiceBridgeTick(sdk, ball) {
           },
         });
         voiceBridgeState.pushedAt = Date.now();
+        voiceBridgeState.lastForcePushAt = Math.max(voiceBridgeState.lastForcePushAt, forcePushAt);
       }
-      const seq = Number(state.selectionSeq) || 0;      if (state.selectedEntryId && seq > voiceBridgeState.lastSelectionSeq) {
+      const seq = Number(state.selectionSeq) || 0;
+      // 同理：球重启后 selectionSeq 归零，不重建基线的话，在朗读窗里点什么都不会合成。
+      if (seq < voiceBridgeState.lastSelectionSeq) voiceBridgeState.lastSelectionSeq = 0;
+      if (state.selectedEntryId && seq > voiceBridgeState.lastSelectionSeq) {
         voiceBridgeState.lastSelectionSeq = seq;
+        // 球上改过稿就带着稿子来：走文字通道，不再拿 entryId 去拼原文。
+        const draftText = String(state.selectedText || "").trim();
         try {
           const spoken = await speakByEntry(sdk, {
             sessionId: String(state.sessionId || ""),
             entryId: String(state.selectedEntryId || ""),
+            text: draftText,
+            draft: Boolean(draftText),
           });
           await ball.bridgeRequest("/voice/result", {
             method: "POST",
@@ -203,6 +434,118 @@ async function ballBridgeTick(sdk, ball) {
   scheduleBallBridgeTick(sdk, ball);
 }
 
+// ── 守门人状态推给传音樱 ──
+// 球不能回调 App，只能轮询自己的桥；所以这边定时把快照推过去，球只管显示。
+// 只在球跑着的时候推，且状态没变就不推。
+const sleepBallState = { lastKey: "", timer: null, lastActionSeq: 0, ready: false, bootId: "" };
+
+/** 真关机开关的读值缓存：1.5 秒一轮，不能每轮都去打宿主 RPC。 */
+let sleepRealCache = { at: 0, value: false };
+async function readRealEnabledCached(sdk) {
+  if (Date.now() - sleepRealCache.at < 3_000) return sleepRealCache.value;
+  const value = await isRealEnabled(sdk);
+  sleepRealCache.at = Date.now();
+  sleepRealCache.value = value;
+  return value;
+}
+
+/** 球上一级按钮按下的意图：arm 就挂，cancel 就撤。 */
+async function applyBallSleepAction(sdk, kind) {
+  if (kind === "cancel") {
+    await cancelSleepGuard(sdk, "在传音樱上按了取消");
+    await sdk.logger.info("传音樱取消守门");
+    return;
+  }
+  if (describeSleepGuard().armed) return;
+  await armSleepGuard(sdk, { armedBy: "ball", note: "传音樱一级按钮" });
+  await sdk.logger.info("传音樱挂上静候（真关机）");
+}
+
+/** 拼一份要推给球的快照。 */
+async function buildSleepBody(sdk) {
+  const described = describeSleepGuard();
+  const state = described.state || {};
+  const body = {
+    armed: described.armed === true,
+    status: state.status || "idle",
+    idleSeconds: Math.round((described.idleForMs || 0) / 1000),
+    needSeconds: Math.round((state.idleMs || 0) / 1000),
+    countdownSeconds: Math.round((described.countdownLeftMs || 0) / 1000),
+    realEnabled: await readRealEnabledCached(sdk),
+    busyCount: 0,
+  };
+  const summary = state.lastSummary;
+  if (summary && typeof summary === "object") {
+    body.busyCount = Number(summary.busyCount || 0) + Number(summary.tasks?.active || 0);
+  }
+  return body;
+}
+
+/** 推一次状态；状态指纹没变就不发（force 时例外，按钮按完要立刻看得见）。 */
+async function pushSleepState(sdk, ball, force = false) {
+  const body = await buildSleepBody(sdk);
+  const key = `${body.armed}|${body.status}|${Math.floor(body.idleSeconds / 5)}|${body.busyCount}|${body.realEnabled}`;
+  if (!force && key === sleepBallState.lastKey) return;
+  sleepBallState.lastKey = key;
+  await ball.bridgeRequest("/sleep/state", { method: "POST", body });
+}
+
+function startSleepBallPush(sdk, ball) {
+  if (sleepBallState.timer) return;
+  // 已执行到哪一号从盘上取：App 重载后不会把球上的旧按键再跑一遍。
+  void (async () => {
+    try {
+      const saved = Number(await sdk.storage.global.get("sleepBallActionSeq", 0));
+      const savedBoot = String(await sdk.storage.global.get("sleepBallBootId", "") || "");
+      sleepBallState.bootId = savedBoot;
+      if (Number.isFinite(saved) && saved > sleepBallState.lastActionSeq) {
+        sleepBallState.lastActionSeq = saved;
+      }
+    } catch {}
+    sleepBallState.ready = true;
+  })();
+  const tick = async () => {
+    if (!ball.state().running) return;
+    try {
+      // 先读球上的按钮意图：球不能回调 App，只能把「人按了」写在自己的桥上。
+      let remote = null;
+      try {
+        remote = await ball.bridgeRequest("/sleep/state", { method: "GET" });
+      } catch {
+        remote = null;
+      }
+      if (sleepBallState.ready && remote && remote.ok === true) {
+        // 球换了（重启/重装）就从头算：它的 seq 又从 1 开始了。
+        const bootId = String(remote.bootId || "");
+        if (bootId && bootId !== sleepBallState.bootId) {
+          sleepBallState.bootId = bootId;
+          sleepBallState.lastActionSeq = 0;
+          void sdk.storage.global.set("sleepBallBootId", bootId).catch(() => {});
+        }
+        const seq = Number(remote.actionSeq || 0);
+        if (seq > sleepBallState.lastActionSeq) {
+          sleepBallState.lastActionSeq = seq;
+          void sdk.storage.global.set("sleepBallActionSeq", seq).catch(() => {});
+          const kind = String(remote.action?.kind || "");
+          if (kind === "arm" || kind === "cancel") {
+            await applyBallSleepAction(sdk, kind);
+            // 按完立刻把新状态推回去，不让它干等下一轮。
+            sleepRealCache.at = 0;
+            await pushSleepState(sdk, ball, true);
+          }
+        }
+      }
+
+      await pushSleepState(sdk, ball);
+    } catch (error) {
+      await sdk.logger.debug?.(`守门状态未送达传音樱：${String(error?.message || error).slice(0, 120)}`);
+    }
+  };
+  sleepBallState.timer = setInterval(() => { void tick(); }, 1_500);
+  sleepBallState.timer.unref?.();
+  void tick();
+}
+
 // ── 断联续接（2026-10-14 与用户定下的分工）──
 // 异常提醒归提个醒（它已经在做模型异常中断通知），知意只管续接：
 // 订阅宿主事件做判定 → 自动或手动发一句「继续哈」 → 连续几次没成才在球里报一次。
@@ -213,6 +556,8 @@ function makeResumeTracker(config) {
     maxConsecutive: config.maxConsecutive,
     cooldownMs: config.cooldownMs,
     stuckTimeoutMs: config.stuckTimeoutMs,
+    // 等一发的回复上限与卡住阈值同口径：都是「多久没说话算异常」。
+    awaitingTimeoutMs: config.stuckTimeoutMs,
   });
 }
 
@@ -239,29 +584,103 @@ function normalizeAskConfig(raw) {
 function installBallShutdownHooks() {
   if (shutdownHooksInstalled) return;
   shutdownHooksInstalled = true;
-  process.once("SIGTERM", () => { void activeBallManager?.stop(); });
-  process.once("SIGINT", () => { void activeBallManager?.stop(); });
+  // 卸载/重载时球必须停，但这是 App 自己的动作，不代表用户不想让它开着。
+  // 标成 forShutdown 的停止不会把「球想要开着」这个意图改掉，新实例起来会自己恢复。
+  process.once("SIGTERM", () => { void activeBallManager?.stop({ forShutdown: true }); });
+  process.once("SIGINT", () => { void activeBallManager?.stop({ forShutdown: true }); });
   process.once("exit", () => {
-    try { if (activeBallManager?.state().running) activeBallManager.stop(); } catch {}
+    try { if (activeBallManager?.state().running) activeBallManager.stop({ forShutdown: true }); } catch {}
     try { activeFusionServiceDispose?.(); } catch {}
   });
 }
 
 export default defineApp(async (sdk) => {
   await sdk.logger.info("jiegehua-zhiyi loaded");
+  // 钩子每轮都要读几份配置，而宿主对 App RPC 有并发上限：撞上去整个钩子会被丢掉
+  // （日志里就是 adjudicator threw ... App RPC concurrency limit reached），
+  // 一次 Ask 判断或一段速览就这样静默没了，看上去像「模型没连上」。这里做两件事：
+  //   1. 配置读一次管几秒，连续回合和轮询不必每轮都打 RPC；
+  //   2. 撞上限时退避重试一次，仍失败就沿用上一次读到的值——不拿默认值当真相。
+  // 设置页写配置走 saveConfig，顺手清缓存，用户改完立即生效。
+  const CONFIG_TTL_MS = 4_000;
+  const configCache = new Map();
+  function rpcBusy(error) {
+    const text = `${error?.code || ""} ${error?.message || ""}`;
+    return /concurrency limit|IPC_BUSY|RPC_BUSY/i.test(text);
+  }
+  async function readConfig(key, fallback = null) {
+    const hit = configCache.get(key);
+    if (hit && Date.now() - hit.at < CONFIG_TTL_MS) return hit.value;
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const value = await sdk.storage.global.get(key, fallback);
+        configCache.set(key, { at: Date.now(), value });
+        return value;
+      } catch (error) {
+        lastError = error;
+        if (!rpcBusy(error)) break;
+        await new Promise((resolve) => { const timer = setTimeout(resolve, 150 + attempt * 200); timer.unref?.(); });
+      }
+    }
+    if (hit) return hit.value;
+    throw lastError;
+  }
+  async function saveConfig(key, value) {
+    await sdk.storage.global.set(key, value);
+    configCache.delete(key);
+  }
   const askEnabledAtLoad = normalizeAskConfig(await sdk.storage.global.get("askConfig", {})).enabled;
   await sdk.logger.info("Ask card registration decided at load", { enabled: askEnabledAtLoad });
   await sdk.hooks.onDecision("agent/before-start", async (invocation) => {
+    // 循环续接：用户自己开口就停（循环自己补发的那句要排除在外）。
+    const loopSessionId = String(invocation?.session?.sessionId || "");
+    const incomingPrompt = String(invocation?.prompt || "");
+    if (loopSessionId && loopRegistry.get(loopSessionId) && !incomingPrompt.includes(RESUME_TEXT)) {
+      const stoppedLoop = loopRegistry.onUserMessage(loopSessionId);
+      if (stoppedLoop) {
+        await sdk.logger.info("用户接过话，循环续接已停");
+        await pushLoopState(null);
+      }
+    }
+    // 排队话单：两种情况——我们排的那句被接走了（把「还在排」的标记清掉），
+    // 或者用户自己开口（活人接手，话单当场停，不跟人抢麦）。
+    if (loopSessionId) {
+      const plan = queuePlans.get(loopSessionId);
+      if (plan && plan.status === "running") {
+        if (queuePlans.isOwnPrompt(loopSessionId, incomingPrompt)) {
+          queuePlans.markDelivered(loopSessionId);
+          await pushQueueState(queuePlans.get(loopSessionId));
+        } else {
+          const stoppedPlan = queuePlans.onUserMessage(loopSessionId);
+          if (stoppedPlan) {
+            await sdk.logger.info("用户接过话，排队话单已停");
+            await pushQueueState(null, { message: "你自己接过话了，话单停了" });
+          }
+        }
+      }
+    }
     // 卡住兜底的时间起点：这一轮开始了。
-    if (resumeConfig.enabled && invocation?.session?.sessionId) {
+    // 用户自己开口 = 旧故障作废，新开一轮。「继续哈」是 App 自己发的，
+    // 不能当成用户说话去清自己的账，否则刚发出去的续接会被自己抹掉。
+    const isResumePrompt = incomingPrompt.includes(RESUME_TEXT);
+    // 子代理会话不记账：事件侧的 sessionPath 有时是空的，钩子这层再挡一道。
+    const resumeSessionPath = String(invocation?.session?.path || invocation?.session?.sessionPath || "");
+    if (resumeConfig.enabled && invocation?.session?.sessionId && !isSubagentSessionPath(resumeSessionPath)) {
+      if (!isResumePrompt) {
+        resumeTracker.forget(invocation.session.sessionId);
+        resumeSignals.delete(resumeTracker.canonicalId(invocation.session.sessionId));
+        const hadNotice = resumeNoticeKey === resumeTracker.canonicalId(invocation.session.sessionId);
+        if (hadNotice && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
+      }
       resumeTracker.markStarted(invocation.session.sessionId);
     }
     // 每轮都现读开关：关掉后不必等重新加载，引导立刻不再注入。
     // 顺带连判断模型那一次调用也省了——不引导就没必要先问模型该不该问。
-    const askEnabled = normalizeAskConfig(await sdk.storage.global.get("askConfig", {})).enabled;
+    const askEnabled = normalizeAskConfig(await readConfig("askConfig", {})).enabled;
     let prompt = invocation?.systemPrompt;
     if (askEnabled) {
-      const configuredModel = await sdk.storage.global.get("askJudgeModel", null);
+      const configuredModel = await readConfig("askJudgeModel", null);
       const review = await reviewAskNeed(sdk, invocation?.prompt, configuredModel, (event) => {
         void sdk.logger.debug?.("Ask model precheck", event);
       });
@@ -270,32 +689,134 @@ export default defineApp(async (sdk) => {
     // 推荐回复只活在传音樱里，主对话不再出卡，也就没有推荐引导可注。
     // 设置页点了「方向不太对？和小花聊聊」→ 这一轮先把意图交给伙伴，只注一次。
     let refineHint = "";
-    if (await sdk.storage.global.get("styleRefineRequested", false)) {
-      await sdk.storage.global.set("styleRefineRequested", false);
+    if (await readConfig("styleRefineRequested", false)) {
+      await saveConfig("styleRefineRequested", false);
       refineHint = "（知意）用户刚在设置里点了「方向不太对，和你聊聊」。先用一两句话问清楚他想怎么改，别急着调工具；他说完你再调 jiegehua_zhiyi_refine_recommendation_styles 出建议。";
     }
     return { systemPrompt: `${prompt}${refineHint}` };
   });
+
+  // ── 历史速览卡的消毒 ──
+  // 旧版解语花是靠**系统提示词**让主模型自己在正文末尾写速览的（见旧插件
+  // extensions/observer.js 的 replySummaryInstructions，more 档写着「大约 300 字以上」，
+  // 还另开一条「需要用户拍板就加，哪怕没到字数门槛」），所以历史里那些卡实际上是
+  // **模型自己写的东西**。现在那套提示已经不在跑了，但卡还留在会话历史里，
+  // 而模型每轮都会读到历史——它看到的是自己以前这么写过，于是接着这么写。
+  // 在下游清卡治不了根：清掉的是显示，模型看的还是带卡的历史，下一轮又写一张。
+  // 所以在这里把发给模型的历史也洗干净：它看不见这个格式，就慢慢不会再写。
+  await sdk.hooks.onDecision("provider/before-request", async (invocation) => {
+    const payload = invocation?.payload;
+    if (!payload || typeof payload !== "object") return undefined;
+    const cleaned = stripSummaryFromPayload(payload);
+    return cleaned === payload ? undefined : { payload: cleaned };
+  });
   // 长回复速览：正文达到阈值时生成几行要点，以引用块小卡接在原文末尾。
   // 原文完整保留，速览只是附在后面的一段。
   let summarizing = false;
+  // 这份配置在钩子里每轮都要读。缓存后少一次 App RPC——宿主对 App RPC 有并发上限，
+  // 撞上去的后果是整个钩子被丢掉，连前面那句「这一轮出正文了」都记不上。
+  let summaryConfigCache = null;
+  async function readSummaryConfig() {
+    if (summaryConfigCache) return summaryConfigCache;
+    try {
+      summaryConfigCache = normalizeSummaryConfig(await readConfig("summaryConfig", {}));
+    } catch (error) {
+      // 读不到就这一轮不做速览（默认值是开着的，不能拿默认值当真相，那会白花一次模型调用）。
+      await sdk.logger.debug?.("长回复速览配置读取失败，这轮跳过", {
+        error: String(error?.message || error?.code || error).slice(0, 120),
+      });
+      return { enabled: false, minChars: DEFAULT_MIN_CHARS };
+    }
+    return summaryConfigCache;
+  }
   // check 必须在 try 外面声明：catch 里要读它，写在 try 块内会在错误处理时再抛一次。
   let check = null;
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
-    // 出了正文就算这一轮说下去了，卡住计时立即作废（要在下面任何提前 return 之前）。
-    if (invocation?.session?.sessionId) {
-      resumeTracker.markProduced(invocation.session.sessionId);
+    // 这一轮真的说完了才算恢复：工具中间轮只是把卡住计时作废，不能清失败计数，
+    // 也不能收掉那条小条。bus 的 turn_end 偶尔会缺，这一处是兵底。
+    if (resumeConfig.enabled && invocation?.session?.sessionId
+      && !isSubagentSessionPath(invocation?.session?.path || invocation?.session?.sessionPath || "")) {
+      const sessionKey = invocation.session.sessionId;
+      const agentId = String(invocation?.session?.agentId || "");
+      const parts = Array.isArray(invocation?.message?.content) ? invocation.message.content : [];
+      const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
+      const stopReason = String(invocation?.message?.stopReason || "");
+      if (!hasToolCall && (!stopReason || stopReason === "stop")) {
+        const canonicalKey = resumeTracker.canonicalId(sessionKey);
+        resumeTracker.markRecovered(sessionKey, agentId);
+        resumeSignals.delete(canonicalKey);
+        if (resumeNoticeKey === canonicalKey && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
+        void pushResumeProgress();
+      } else {
+        resumeTracker.markProduced(sessionKey, agentId);
+      }
+    }
+    // 排队话单：这一轮说完了，把下一句送进去。
+    // 带工具调用的那条不算「说完了」：那是一轮里的中间段，提前送下一句会把 ta 打断。
+    //
+    // 放在循环续接前面：钩子是一次性判定，宿主对 App RPC 有并发上限，撞上限时整条钩子被丢掉。
+    // 循环续接那一段要是先抛了，排队这一段就轮不到——话单会一直停在「排队中 第 n/N 轮」。
+    if (!queueFiring && invocation?.session?.sessionId && !hasToolCalls(invocation?.message)) {
+      try {
+        await fireQueuePlan(String(invocation.session.sessionId), readBodyText(invocation?.message), { source: "hook" });
+      } catch (error) {
+        safeLog.warn(`排队话单钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
+    // 循环续接：这一轮说完了，决定要不要再推一句「继续哈」。
+    if (!loopFiring && invocation?.session?.sessionId) {
+      try {
+        await fireContinueLoop(String(invocation.session.sessionId), readBodyText(invocation?.message), {
+          agentId: String(invocation?.session?.agentId || ""),
+          source: "hook",
+        });
+      } catch (error) {
+        safeLog.warn(`循环续接钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
+      }
     }
     try {
-      const config = normalizeSummaryConfig(await sdk.storage.global.get("summaryConfig", {}));
+      const config = await readSummaryConfig();
       if (!config.enabled) return undefined;
       if (summarizing) return undefined;
 
-      const text = readBodyText(invocation?.message);
-      if (!text) return undefined;
+      // 这一轮可能是「正文 → 工具调用 → 正文」多段拼起来的：中间那条 assistant 消息
+      // 带着 toolCall，后面一定还有正文。这时就插速览，卡片会夹在回复中间（实测就是
+      // 这样：速览出现在段落之间，后面还接着写）。带工具调用的那条一律跳过，等最后一条。
+      if (hasToolCalls(invocation?.message)) {
+        await sdk.logger.debug?.("长回复速览跳过：这条消息还带工具调用，后面还有正文");
+        return undefined;
+      }
+
+      const rawText = readBodyText(invocation?.message);
+      if (!rawText) return undefined;
+
+      // ── 先无条件把卡全部摘掉，再谈要不要贴新卡 ──
+      // 以前只在「不够长」时摘，结果两条路都漏：
+      //   ① 够长时直接 replace，靠 replaceSummaryBlock 自己剥；
+      //   ② 不够长又没卡时啥也不做。
+      // 真正漏掉的是第三种：**模型自己写的卡**。实测同一条消息里挖出过 4 张
+      // `> **速览** · 原文 N 字`（607/890/309/1216 四个不同数字，而正文只有 1359 字），
+      // 而 replaceSummaryBlock 每次先剥再贴，绝不可能留下 4 张——能叠成这样只有一种解释：
+      // 模型在写正文时顺手写进去了。它甚至把字数也自己编一个。
+      // 所以清卡不能再依附于「够不够长」这个分支，得无条件执行。
+      const issuedByModel = (rawText.match(/^>[ \t]*\*\*(?:🌸[ \t]*)?(?:知意)?速览\*\*/gmu) || []).length;
+      const withoutCards = stripSummaryInMessage(invocation?.message);
+      const bodySource = readBodyText(withoutCards) ?? rawText;
+      const text = stripMoodBlock(bodySource);
+      const hadCards = withoutCards !== invocation?.message;
+      if (hadCards && issuedByModel > 1) {
+        // 超过一张说明不是我们贴的（我们永远只留一张），日志留个脚印好查。
+        await sdk.logger.info(`正文里有 ${issuedByModel} 张速览卡，不是知意贴的，已清掉`);
+      }
+
       const userText = await lastUserMessage(sdk, invocation?.session);
       check = shouldSummarize({ text, minChars: config.minChars, userText });
       if (!check.ok) {
+        // 不够线就不该有卡：不管是早先贴的旧卡，还是模型自己写的，一并清掉。
+        if (hadCards) {
+          await sdk.logger.info(`撒掉不应存在的速览卡：${check.reason}（现 ${text.length} 字）`);
+          return { message: withoutCards };
+        }
         await sdk.logger.info(`长回复速览跳过：${check.reason}（${text.length} 字）`);
         return undefined;
       }
@@ -303,19 +824,20 @@ export default defineApp(async (sdk) => {
       summarizing = true;
       try {
         const configuredModel = resolveSummaryModelRef(
-          await sdk.storage.global.get("summaryModel", null),
-          await sdk.storage.global.get("askJudgeModel", null),
+          await readConfig("summaryModel", null),
+          await readConfig("askJudgeModel", null),
         );
-        const { lines, elapsedMs } = await summarizeReply(sdk, text, configuredModel, (event) => {
+        const { lines, elapsedMs, effort, attempts, reasoningTokens } = await summarizeReply(sdk, text, configuredModel, (event) => {
           void sdk.logger.debug?.("长回复速览模型流", event);
         });
         const sessionPath = typeof invocation?.session === "string"
           ? invocation.session
           : (invocation?.session?.sessionPath ?? invocation?.session?.path ?? "");
         saveOriginalArchive(sdk.dataDir, { sessionPath, chars: check.chars, text, lines });
-        const next = appendSummaryBlock(invocation.message, buildSummaryBlock(lines, check.chars));
+        const next = replaceSummaryBlock(invocation.message, buildSummaryBlock(lines, check.chars));
         if (!next) return undefined;
-        await sdk.logger.info(`长回复已附速览小卡（${check.chars} 字，${lines.length} 行，耗时 ${elapsedMs}ms）`, { chars: check.chars, lines: lines.length, elapsedMs, model: invocation?.message?.model ?? null });
+        // effort / reasoningTokens 记进日志：下次再空正文，日志会直接写“思考吃了多少”，不用猜。
+        await sdk.logger.info(`长回复已附速览小卡（${check.chars} 字，${lines.length} 行，耗时 ${elapsedMs}ms）`, { chars: check.chars, lines: lines.length, elapsedMs, model: invocation?.message?.model ?? null, effort: effort || "(默认档)", attempts, reasoningTokens });
         return { message: next };
       } finally {
         summarizing = false;
@@ -328,24 +850,454 @@ export default defineApp(async (sdk) => {
     }
   });
 
-  const ball = createBallManager({ sdk, appRoot: APP_ROOT });
+  // 「球是不是用户想让它开着」这个意图必须落盘：App 重载会把子进程一起带走，
+  // 不记事的话每次改完东西球就没了，得人手点一次（2026-10-19 实机反复踩）。
+  // 同时给意外退出一个自愈机会：只有用户本来就要它开着时，才自动拉起来。
+  let ballDesired = false;
+  let ballRestartAttempts = 0;
+  let ballRestartTimer = null;
+  const BALL_RESTART_DELAYS = [2_000, 5_000, 10_000];
+
+  // 宿主重开过没有？用 ppid 问，不另找接口。
+  // app 是宿主主 server 直接 spawn 的子进程（中间没有别的），所以 ppid 就是这一次的宿主身份。
+  // 关键：它能把两件混在一起的事分开——
+  //   改代码 / reload  → ppid 不变 → 球回来（2026-10-19 那个坑不能再踩）；
+  //   退出 Hana 再开 / 电脑重启 → ppid 变了 → 不自己冒出来（2026-10-20 用户明确不要的）。
+  const HOST_PID = typeof process !== "undefined" && Number.isInteger(process.ppid) ? process.ppid : 0;
+  /** true=同一宿主该恢复，false=宿主重开过不恢复，null=拿不到 ppid 判不了。 */
+  async function sameHostAsLastRun() {
+    if (!HOST_PID) return null;
+    const remembered = Number(await sdk.storage.global.get("ballHostPid", 0));
+    // 没记过：当新宿主处理。宁可少自动一次，也不要在用户不知情时弹球。
+    if (!Number.isInteger(remembered) || remembered <= 0) return false;
+    return remembered === HOST_PID;
+  }
+  function rememberCurrentHost() {
+    if (!HOST_PID) return;
+    void saveConfig("ballHostPid", HOST_PID).catch(() => {});
+  }
+
+  const ball = createBallManager({
+    sdk,
+    appRoot: APP_ROOT,
+    onStarted: () => {
+      ballDesired = true;
+      ballRestartAttempts = 0;
+      if (ballRestartTimer) { clearTimeout(ballRestartTimer); ballRestartTimer = null; }
+      void saveConfig("ballDesired", true).catch(() => {});
+      rememberCurrentHost();
+    },
+    onExited: ({ code, intentional }) => {
+      // 卸载/重载：新实例会按 ballDesired 把它接回来，这里什么都不改。
+      if (intentional === "shutdown") return;
+      if (intentional === "user") {
+        ballDesired = false;
+        void saveConfig("ballDesired", false).catch(() => {});
+        return;
+      }
+      if (!ballDesired) return;
+      if (ballRestartAttempts >= 3) {
+        void sdk.logger.warn("传音樱连续意外退出三次，已停止自动重启；需要的话手动再开一次。");
+        return;
+      }
+      const wait = BALL_RESTART_DELAYS[Math.min(ballRestartAttempts, BALL_RESTART_DELAYS.length - 1)];
+      ballRestartAttempts += 1;
+      if (ballRestartTimer) clearTimeout(ballRestartTimer);
+      void sdk.logger.warn(`传音樱意外退出（${code ?? "未知状态"}），${Math.round(wait / 1000)} 秒后自动重启（第 ${ballRestartAttempts}/3 次）`);
+      ballRestartTimer = setTimeout(() => {
+        ballRestartTimer = null;
+        void ball.start().catch(() => {});
+      }, wait);
+      ballRestartTimer.unref?.();
+    },
+  });
+// 球上作答的回传通道：工具把题送到就返回，答案由这里轮询接收、补回原会话。
+// 为什么不在这里等：宿主给工具执行的 RPC 只有 30 秒，球上却能挂十分钟。
+const ballAsks = createBallAskWatcher({
+  logger: sdk.logger,
+  readAskResult: (askId) => ball.readAskResult(askId),
+  send: async (text, sessionId) => {
+    // steer 而不是 followUp：用户点球的那一刻，这一轮早就结束了、会话是空闲的。
+    // followUp 的语义是「等 ta 说完再发」，安在空闲会话上会排队等一个永远不会来的
+    // 轮次结束，实际表现就是「点了没反应」。steer 立刻发，直接把新回合拉起来。
+    try {
+      await sendToConversation(sdk, { text, mode: "steer", sessionId });
+    } catch (error) {
+      // 把宿主的原始拒绝带出来：只写「回传失败」等于什么都没说。
+      const detail = String(error?.cause?.message || error?.message || error);
+      await sdk.logger.warn(`回传发送被拒 code=${error?.code || "none"} raw=${detail.slice(0, 300)}`);
+      throw error;
+    }
+  },
+});
+// App 重载后把球上还挂着的题接回来。不接的话，用户在那之后才作答，答案就没人接了——
+// 题在球上画着、人点了、对话里却什么消息都没有，比直接报错更难查。
+// 只认桥上带了 sessionId 的题（旧版入队的没带，回传地址不可知）。
+async function adoptPendingBallAsks() {
+  const rows = await ball.listPendingAsks();
+  let adopted = 0;
+  for (const row of rows) {
+    const askId = String(row?.askId || "");
+    const sessionId = String(row?.sessionId || "");
+    if (!askId || !sessionId || ballAsks.has(askId)) continue;
+    const options = Array.isArray(row?.options)
+      ? row.options.map((option) => ({ label: String(option?.label || ""), detail: String(option?.description || "") }))
+      : [];
+    ballAsks.add({
+      askId,
+      sessionId,
+      request: {
+        title: String(row?.header || ""),
+        question: String(row?.question || ""),
+        options,
+        selectionMode: row?.selectionMode === "multiple" ? "multiple" : "single",
+      },
+    });
+    adopted += 1;
+  }
+  if (adopted) await sdk.logger.info(`已把球上 ${adopted} 道待答题接回回传队列`);
+}
 // 传音樱可能在上一次会话里已经开着；载入时就把朗读推送链接上。
 if (ball.state().running) scheduleVoiceBridgeTick(sdk, ball);
 // 目标跟随与球内推荐同样在载入时接上（球开着才有意义）。
 if (ball.state().running) scheduleBallBridgeTick(sdk, ball);
+if (ball.state().running) startSleepBallPush(sdk, ball);
+// 重载前发出的题可能还挂在球上，接回来才能收到答案。
+if (ball.state().running) void adoptPendingBallAsks().catch(() => {});
 // 闲不住的融合协调器靠这个服务拿到球的坐标与桥地址；没授权就静默单侧运行。
 const disposeFusionService = await registerFusionService({ sdk, ball });
 activeFusionServiceDispose = disposeFusionService;
 
   // ── 断联续接 ──
   let resumeConfig = await readResumeConfig(sdk);
+  // 冻结只关界面：引擎照常判定、照常记账、照常写日志，只是不往用户看得见的地方送。
+  let resumeUiFrozen = (await readConfig(RESUME_FROZEN_KEY, RESUME_FROZEN_DEFAULT)) !== false;
   let resumeTracker = makeResumeTracker(resumeConfig);
+  // 循环续接（旧版「继续后自动循环」）：正常说完一轮也接着推「继续哈」，
+  // 跑满设定轮数自己停；ta 说收工话时先屏住问用户。
+  const loopRegistry = new ContinueLoopRegistry();
+  let loopFiring = false;
+  // 一轮结束现在有两条路会来判定（钩子、turn_end），两者相隔毫秒级。
+  // 谁先判完就记一笔，短时间内另一路不再重复判，不然会连发两声「继续哈」。
+  // 窗口只用于分辨「同一轮的两个信号」，所以取小值；正常轮次间隔远大于它。
+  let lastLoopDecidedAt = 0;
+
+  /**
+   * 循环续接判定：这一轮说完了，要不要再推一句「继续哈」。
+   * 钩子（messages/post-assistant）与 turn_end 事件共用这一条路。
+   */
+  async function fireContinueLoop(sessionId, assistantText, { agentId = "", source = "" } = {}) {
+    const id = String(sessionId || "").trim();
+    if (!id || loopFiring || !loopRegistry.get(id)) return null;
+    if (!shouldJudgeLoop(lastLoopDecidedAt, Date.now())) {
+      await sdk.logger.debug?.(`循环续接判定去重（${source}）：同一轮已经判过`);
+      return null;
+    }
+    lastLoopDecidedAt = Date.now();
+    const decision = loopRegistry.decideAfterTurn(id, { assistantText });
+    if (decision?.action === "continue") {
+      loopFiring = true;
+      try {
+        await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId: id });
+        const after = loopRegistry.markFired(id);
+        await sdk.logger.info(`循环续接：已发出一条继续哈（第 ${after?.done ?? decision.state.done + 1}/${decision.state.total} 轮）`);
+        await pushLoopState(loopRegistry.get(id));
+      } catch (error) {
+        await sdk.logger.warn(`循环续接发送失败，循环停止：${String(error?.message || error).slice(0, 160)}`);
+        loopRegistry.stop(id, "发送失败");
+        await pushLoopState(null);
+      } finally {
+        loopFiring = false;
+      }
+    } else if (decision?.action === "confirm") {
+      await pushLoopState(decision.state);
+      await pushResumeNotice({
+        source: "loop_confirm",
+        sessionId: id,
+        agentId: String(agentId || ""),
+        reason: "ta 好像做完了。还接着续吗？",
+      });
+    } else if (decision?.action === "finished") {
+      await sdk.logger.info("循环续接已完成设定轮数");
+      await pushLoopState(null);
+    }
+    return decision;
+  }
+
+  // ── 排队话单 ──
+  // 球上写一句（或一串话），等 ta 这一轮说完再送进去；一串话就一轮一句往下推。
+  // 与「循环续接」互斥：同一段对话上只留一样，免得两条一起往里塞话。
+  const queuePlans = new QueuePlanRegistry();
+  let queueFiring = false;
+  // 轮末也有两条信号（钩子、turn_end），只判一次，不然会连发两句。
+  let lastQueueDecidedAt = 0;
+  // 排进宿主却一直没被接走，等多久就当它没了（会话被关/被中止时宿主会清掉排队输入）。
+  const QUEUE_PENDING_TIMEOUT_MS = 90_000;
+
+  // 排队这一路的日志不能把正事带崩：宿主对 App RPC 有并发上限，logger 自己也走 RPC，
+  // 撞上限时它自己会抛。早先那句 warn 一抛，整条话单的收尾（停话单、推状态）就跟着没了，
+  // 界面上只剩一句假报错。这里包一层：日志挂了也不影响正事。
+  const safeLog = {
+    info: (msg, fields) => { try { void Promise.resolve(sdk.logger.info?.(msg, fields)).catch(() => {}); } catch { /* 日志挂了就算了 */ } },
+    warn: (msg, fields) => { try { void Promise.resolve(sdk.logger.warn?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
+    debug: (msg, fields) => { try { void Promise.resolve(sdk.logger.debug?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
+  };
+  // 话单自愈的三个数：空多久才去看、每 5 秒问一次忙闲、连续闲多久才补发下一句。
+  const QUEUE_STALL_MS = 12_000;
+  const QUEUE_PROBE_MS = 5_000;
+  const QUEUE_IDLE_CONFIRM_MS = 8_000;
+  // 连续送不出去几次才真的停：宿主 RPC 撞上限时一次失败不代表话单坏了。
+  const QUEUE_SEND_FAIL_MAX = 3;
+  // 看门狗的记号：每段对话上次问忙闲是什么时候、连续闲了多久、送失败几次。
+  const queueProbeAt = new Map();
+  const queueIdleSince = new Map();
+  const queueSendFailures = new Map();
+
+  /** 把话单状态推给球：主面板靠它显示「排队中 第 n/N 轮」和停止按钮。 */
+  async function pushQueueState(state, extra = {}) {
+    if (!ball.state().running) return;
+    const current = state || queuePlans.list().find((item) => item.status === "running") || null;
+    const active = Boolean(current && current.status === "running");
+    const body = {
+      // ok 必须带上：球那边拿到回包先看 ok，少了这个字段就一直当成「没排上」——
+      // 明明排上了，弹窗里也会报一句「知意那边没回话」。
+      ok: true,
+      error: "",
+      active,
+      status: current?.status || "",
+      text: active ? describeQueuePlan(current) : "",
+      done: Number(current?.done || 0),
+      total: Number(current?.total || 0),
+      sessionId: current?.sessionId || "",
+      agentName: current?.agentName || "",
+      title: current?.title || "",
+      ...extra,
+    };
+    try {
+      await ball.bridgeRequest("/queue/push", { method: "POST", body });
+    } catch (error) {
+      safeLog.debug("排队状态未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
+
+  /** ta 现在还在回话吗？在 → 排队（followUp）；不在 → 直接发（steer）。 */
+  async function sessionIsBusy(sessionId) {
+    try {
+      const context = await sdk.bus.request("session:context", { sessionId, scope: "all" }, { timeoutMs: 4_000 });
+      if (context?.isStreaming === true) return true;
+      if (Number(context?.pendingMessageCount || 0) > 0) return true;
+      return false;
+    } catch (error) {
+      // 查不到就按「还在回话」处理：宁可让它等一会儿，也别把 ta 正在写的话打断。
+      await sdk.logger.warn("查不到会话忙闲，排队话单改用排队语义", { code: String(error?.code || "") });
+      return true;
+    }
+  }
+
+  /**
+   * 话单判定：这一轮说完了，该不该把下一句送进去。
+   * 钩子（messages/post-assistant）与 turn_end 事件共用这一条路。
+   */
+  async function fireQueuePlan(sessionId, assistantText, { source = "" } = {}) {
+    const id = String(sessionId || "").trim();
+    if (!id || queueFiring) return null;
+    const plan = queuePlans.get(id);
+    if (!plan) return null;
+    // 还有一句在宿主那儿排着：等它被接走再送下一句，不然两句会挤在一起。
+    if (plan.pending) {
+      // 排了半天没被接走，多半是那段对话被关了或被中止了（宿主会清掉排队输入）。
+      if (plan.pendingSince && Date.now() - plan.pendingSince > QUEUE_PENDING_TIMEOUT_MS) {
+        queuePlans.stop(id, "排的那句一直没被接走");
+        safeLog.warn("排队话单没被接走，话单已停", { sessionId: id });
+        await pushQueueState(null, { ok: false, error: "排的那句没发出去（那段对话可能已经关了）", message: "排的那句没发出去（那段对话可能已经关了）" });
+      }
+      return null;
+    }
+    if (plan.status !== "running") return null;
+    // 同一段对话上，「循环续接」和「排队话单」只留一样。
+    if (loopRegistry.get(id)) return null;
+    if (!shouldJudgeLoop(lastQueueDecidedAt, Date.now())) {
+      safeLog.debug(`排队话单判定去重（${source}）：同一轮已经判过`);
+      return null;
+    }
+    lastQueueDecidedAt = Date.now();
+    const text = queuePlans.nextText(id);
+    if (!text) {
+      safeLog.info("排队话单已发完");
+      await pushQueueState(null, { message: "排的都发完了" });
+      return null;
+    }
+    queueFiring = true;
+    try {
+      // 轮末这一发走直接发（steer）：排队语义挂上去会等一个不会再来的轮次结束。
+      await sendToConversation(sdk, { text, mode: "steer", sessionId: id });
+      const after = queuePlans.markFired(id);
+      queueSendFailures.delete(id);
+      safeLog.info(`排队话单：已送出第 ${after?.done ?? 0}/${after?.total ?? 0} 轮`);
+      await pushQueueState(queuePlans.get(id), after?.status === "finished" ? { message: "排的都发完了" } : {});
+    } catch (error) {
+      // 送不出去不等于话单该停：宿主 RPC 撞上限时这一发会失败，可话单本身没问题。
+      // 早先这里一失败就把话单停了，界面上只剩一句「没送出去」——其实只是这一轮没挤进去。
+      // 现在留着话单让看门狗再试，连续失败到上限才停，并把真实原因说出来。
+      const fails = (queueSendFailures.get(id) || 0) + 1;
+      queueSendFailures.set(id, fails);
+      const reason = String(error?.message || error).slice(0, 160);
+      safeLog.warn(`排队话单这一轮没送出去（第 ${fails} 次）：${reason}`);
+      if (fails >= QUEUE_SEND_FAIL_MAX) {
+        queuePlans.stop(id, "发送失败");
+        await pushQueueState(null, { ok: false, error: `没送出去，话单停了（${reason}）`, message: "没送出去，话单停了" });
+      } else {
+        await pushQueueState(queuePlans.get(id), {});
+      }
+    } finally {
+      queueFiring = false;
+    }
+    return true;
+  }
+
+  /**
+   * 话单自愈：轮末的信号会整轮丢掉。
+   *
+   * 钩子（messages/post-assistant）和 turn_end 都是一次性判定。宿主对 App RPC 有并发上限，
+   * 撞上限时整条钩子被丢掉（一天上千次，日志里全是
+   * 「adjudicator threw: App RPC concurrency limit reached」）；turn_end 那条兜底路
+   * 又要靠 session:list 认会话，认不出就静默作罢。信号一丢，话单就永远停在
+   * 「排队中 第 n/N 轮」——球上看着像还在排，其实一句都没往下走。
+   *
+   * 所以这里自己盯着：话单在跑、ta 已经不在回话、而且连续闲了一阵子，就自己把下一句补上。
+   * 查忙闲失败按「还在回话」处理——宁可晚一轮，也不打断 ta 正在写的话。
+   */
+  async function watchdogQueuePlans() {
+    if (queueFiring) return;
+    const running = queuePlans.list().filter((item) => item.status === "running");
+    // 不在跑的话单，记号清掉，别让这几张表一直涨。
+    for (const id of [...queueProbeAt.keys()]) {
+      if (!running.some((item) => item.sessionId === id)) {
+        queueProbeAt.delete(id);
+        queueIdleSince.delete(id);
+        queueSendFailures.delete(id);
+      }
+    }
+    for (const plan of running) {
+      if (queueFiring) return;
+      const id = plan.sessionId;
+      // 同一段对话上「循环续接」和「排队话单」只留一样。
+      if (loopRegistry.get(id)) continue;
+      // 每 5 秒才问一次忙闲，别把宿主的 RPC 池占满。
+      const lastProbe = queueProbeAt.get(id) || 0;
+      if (Date.now() - lastProbe < QUEUE_PROBE_MS) continue;
+      queueProbeAt.set(id, Date.now());
+      const busy = await sessionIsBusy(id);
+      const decision = watchdogDecision({
+        status: plan.status,
+        pending: plan.pending,
+        busy,
+        idleSince: queueIdleSince.get(id) || 0,
+        lastFiredAt: plan.lastFiredAt || 0,
+        startedAt: plan.startedAt || 0,
+        now: Date.now(),
+        stallMs: QUEUE_STALL_MS,
+        idleConfirmMs: QUEUE_IDLE_CONFIRM_MS,
+      });
+      if (decision.idleSince) queueIdleSince.set(id, decision.idleSince);
+      else queueIdleSince.delete(id);
+      if (!decision.fire) continue;
+      await fireQueuePlan(id, "", { source: "watchdog" });
+    }
+  }
+
   const resumeSignals = new Map();
   let lastBallActionSeq = 0;
+  let resumeActionBaselineAdopted = false;
   let resumeEventsAvailable = false;
+  // 已经推上桥的那条提醒属于哪个会话。多个窗口同时出状况时，
+  // 一个窗口自己好了不能把别的窗口那条提醒也收掉。
+  let resumeNoticeKey = "";
+  // 球上当前挂着的小条是断点的还是「循环续接问要不要接着来」的。
+  // 断点总开关关掉时只能收断点那一条，循环自己的提示不能被它带走。
+  let resumeNoticeSource = "";
+  // 配置变更/总开关的代次。pump 在 await 前后各对一次号，避免「关了之后又发送」。
+  let resumeEpoch = 0;
+  let pumpingResume = false;
+
+  // 宿主的两套编号（事件里的文件名、钩子里的 sess_xxx）靠这张索引对齐；
+  // 顺带也是「这条提醒到底来自哪个窗口」的唯一来源——别再对着不存在的字段要名字。
+  const RESUME_INDEX_TTL_MS = 20_000;
+  let resumeSessionIndex = { at: 0, freshAt: 0, index: null, stale: false };
+  async function readResumeSessionIndex({ force = false } = {}) {
+    const stamp = Date.now();
+    if (!force && resumeSessionIndex.index && stamp - resumeSessionIndex.at < RESUME_INDEX_TTL_MS) {
+      return resumeSessionIndex;
+    }
+    try {
+      const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "all" }, { timeoutMs: 6_000 });
+      const rows = Array.isArray(listed) ? listed : listed?.sessions;
+      resumeSessionIndex = { at: stamp, freshAt: stamp, index: buildSessionIndex(rows), stale: false };
+    } catch (error) {
+      // 读不到就沿用旧索引；连旧的都没有时留给调用方按「查不到」处理，不编名字。
+      // stale 是给复核用的：这份索引的 modified 是过期值，不能拿它证明「这一轮没进展」。
+      // 并发时两次读取可能先后写同一个缓存，所以这里连同 at 一起返回给调用方绑定，
+      // 不让调用方事后再去读全局字段——那样可能拿到另一次请求写进去的 stale。
+      const cacheFreshAt = resumeSessionIndex.freshAt || 0;
+      resumeSessionIndex = { at: stamp, freshAt: cacheFreshAt, index: resumeSessionIndex.index, stale: true };
+      // 只记时间与错误码，不记任何正文或标题。
+      await sdk.logger.debug?.("续接读不到会话名单", {
+        code: String(error?.code || "").slice(0, 40),
+        cacheFreshAt,
+        error: String(error?.message || error).slice(0, 120),
+      });
+    }
+    return resumeSessionIndex;
+  }
+  async function resolveResumeTarget({ sessionId = "", sessionPath = "" } = {}, { force = false } = {}) {
+    const snapshot = await readResumeSessionIndex({ force });
+    const indexStale = snapshot.stale === true;
+    const hit = lookupSession(snapshot.index, { sessionId, sessionPath });
+    // 两套编号归位：事件里可能只有裸 UUID（sessionPath 为空时尤其常见），钩子里是
+    // sess_xxx。查到稳定编号后把这层对应关系交给状态机，否则同一个对话会记成两本账——
+    // 开头记在 sess_xxx 上，事件收尾只清掉 uuid 那本，90 秒后好好的会话被判成断联。
+    if (hit?.sessionId) {
+      for (const alias of [sessionId, sessionPath ? String(sessionPath).split(/[\\/]/).pop().replace(/\.jsonl$/i, "") : ""]) {
+        if (alias) resumeTracker.registerAlias(alias, hit.sessionId);
+      }
+    }
+    // 把「这份索引是不是新鲜」一起带走：查得到不等于这份证据算数。
+    return hit ? { ...hit, indexStale } : hit;
+  }
+
+  /** 把循环续接的状态推到球上：主面板靠它显示「正在续 第 n/N 轮」和停止按钮。 */
+  async function pushLoopState(state) {
+    if (!ball.state().running) return;
+    const body = {
+      ...(state
+        ? {
+            active: state.status === "running" || state.status === "awaiting",
+            text: describeLoop(state)
+              || (state.status === "awaiting" ? "ta 好像做完了，等你决定还要不要接着续" : ""),
+            sessionId: state.sessionId || "",
+            agentName: state.agentName || "",
+            title: state.title || "",
+            total: state.total || 0,
+            done: state.done || 0,
+            status: state.status || "",
+          }
+        : {}),
+      // 偏好一并带过去：球重启后不用等用户重新勾一次
+      config: { enabled: resumeConfig.loopEnabled === true, rounds: resumeConfig.loopRounds },
+    };
+    try {
+      await ball.bridgeRequest("/resume/loop", { method: "POST", body });
+    } catch (error) {
+      await sdk.logger.debug?.("循环状态未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
 
   async function pushResumeNotice(payload) {
     if (!ball.state().running) return;
+    if (resumeUiFrozen) return;
+    resumeNoticeKey = payload ? String(payload.sessionId || "") : "";
+    // loop_confirm 走的是同一条桥，但它属于正常聊天的循环业务，不归断点管。
+    resumeNoticeSource = payload ? String(payload.source || "break") : "";
     try {
       await ball.bridgeRequest("/resume/notice", { method: "POST", body: payload || {} });
     } catch (error) {
@@ -353,103 +1305,823 @@ activeFusionServiceDispose = disposeFusionService;
     }
   }
 
+  /** 给一段会话取抬头用的那几样东西（窗口名、伙伴名、开头那句、开始时间）。 */
+  async function describeSession(sessionId, signal = null) {
+    const target = await resolveResumeTarget({ sessionId, sessionPath: signal?.sessionPath || "" });
+    return {
+      title: target?.title || signal?.title || "",
+      agentName: target?.agentName || signal?.agentName || "",
+      firstMessage: target?.firstMessage || signal?.firstMessage || "",
+      openedAt: openedAtSnippet(target?.path || signal?.sessionPath || sessionId),
+      target,
+    };
+  }
+
+  /** 设置页和球使用同一份带来源的进度；异步读取途中换代即作废。 */
+  async function describeResumeProgress() {
+    const epoch = resumeEpoch;
+    const items = [];
+    if (resumeConfig.enabled) {
+      for (const item of resumeTracker.progressItems()) {
+        const signal = resumeSignals.get(item.sessionId) || null;
+        const { target: _target, ...described } = await describeSession(item.sessionId, signal);
+        if (!resumeConfig.enabled || resumeEpoch !== epoch) return [];
+        items.push({ ...item, ...described, sessionId: item.sessionId });
+      }
+    }
+    return items;
+  }
+
+  /** 把断点进度全量推给球：items 为空也发，让球知道总开关。冻结期一律不发。 */
+  async function pushResumeProgress() {
+    if (!ball.state().running) return;
+    if (resumeUiFrozen) return;
+    const items = await describeResumeProgress();
+    try {
+      await ball.bridgeRequest("/resume/progress", {
+        method: "POST",
+        body: {
+          enabled: resumeConfig.enabled,
+          autoResume: resumeConfig.autoResume,
+          maxConsecutive: resumeConfig.maxConsecutive,
+          items,
+        },
+      });
+    } catch (error) {
+      await sdk.logger.debug?.("断点进度未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
+
+  /**
+   * 冻结/解冻的当场收放：冻结时要把球上可能已经挂着的小条、闪报、进度收干净，
+   * 不然用户会看到一张“冻结前就弹出来”的旧提醒。循环续接不归这条管（球桥会保留它）。
+   */
+  async function syncResumeVisibility() {
+    if (!ball.state().running) return;
+    if (!resumeUiFrozen) {
+      await pushResumeProgress();
+      return;
+    }
+    try {
+      await ball.bridgeRequest("/resume/progress", {
+        method: "POST",
+        body: {
+          enabled: false,
+          autoResume: false,
+          maxConsecutive: resumeConfig.maxConsecutive,
+          items: [],
+        },
+      });
+      resumeNoticeKey = "";
+      resumeNoticeSource = "";
+    } catch (error) {
+      await sdk.logger.debug?.("冻结后清理球上旧提醒失败", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
+
+  /**
+   * 球重开时把还挂着的那条断点提醒重新挂回去。
+   * 球的存储是进程内的，重启即空；App 侧还记着，就说明这条确实还没被用户处理过。
+   * 循环续接的提示不归这里管，它有自己的生命周期。
+   */
+  async function syncPendingResumeNotice() {
+    if (!resumeNoticeKey || resumeNoticeSource !== "break") return;
+    const signal = resumeSignals.get(resumeNoticeKey) || null;
+    const { target: _target, ...described } = await describeSession(resumeNoticeKey, signal);
+    await pushResumeNotice({
+      sessionId: resumeNoticeKey,
+      ...described,
+      reason: buildResumeExplanation(signal),
+      attempt: resumeTracker.snapshot(resumeNoticeKey).consecutive,
+      maxConsecutive: resumeConfig.maxConsecutive,
+      autoResume: resumeConfig.autoResume,
+      at: Date.now(),
+    });
+  }
+
+  /**
+   * 改续接配置。只有总开关会清场：改自动/上限不重建状态机，计数必须留着，
+   * 否则「把上限从 3 调到 5」会当成重新开始，白白多发两次。
+   */
+  async function applyResumeConfig(patch) {
+    // 只传要改的字段；undefined 会把现有值洗掉（normalize 会当成 false）。
+    const clean = Object.fromEntries(Object.entries(patch || {}).filter(([, value]) => value !== undefined));
+    resumeConfig = normalizeResumeConfig({ ...resumeConfig, ...clean });
+    await saveConfig("resumeConfig", resumeConfig);
+    resumeEpoch += 1;
+    // 行为参数要在同一个状态机上生效：不重建是为了保住计数，configure 才是让新值生效的那一步。
+    resumeTracker.configure(resumeConfig);
+    if (!resumeConfig.enabled) {
+      resumeTracker.clearAll();
+      resumeSignals.clear();
+      if (!resumeNoticeSource || resumeNoticeSource === "break") void pushResumeNotice(null);
+    }
+    await pushResumeProgress();
+    return resumeConfig;
+  }
+
+  // 自动续接成功的短暂反馈：只亮几秒，不占常驻小条，也不用等用户处理。
+  async function pushResumeFlash(payload) {
+    if (!ball.state().running) return;
+    if (resumeUiFrozen) return;
+    try {
+      await ball.bridgeRequest("/resume/flash", { method: "POST", body: payload || {} });
+    } catch (error) {
+      await sdk.logger.debug?.("自动续接反馈未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
+
   // 传音樱上的三个按钮（继续哈 / 不用管 / 自动续接开关）也是球→App，
   // 球只能轮询桥，所以这边单独一个 2 秒的读取器；序号自增，用过即丢。
   const resumeBridgeTimer = setInterval(async () => {
-    if (!ball.state().running) return;
+    // 球不在时把序号基线丢掉：球重开后 actionSeq 从 0 重数，
+    // 沿用旧基线会让新动作被判成「序号倒退的旧桥」。
+    if (!ball.state().running) { resumeActionBaselineAdopted = false; return; }
     let state;
     try { state = await ball.bridgeRequest("/resume/state"); } catch { return; }
     const actionSeq = Number(state?.actionSeq) || 0;
     const action = state?.action || null;
+    // 桥里的 action 是「读过就一直留着」（旧版是同步 POST，根本没有这层），
+    // 而 lastBallActionSeq 每次 App 进程启动都归零。所以这里必须先立基线：
+    // 第一次读到只记序号不执行，否则 App 每次重载都会把上一次的动作重放一遍——
+    // 用户点过一次「继续哈」，之后每重载一次就会在那个会话里再插一句。
+    // 序号倒退 = 球重启、桥重建，同样按新基线处理，否则新动作会被旧序号卡死。
+    if (!resumeActionBaselineAdopted) {
+      resumeActionBaselineAdopted = true;
+      lastBallActionSeq = actionSeq;
+      // 首轮就把总开关/自动/上限推过去：球刚起或 App 刚重载时手里什么都没有，
+      // 默认值是「关」，不同步就会把手动弹出来的那条 notice 误藏起来。
+      void pushResumeProgress();
+      return;
+    }
+    // 球重启、桥重建：序号从 0 重数。归零后继续往下判，不能把当次动作一起吞了。
+    if (actionSeq < lastBallActionSeq) lastBallActionSeq = 0;
     if (!action || actionSeq <= lastBallActionSeq) return;
     lastBallActionSeq = actionSeq;
     const sessionId = String(action.sessionId || "");
     if (action.action === "auto") {
-      resumeConfig = normalizeResumeConfig({ ...resumeConfig, autoResume: action.enabled === true });
-      await sdk.storage.global.set("resumeConfig", resumeConfig);
-      resumeTracker = makeResumeTracker(resumeConfig);
+      await applyResumeConfig({ autoResume: action.enabled === true });
       await sdk.logger.info(`自动续接已${resumeConfig.autoResume ? "打开" : "关闭"}`);
+    } else if (action.action === "config") {
+      const patch = action.config || {};
+      await applyResumeConfig({
+        autoResume: typeof patch.autoResume === "boolean" ? patch.autoResume : undefined,
+        maxConsecutive: Number(patch.maxConsecutive) || undefined,
+      });
+      await sdk.logger.info(`断点续接设置已更新：自动 ${resumeConfig.autoResume ? "开" : "关"} · 上限 ${resumeConfig.maxConsecutive}`);
     } else if (action.action === "continue") {
-      try {
-        await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId });
-        resumeTracker.markRecovered(sessionId);
-        resumeSignals.delete(sessionId);
-        await pushResumeNotice(null);
-      } catch (error) {
-        await sdk.logger.warn(`球里点了继续哈但没发出去：${String(error?.message || error).slice(0, 160)}`);
+      // 手动发送也受总开关和逐次请求守卫约束，提交成功仍须等待真实恢复。
+      if (!sessionId || !resumeConfig.enabled) return;
+      if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
+        if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
       }
+      await pushResumeProgress();
+    } else if (action.action === "loop-prefs") {
+      resumeConfig = normalizeResumeConfig({
+        ...resumeConfig,
+        loopEnabled: action.enabled === true,
+        loopRounds: Number(action.rounds) || resumeConfig.loopRounds,
+      });
+      await saveConfig("resumeConfig", resumeConfig);
+      await pushLoopState(loopRegistry.get(sessionId) || null);
+    } else if (action.action === "loop-start") {
+      // 同一段对话上只留一样：开始「循环续接」就把排队话单停掉。
+      if (queuePlans.get(sessionId)) {
+        queuePlans.stop(sessionId, "改用循环续接");
+        await pushQueueState(null, { message: "改用循环续接，排队话单停了" });
+      }
+      const started = loopRegistry.start({
+        sessionId,
+        rounds: Number(action.rounds) || resumeConfig.loopRounds,
+      });
+      if (started.ok) {
+        await sdk.logger.info(`循环续接已开始：最多 ${started.state.total} 轮`);
+        await pushLoopState(started.state);
+      }
+    } else if (action.action === "loop-stop") {
+      const stopped = loopRegistry.stop(sessionId, "用户按了停");
+      if (stopped.ok) await sdk.logger.info("循环续接已被用户停止");
+      await pushLoopState(null);
+    } else if (action.action === "loop-resume") {
+      const resumed = loopRegistry.resumeAfterConfirm(sessionId);
+      if (resumed) {
+        try {
+          await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId });
+          loopRegistry.markFired(sessionId);
+          await pushLoopState(loopRegistry.get(sessionId));
+        } catch (error) {
+          await sdk.logger.warn(`接着来没发出去：${String(error?.message || error).slice(0, 160)}`);
+          loopRegistry.stop(sessionId, "发送失败");
+          await pushLoopState(null);
+        }
+      }
+    } else if (action.action === "loop-finish") {
+      loopRegistry.stop(sessionId, "用户说就到这吧");
+      await pushLoopState(null);
+      await pushResumeNotice(null);
     } else if (action.action === "dismiss") {
+      if (!sessionId || !resumeConfig.enabled) return;
       resumeTracker.forget(sessionId);
       resumeSignals.delete(sessionId);
-      await pushResumeNotice(null);
+      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      await pushResumeProgress();
     }
   }, 2_000);
   resumeBridgeTimer.unref?.();
 
-  async function sendResumeContinue(sessionId, agentId = "") {
+  // 润色弹窗在球上，App 的 /polish 路由它够不着，走桥上这一对请求/结果。
+  // 首轮只记基线（和续接一样）：桥里的 request 是“读过就一直留着”，不设基线的话，
+  // App 每次重载都会把上一次捋好的那段再发一遍。
+  let lastPolishRequestSeq = 0;
+  let polishBaselineAdopted = false;
+  const polishBridgeTimer = setInterval(async () => {
+    if (!ball.state().running) return;
+    let state;
+    try { state = await ball.bridgeRequest("/polish/state"); } catch { return; }
+    const requestSeq = Number(state?.requestSeq) || 0;
+    const request = state?.request || null;
+    if (!polishBaselineAdopted) {
+      polishBaselineAdopted = true;
+      lastPolishRequestSeq = requestSeq;
+      return;
+    }
+    // 球重启后序号从 0 重数：归零再判，不然重启后第一次点「捋一捋」会被当成旧请求吞掉。
+    if (requestSeq < lastPolishRequestSeq) lastPolishRequestSeq = 0;
+    if (!request || requestSeq <= lastPolishRequestSeq) return;
+    lastPolishRequestSeq = requestSeq;
+    const text = String(request.text || "");
+    const sessionId = String(request.sessionId || "");
+    let result;
     try {
-      await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId });
-      await sdk.logger.info(`已续接：${sessionId || "最近会话"}`);
+      if (request.kind === "send") {
+        // 球上分两个按钮：「发送」是插话（steer），「排队」是等这一轮说完再发（followUp）。
+        // 宿主自带这两种语义，发一次就完，球上不维护队列。
+        const deliverAs = request.deliverAs === "followUp" ? "followUp" : "steer";
+        await sendToConversation(sdk, { text, mode: deliverAs, sessionId: sessionId || undefined });
+        result = { ok: true, message: deliverAs === "followUp" ? "已排队，等 ta 说完就发" : "已发送" };
+      } else if (request.kind === "suggest") {
+        // 候选方向：捋完一版后问一句“还能往哪儿改”。拿不到就是空列表，不当失败报。
+        const items = await suggestPolishFixes(sdk, text);
+        result = { ok: true, items: items || [] };
+      } else {
+        // source / previous / instruction 三个都是可选：
+        //   source = 最初那版原话（安全校验永远对着它）
+        //   previous = 上一版结果（有这个才走“只改点名处”的迭代）
+        //   instruction = 用户这次额外提的整理方向
+        result = { ok: true, ...(await polishText(sdk, text, {
+          level: request.level || "balanced",
+          source: String(request.source || ""),
+          previous: String(request.previous || ""),
+          instruction: String(request.instruction || ""),
+        })) };
+        // 成功也要留一笔：不记内容，只记长度和模型是否真的动了字。以前只在失败时写日志，
+        // 用户回一句「没效果」就无从下手。
+        await sdk.logger.info("球内理顺完成", {
+          chars: String(result.text || "").length,
+          unchanged: result.unchanged === true,
+          revising: result.revising === true,
+          fellBack: result.fellBack === true,
+          reason: result.reason || "",
+          model: result.model || "",
+        });
+      }
+    } catch (error) {
+      const code = error?.code || "POLISH_ERROR";
+      await sdk.logger.warn("球内理顺失败", { code });
+      result = { ok: false, error: String(error?.message || "理顺失败了，原文没动。").slice(0, 200) };
+    }
+    try {
+      // kind 必须带上：捋和候选方向共用这条结果通道，先回来的那个会被另一边
+      // 当成自己的结果（捋拿到 {items} 会把输入框清空）。球侧靠它认领。
+      await ball.bridgeRequest("/polish/push", { method: "POST", body: { ...result, seq: requestSeq, kind: request.kind } });
+    } catch (error) {
+      await sdk.logger.debug?.("球内理顺结果未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }, 2_000);
+  polishBridgeTimer.unref?.();
+
+  // 会话标题：球上点「生成新标题 / 还原」，起名与写回都在 App 侧做
+  // （session:update 只有 App 够得着），结果走桥回传。和润色同一套请求/结果对，
+  // 同样首轮只记基线，避免重载时把上一次的请求再执行一遍。
+  let lastTitleRequestSeq = 0;
+  let titleBaselineAdopted = false;
+  const titleBridgeTimer = setInterval(async () => {
+    if (!ball.state().running) return;
+    let state;
+    try { state = await ball.bridgeRequest("/title/state"); } catch { return; }
+    const requestSeq = Number(state?.requestSeq) || 0;
+    const request = state?.request || null;
+    if (!titleBaselineAdopted) {
+      titleBaselineAdopted = true;
+      lastTitleRequestSeq = requestSeq;
+      return;
+    }
+    // 同润色：球重启后序号归零，归零再判，不吞重启后第一次请求。
+    if (requestSeq < lastTitleRequestSeq) lastTitleRequestSeq = 0;
+    if (!request || requestSeq <= lastTitleRequestSeq) return;
+    lastTitleRequestSeq = requestSeq;
+    const kind = String(request.kind || "");
+    const sessionId = String(request.sessionId || "");
+    let result;
+    try {
+      if (kind === "undo") {
+        const undone = await undoSessionTitle(sdk, { sessionId });
+        result = {
+          ok: true,
+          kind,
+          sessionId: undone.sessionId || sessionId,
+          restoredTitle: undone.restoredTitle || "",
+          agentName: "",
+        };
+      } else if (kind === "rename") {
+        const drafted = await summarizeSessionTitle(sdk, { sessionId });
+        const title = String(drafted?.title || "").trim();
+        // 兜底不报错，所以得自己记一笔原因，不然下次只能看见「兜底标题」四个字。
+        if (drafted?.fallback) {
+          await sdk.logger.warn(`会话标题退回兜底：${drafted?.error || "没拼出可用上下文"}`);
+        }
+        if (!title) throw new Error("这次没起出名字，再试一次。");
+        const targetId = String(drafted?.session?.sessionId || sessionId || "");
+        // 旧标题必须自己读出来交给写入方：不给的话「还原」只能退回「未命名对话」。
+        const previous = await resolveResumeTarget({ sessionId: targetId }, { force: true });
+        const written = await applySessionTitle(sdk, {
+          sessionId: targetId,
+          title,
+          previousTitle: previous?.title || "",
+        });
+        result = {
+          ok: true,
+          kind,
+          sessionId: targetId,
+          title: written.title || title,
+          fallback: drafted?.fallback === true,
+          agentName: String(drafted?.session?.agentName || ""),
+        };
+      } else {
+        result = { ok: false, kind, sessionId, error: "不认识的请求类型。" };
+      }
+    } catch (error) {
+      await sdk.logger.warn("球内起标题失败", { code: error?.code || "TITLE_ERROR", kind });
+      result = {
+        ok: false,
+        kind,
+        sessionId,
+        error: String(error?.message || "没改成，再试一次。").slice(0, 200),
+      };
+    }
+    try {
+      await ball.bridgeRequest("/title/push", { method: "POST", body: { ...result, seq: requestSeq } });
+    } catch (error) {
+      await sdk.logger.debug?.("球内标题结果未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }, 2_000);
+  titleBridgeTimer.unref?.();
+
+  // ── 排队话单：球上写一句/一串话 → 排进对话；话单状态再推回球上显示 ──
+  let lastQueueRequestSeq = 0;
+  let queueBaselineAdopted = false;
+  /**
+   * 球上来了一份话单：建档、发第一句、把状态推回球上。
+   * 第一发按 ta 在不在回话决定：还在回话 → 排队（followUp，等这轮说完）；
+   * 已经说完了 → 直接发（steer），否则排队语义会等一个不会再来的轮次结束。
+   */
+  async function startQueuePlan(request) {
+    let sessionId = String(request?.sessionId || "").trim();
+    if (!sessionId) {
+      // 没指定对话就按「最近活跃」算，但必须在这里定死：
+      // 话单是按会话记的账，后面每一轮都要发进同一段，不能每轮各找一次。
+      try {
+        const target = await newestSession(sdk);
+        sessionId = String(target?.sessionId || "").trim();
+      } catch (error) {
+        return { ok: false, error: "找不到要排进哪段对话" };
+      }
+    }
+    if (!sessionId) return { ok: false, error: "找不到要排进哪段对话" };
+    const built = buildQueueItems(request?.text, { rounds: normalizeQueueRounds(request?.rounds) });
+    if (!built.ok) return { ok: false, error: built.error };
+    // 同一段对话上只留一样：话单和「循环续接」不能一起往里塞话。
+    if (loopRegistry.get(sessionId)) {
+      loopRegistry.stop(sessionId, "改排队话单");
+      await pushLoopState(null);
+    }
+    const started = queuePlans.start({
+      sessionId,
+      agentId: String(request?.agentId || ""),
+      agentName: String(request?.agentName || ""),
+      title: String(request?.title || ""),
+      items: built.items,
+    });
+    if (!started.ok) return { ok: false, error: started.error };
+    const first = built.items[0]?.text || "";
+    const busy = await sessionIsBusy(sessionId);
+    try {
+      await sendToConversation(sdk, { text: first, mode: busy ? "followUp" : "steer", sessionId });
+    } catch (error) {
+      queuePlans.stop(sessionId, "第一句没发出去");
+      await pushQueueState(null, { ok: false, error: "第一句没发出去，话单没排上", message: "第一句没发出去，话单没排上" });
+      return { ok: false, error: friendlySendError(error) };
+    }
+    const after = queuePlans.markFired(sessionId);
+    // 排队语义的那一句还在宿主那儿挂着：等它被接走再送下一句。
+    if (busy) queuePlans.markQueued(sessionId);
+    await sdk.logger.info(`排队话单已开始：共 ${after?.total ?? built.total} 轮，第一句${busy ? "已排进队列" : "已直接发出"}`);
+    const message = busy ? "已排进队列，等 ta 说完就发" : "已发出，ta 这轮说完就接下一句";
+    await pushQueueState(queuePlans.get(sessionId), { message });
+    return { ok: true, message, total: Number(after?.total || built.total), done: Number(after?.done || 0) };
+  }
+
+  const queueBridgeTimer = setInterval(async () => {
+    // 话单自愈先跑：球关掉了话单也该继续往下送——排的是对话里的消息，不是球上的显示。
+    await watchdogQueuePlans();
+    if (!ball.state().running) return;
+    // 排进宿主却一直没被接走的，在这里收尾：会话被关/被中止时宿主会清掉排队输入。
+    const now = Date.now();
+    for (const state of queuePlans.list()) {
+      if (!state.pending || !state.pendingSince) continue;
+      if (now - state.pendingSince <= QUEUE_PENDING_TIMEOUT_MS) continue;
+      queuePlans.stop(state.sessionId, "排的那句一直没被接走");
+      await sdk.logger.warn("排队话单没被接走，话单已停", { sessionId: state.sessionId });
+      await pushQueueState(null, { message: "排的那句没发出去（那段对话可能已经关了）" });
+    }
+    let state;
+    try { state = await ball.bridgeRequest("/queue/state"); } catch { return; }
+    const requestSeq = Number(state?.requestSeq) || 0;
+    const request = state?.request || null;
+    if (!queueBaselineAdopted) {
+      queueBaselineAdopted = true;
+      lastQueueRequestSeq = requestSeq;
+      return;
+    }
+    // 球重启后序号从 0 重数：归零再判，不然重启后第一次排会被当成旧请求吞掉。
+    if (requestSeq < lastQueueRequestSeq) lastQueueRequestSeq = 0;
+    if (!request || requestSeq <= lastQueueRequestSeq) return;
+    lastQueueRequestSeq = requestSeq;
+    const kind = String(request.kind || "");
+    const sessionId = String(request.sessionId || "");
+    let result;
+    try {
+      if (kind === "queue-cancel") {
+        // 先按球上给的会话找；找不到就停当前唯一在跑的那份。
+        // 用户按「停」的意思是「别再往下发了」，不一定是精确指认了哪一段。
+        let targetId = sessionId;
+        if (!queuePlans.get(targetId)) {
+          const running = queuePlans.list().filter((item) => item.status === "running");
+          if (running.length === 1) targetId = running[0].sessionId;
+        }
+        const stopped = queuePlans.stop(targetId, "用户按了停");
+        if (stopped.ok) {
+          await sdk.logger.info("排队话单已被用户停止");
+          result = { ok: true, message: "停了，不再往下发了" };
+        } else {
+          result = { ok: true, message: "本来就没在排" };
+        }
+        await pushQueueState(null, { message: result.message });
+      } else if (kind === "queue") {
+        result = await startQueuePlan(request);
+      } else {
+        result = { ok: false, error: "不认识的请求类型。" };
+      }
+    } catch (error) {
+      await sdk.logger.warn("球内排队话单失败", { code: error?.code || "QUEUE_ERROR", kind });
+      result = { ok: false, error: String(error?.message || "没排上，再试一次。").slice(0, 200) };
+    }
+    try {
+      const running = queuePlans.list().find((item) => item.status === "running") || null;
+      await ball.bridgeRequest("/queue/push", {
+        method: "POST",
+        body: {
+          ok: result.ok !== false,
+          message: String(result.message || ""),
+          error: result.ok === false ? String(result.error || "") : "",
+          seq: requestSeq,
+          active: Boolean(running),
+          status: running?.status || "",
+          text: running ? describeQueuePlan(running) : "",
+          done: Number(running?.done || 0),
+          total: Number(running?.total || 0),
+          sessionId: running?.sessionId || sessionId,
+          agentName: running?.agentName || "",
+          title: running?.title || "",
+        },
+      });
+    } catch (error) {
+      await sdk.logger.debug?.("球内排队结果未送达传音樱", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }, 2_000);
+  queueBridgeTimer.unref?.();
+
+  async function sendResumeContinue(sessionId, agentId = "", token = null) {
+    // 空编号会回退到 sendToConversation 的「最近会话」，等于插话插到别的窗口。
+    if (!sessionId) {
+      await sdk.logger.warn("续接没发出去：没解析出稳定的会话编号");
+      return false;
+    }
+    if (!resumeConfig.enabled) return false;
+    // 代次对号：这是发起时那一轮的凭据。中途关过、或换了策略，这一发就不该出去。
+    const alive = () => resumeConfig.enabled && (!token || resumeEpoch === token.epoch);
+    if (!alive()) return false;
+    try {
+      await sendToConversation(sdk, {
+        text: RESUME_TEXT,
+        mode: "steer",
+        sessionId,
+        // 每次真正发出去之前都回头看一眼：busy 退避要等好几秒，期间用户可能把总开关关了。
+        // 已经交给宿主的请求撤不回来，但这道门能拦住尚未发送的那几次重试。
+        beforeSend: alive,
+      });
+      await sdk.logger.info(`已续接：${sessionId}`);
+      // 发出去了不等于恢复了：交给 markAwaiting 等真实结果，不能立刻当失败。
+      // 发完再对一次号：期间若总开关被关过或重建过，就别把这一发写回新状态里。
+      if (!alive()) {
+        await sdk.logger.debug?.("续接发出后配置已变，这一发不记进状态", { sessionId });
+        return false;
+      }
+      resumeTracker.markAwaiting(sessionId, agentId);
       return true;
     } catch (error) {
-      // 没发出去就不能占用户的上限名额
+      // 没发出去就不能占用户的上限名额，也不能每 5 秒重试一次付费发送。
+      if (!alive()) return false;
       resumeTracker.rollbackResume(sessionId, agentId);
+      resumeTracker.failAwaiting(sessionId, agentId, String(error?.message || error));
       await sdk.logger.warn(`续接没发出去：${String(error?.message || error).slice(0, 160)}`);
       return false;
     }
   }
 
-  async function applyResumeDecision(decision) {
+  async function applyResumeDecision(decision, token = null) {
     if (!decision || decision.action === "ignore" || decision.action === "wait") return;
+    // 这一发是谁发起的、发起时是第几代配置：中间任何 await 之后都要对号。
+    // 「关 → 又开」会拉高代次，旧决策不能把新开关下的东西发出去。
+    const alive = () => resumeConfig.enabled && (!token || resumeEpoch === token.epoch);
+    if (!alive()) return;
     const signal = resumeSignals.get(decision.sessionId) || null;
+    const { target, ...described } = await describeSession(decision.sessionId, signal);
+    if (!alive()) return;
+    // 两套编号统一落到稳定编号上再发，不然写进别的键里，对话里看不到。
+    const sessionId = target?.sessionId || decision.sessionId;
+    const agentId = signal?.agentId || target?.agentId || "";
+    const source = { sessionId, ...described };
     if (decision.action === "resume") {
-      if (!await sendResumeContinue(decision.sessionId, signal?.agentId || "")) return;
-      resumeTracker.noteResumeFailed(decision.sessionId, signal?.agentId || "");
-      await pushResumeNotice(null);
+      if (!await sendResumeContinue(sessionId, agentId, token)) return;
+      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      // 自动续接走的是同一条决策路径，但用户不在场（手动那条走球上按钮的
+      // /resume/action 分支）。以前这里什么都不推，球侧那条提示又被 App 模式
+      // 藏着，于是「刚才自动发过一句」完全无感知。
+      await pushResumeFlash({ ...source, at: Date.now() });
+      await pushResumeProgress();
       return;
     }
     await pushResumeNotice({
-      sessionId: decision.sessionId,
-      title: signal?.agentName || "",
+      ...source,
       reason: buildResumeExplanation(signal),
       attempt: decision.attempt,
+      // 球上那句提示要能自己写清楚「这已经是第几次 / 上限多少 / 自动开没开」。
+      maxConsecutive: resumeConfig.maxConsecutive,
+      autoResume: resumeConfig.autoResume,
       at: Date.now(),
     });
-    await sdk.logger.info(`续接用尽，已在传音樱提醒：${decision.reason}`);
+    await pushResumeProgress();
+    const sourceText = describeResumeSource({ ...described, sessionId });
+    // 冻结期这条小条不会真的推到球上，日志得说实话，不然以后翻日志会被带偏。
+    await sdk.logger.info(
+      resumeUiFrozen
+        ? `续接用尽（冻结中，未推界面）：${decision.reason}｜${sourceText}`
+        : `续接用尽，已在传音樱提醒：${decision.reason}｜${sourceText}`,
+      { sessionId, source: sourceText },
+    );
   }
+
+  // 卡住确认的观察窗：第一次看到「没进展」先记一笔，下一轮复核仍然没进展才真的报。
+  // 一轮长思考/长工具调用可能几分钟不写盘，90 秒一个窗口太短（2026-10-19 实机：
+  // 10:02、12:06 两次都是把还在跑的轮次当成卡住，而报告前手里只有 RPC 限流丢钩子的记录）。
+  const stuckProbeAt = new Map();
 
   async function pumpResume() {
-    if (!resumeConfig.enabled) return;
-    for (const stuck of resumeTracker.checkStuck()) {
-      resumeSignals.set(stuck.sessionId, { sessionId: stuck.sessionId, reason: "" });
-      resumeTracker.onAbnormal({ sessionId: stuck.sessionId, reason: "" });
+    if (!resumeConfig.enabled || pumpingResume) return;
+    pumpingResume = true;
+    // 代次快照：中间任何 await 之后都要对号，配置变了或总开关被关了就当场收手。
+    // 已经交给宿主的发送撤不回来，这是这条防线能守住的全部边界。
+    const epoch = resumeEpoch;
+    const stale = () => resumeEpoch !== epoch || !resumeConfig.enabled;
+    try {
+      const candidates = resumeTracker.stuckCandidates();
+      // 已经不在候选名单里的会话，观察记录一并清掉，不留脏数据。
+      const activeKeys = new Set(candidates.map((item) => item.sessionId));
+      for (const key of stuckProbeAt.keys()) if (!activeKeys.has(key)) stuckProbeAt.delete(key);
+      for (const candidate of candidates) {
+        if (stale()) return;
+        // 卡住兜底不能只信倒计时：宿主一次 RPC 限流就能把「这一轮已经说过话」的记账吞掉，
+        // 于是正常会话被当成卡住。会话在那之后被写过，就说明有进展，不算卡住。
+        const target = await resolveResumeTarget({ sessionId: candidate.sessionId }, { force: true });
+        if (stale()) return;
+        // 复核时再认一步：事件侧的路径可能空着，但 session:list 的条目带着 kind/path。
+        // 认出来就把这条账忘掉，不计数、不弹卡。
+        if (isSubagentSessionTarget(target || {})) {
+          resumeTracker.forget(candidate.sessionId);
+          stuckProbeAt.delete(candidate.sessionId);
+          await sdk.logger.debug?.("卡住复核：这是子代理会话，不参与续接", { sessionId: candidate.sessionId });
+          continue;
+        }
+      const review = reviewStuckCandidate(candidate, { target, indexStale: target?.indexStale === true });
+      if (review.action === "wait") {
+        // 拿不到证据就不记账：名单里没有这段对话，或这次拿到的是超时沿用的旧快照。
+        // 旧快照的 modified 是过期值，用它判「没进展」可复现正常会话被误报；本次实机缺少复核快照，不能反推唯一原因。
+        // 只记编号与时间，不写正文。
+        await sdk.logger.debug?.(`卡住复核：${review.reason}，这轮不报`, {
+          sessionId: candidate.sessionId,
+          candidateStartedAt: candidate.startedAt,
+          reviewedAt: Date.now(),
+          indexStale: target?.indexStale === true,
+        });
+        continue;
+      }
+      if (review.action === "recovered") {
+        resumeTracker.markProduced(candidate.sessionId, candidate.agentId);
+        stuckProbeAt.delete(candidate.sessionId);
+        await sdk.logger.debug?.("卡住复核：这段对话后来有正文，不用续接", { sessionId: candidate.sessionId });
+        continue;
+      }
+      // 第一次看到「没进展」只记观察时间，再等一个阈值。真卡住最多晚一阵提醒，
+      // 长任务不会因为 90 秒内没落盘就被糊一张续接卡。
+      const probeAt = stuckProbeAt.get(candidate.sessionId) || 0;
+      const confirmMs = Math.max(30_000, Number(resumeConfig.stuckTimeoutMs) || 90_000);
+      if (!probeAt) {
+        stuckProbeAt.set(candidate.sessionId, Date.now());
+        await sdk.logger.debug?.("卡住复核：第一次没看到进展，再等一轮确认", { sessionId: candidate.sessionId });
+        continue;
+      }
+      if (Date.now() - probeAt < confirmMs) {
+        continue;
+      }
+      stuckProbeAt.delete(candidate.sessionId);
+      resumeTracker.markStuck(candidate.sessionId);
+      // 键统一用登记过别名之后的那个：resolve 与 pendingKeys 都是按稳定编号走的，
+      // 这里若还用事件侧的旧键，待决时取不到 signal，抬头又变回空白。
+      const key = resumeTracker.canonicalId(candidate.sessionId);
+      resumeSignals.set(key, {
+        sessionId: key,
+        agentId: candidate.agentId || target?.agentId || "",
+        reason: "",
+        title: target?.title || "",
+        agentName: target?.agentName || "",
+        firstMessage: target?.firstMessage || "",
+      });
     }
-    for (const key of resumeTracker.pendingKeys()) {
-      await applyResumeDecision(resumeTracker.resolve({ sessionId: key }));
+      for (const key of resumeTracker.pendingKeys()) {
+        if (stale()) return;
+        await applyResumeDecision(resumeTracker.resolve({ sessionId: key }), { epoch });
+      }
+    } finally {
+      pumpingResume = false;
     }
   }
 
-  function handleResumeEvent(event, sessionPath) {
-    if (!resumeConfig.enabled || !event) return;
+  async function handleResumeEvent(event, sessionPath) {
+    if (!event) return;
+    // 子代理会话不进断点续接：那是伙伴派出去干活的一次性会话，没有「用户窗口没说完」
+    // 这回事。2026-10-19 实机：一轮里派了四个子代理，四段会话各弹了一张续接卡。
+    if (isSubagentSessionPath(sessionPath)) return;
+    // 循环续接的兜底判定必须走在断点续接总开关的早退之前：
+    // 它跟断点续接是两套开关（loopEnabled 与 enabled），总开关关了循环也该能跑。
+    //
+    // 为什么要兜底：循环判定以前只挂在 messages/post-assistant 钩子上，而那是一次性判定——
+    // 一轮只触发一次，撞上宿主的 App RPC 并发限制（日志里一天十几次
+    // “adjudicator threw: App RPC concurrency limit reached”）就永久错过，
+    // 循环会一直卡在 running、done 停在 0。turn_end 走事件总线不吃那套限流，当第二条路。
+    if (event.type === "turn_end" && loopRegistry.list().length && !loopFiring) {
+      void (async () => {
+        try {
+          if (event.aborted === true) return;
+          const parts = Array.isArray(event.message?.content) ? event.message.content : [];
+          const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
+          const stopReason = String(event.message?.stopReason || "");
+          // 工具中间轮也会走 turn_end，那不是「说完了」。
+          if (hasToolCall || (stopReason && stopReason !== "stop")) return;
+          const text = assistantTextOf(event.message);
+          if (!text) return;
+          const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+          const sid = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
+          if (!sid || !loopRegistry.get(sid)) return;
+          await fireContinueLoop(sid, text, {
+            agentId: String(target?.agentId || event.agentId || ""),
+            source: "turn_end",
+          });
+        } catch (error) {
+          await sdk.logger.warn(`循环续接兜底判定出错：${String(error?.message || error).slice(0, 160)}`);
+        }
+      })();
+    }
+    // 排队话单的兜底判定：与循环续接同一个道理——钩子是一次性判定，
+    // 撞上宿主的 App RPC 并发限制就会永久错过，这一轮就再也接不上下一句。
+    if (event.type === "turn_end" && queuePlans.list().length && !queueFiring) {
+      void (async () => {
+        try {
+          const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+          let sid = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
+          if (!queuePlans.get(sid)) {
+            // 认不出是哪段对话就别就此作罢：只有一份话单在跑时，它就是那份。
+            // 事件给的是文件名、话单记的是 sess_xxx，两套编号对不上时最容易在这儿空转。
+            const running = queuePlans.list().filter((item) => item.status === "running");
+            if (running.length === 1) {
+              sid = running[0].sessionId;
+              safeLog.info("排队话单兜底：按唯一在跑的话单认了对话", { sessionId: sid });
+            }
+          }
+          if (!sid || !queuePlans.get(sid)) return;
+          // 会话被中止：宿主会清掉排队中的输入，排的那句不会发出去。
+          // 这时要给用户回执，不然她会一直以为还在排。
+          if (event.aborted === true) {
+            queuePlans.stop(sid, "对话被中止");
+            await pushQueueState(null, { message: "那段对话被中止了，排的话没发出去" });
+            return;
+          }
+          const parts = Array.isArray(event.message?.content) ? event.message.content : [];
+          const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
+          const stopReason = String(event.message?.stopReason || "");
+          // 工具中间轮也会走 turn_end，那不是「说完了」。
+          if (hasToolCall || (stopReason && stopReason !== "stop")) return;
+          const text = assistantTextOf(event.message);
+          if (!text) return;
+          await fireQueuePlan(sid, text, { source: "turn_end" });
+        } catch (error) {
+          await sdk.logger.warn(`排队话单兜底判定出错：${String(error?.message || error).slice(0, 160)}`);
+        }
+      })();
+    }
+    if (!resumeConfig.enabled) return;
+    // 事件处理里也有 await（读名单）。等它回来时配置可能已经变了，
+    // 那时再登记异常就是把关闭期间的事又写回新状态。
+    const epoch = resumeEpoch;
+    const stale = () => resumeEpoch !== epoch || !resumeConfig.enabled;
+    // 事件给的是文件名、钩子给的是 sess_xxx：先归一到 sessionId，
+    // 否则「开始时记了 A、恢复时清了 B」，两边永远对不上。
     const retry = parseAutoRetryStart(event, sessionPath);
-    if (retry?.sessionId) {
-      resumeTracker.markRetrying(retry.sessionId, retry.agentId);
+    if (retry) {
+      const target = await resolveResumeTarget(retry);
+      if (stale()) return;
+      // 子代理会话的自动重试不属于「用户窗口」，不记“正在重试”。
+      if (isSubagentSessionTarget({ ...(target || {}), path: target?.path || retry.sessionPath || "" })) {
+        resumeTracker.forget(target?.sessionId || retry.sessionId || "");
+        return;
+      }
+      const key = target?.sessionId || retry.sessionId || retry.agentId;
+      if (key) resumeTracker.markRetrying(key, target?.agentId || retry.agentId);
       return;
     }
     const signal = parseResumeSignal(event, sessionPath);
     if (signal) {
       if (isUserInitiatedAbortReason(signal.reason)) return;
-      const key = signal.sessionId || signal.agentId;
-      resumeSignals.set(key, signal);
-      resumeTracker.onAbnormal(signal);
+      const target = await resolveResumeTarget(signal);
+      if (stale()) return;
+      // 子代理会话报错（provider 打呼、重试失败）不是「用户窗口没说完」。
+      // 事件回调的 sessionPath 有时是空的，函数入口那道挡不住，必须拿到 target 再认一次：
+      // 2026-10-19 那四张卡的 reason 非空（文案是「没能正常收尾」），走的就是这条信号路，
+      // 不是卡住兜底——两个入口都得堵。
+      if (isSubagentSessionTarget({ ...(target || {}), path: target?.path || signal.sessionPath || "" })) {
+        const signalKey = resumeTracker.canonicalId(target?.sessionId || signal.sessionId || "");
+        resumeTracker.forget(target?.sessionId || signal.sessionId || "");
+        if (signalKey) resumeSignals.delete(signalKey);
+        stuckProbeAt.delete(signalKey);
+        return;
+      }
+      const sessionId = target?.sessionId || signal.sessionId;
+      const agentId = target?.agentId || signal.agentId;
+      const key = sessionId || agentId;
+      if (!key) return;
+      const normalized = {
+        ...signal,
+        sessionId,
+        agentId,
+        title: target?.title || "",
+        agentName: target?.agentName || "",
+        firstMessage: target?.firstMessage || "",
+      };
+      resumeTracker.onAbnormal(normalized);
+      // 键用登记完别名之后那个：否则信号存在 UUID 名下、决策却按稳定编号去查，
+      // 两边对不上，抬头又变回空白，日志里也找不到这段对话。
+      resumeSignals.set(resumeTracker.canonicalId(key), normalized);
       return;
     }
     if (event.type === "turn_end") {
-      const sessionId = sessionIdFromPath(sessionPath) || String(event.sessionId || "");
-      if (sessionId && assistantTextOf(event.message) && event.aborted !== true) {
-        resumeTracker.markRecovered(sessionId, event.agentId || "");
-        resumeSignals.delete(sessionId);
-      }
+      if (event.aborted === true || !assistantTextOf(event.message)) return;
+      // 工具轮也会走 turn_end，那不是「说完了」。只有 stopReason 收在 stop、
+      // 且正文里没有工具调用，才算真回复；否则会在一半路上把失败计数清零、把等待清掉。
+      const parts = Array.isArray(event.message?.content) ? event.message.content : [];
+      const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
+      const stopReason = String(event.message?.stopReason || "");
+      if (hasToolCall || (stopReason && stopReason !== "stop")) return;
+      const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });
+      if (stale()) return;
+      const sessionId = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
+      if (!sessionId) return;
+      resumeTracker.markRecovered(sessionId, target?.agentId || event.agentId || "");
+      resumeSignals.delete(sessionId);
+      // 会话自己好了，就把桥上那条提醒收掉。但别把别的窗口那条也收了——
+      // 以前这里无条件清，两个窗口同时出状况时先好的那个会把另一个的提醒弄丢。
+      // handleResumeEvent 是事件钩子，这里不 await，只发起不等。
+      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
+      void pushResumeProgress();
     }
   }
 
@@ -458,7 +2130,16 @@ activeFusionServiceDispose = disposeFusionService;
   // 宿主不支持时只降级、不报错：卡住兜底走的是两个 hook，不依赖这条订阅。
   try {
     if (typeof sdk.bus?.subscribe === "function") {
-      await sdk.bus.subscribe((event, sessionPath) => { void handleResumeEvent(event, sessionPath); }, {});
+      await sdk.bus.subscribe((event, sessionPath) => {
+        // 新会话默认会显示输入栏那个按钮，开关关着时得补一次盖住。
+        if (event === "session_created") {
+          void currentInputButtonEnabled()
+            .then((enabled) => syncInputStatusVisibility(enabled))
+            .catch(() => {});
+          return;
+        }
+        void handleResumeEvent(event, sessionPath);
+      }, {});
       resumeEventsAvailable = true;
     }
   } catch (error) {
@@ -493,7 +2174,8 @@ activeFusionServiceDispose = disposeFusionService;
         enabled: body?.enabled,
         minChars: body?.minChars,
       });
-      await sdk.storage.global.set("summaryConfig", next);
+      await saveConfig("summaryConfig", next);
+      summaryConfigCache = next;
       return c.json({ ok: true, ...next });
     });
     app.get("/summary-model", async (c) => {
@@ -520,7 +2202,7 @@ activeFusionServiceDispose = disposeFusionService;
           const exists = chatModelOptions(catalog).some((row) => row.provider === modelRef.provider && row.model === modelRef.model);
           if (!exists) return c.json({ ok: false, error: "这条模型已不在 Hana 配置列表中，请重新选择。" }, 400);
         }
-        await sdk.storage.global.set("summaryModel", modelRef);
+        await saveConfig("summaryModel", modelRef);
         return c.json({ ok: true, modelRef });
       } catch {
         return c.json({ ok: false, error: "保存模型失败；请确认知意已获模型使用权限。" }, 403);
@@ -581,16 +2263,31 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
 
-    app.get("/resume-config", async (c) => c.json({ ok: true, config: resumeConfig, text: RESUME_TEXT }));
+    app.get("/resume-config", async (c) => c.json({ ok: true, config: resumeConfig, text: RESUME_TEXT, frozen: resumeUiFrozen }));
+    app.post("/resume-freeze", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "冻结参数读不出来。" }, 400); }
+      // 暗号只比哈希：源码里不落明文，猜到字符串也得先猜中。
+      // 期望哈希允许本机存储覆盖（只为自动化测试和本机自定暗号用），默认为代码里那个。
+      const expectedHash = String(await readConfig("resumeUnfreezeHash", "") || "") || RESUME_UNFREEZE_SHA256;
+      if (!phraseMatches(body?.phrase, expectedHash)) {
+        await sdk.logger.warn("断点续接解冻暗号不匹配，冻结状态没变");
+        return c.json({ ok: false, error: "暗号不对，冻结状态没变。" }, 403);
+      }
+      // 带 frozen 的是重新收回去，不带就是解冻。
+      resumeUiFrozen = body?.frozen === true;
+      await saveConfig(RESUME_FROZEN_KEY, resumeUiFrozen);
+      await sdk.logger.info(`断点续接界面已${resumeUiFrozen ? "重新冻结" : "解冻"}（引擎照常运行）`);
+      await syncResumeVisibility();
+      return c.json({ ok: true, frozen: resumeUiFrozen });
+    });
     app.put("/resume-config", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "续接设置读不出来。" }, 400); }
-      resumeConfig = normalizeResumeConfig({ ...resumeConfig, ...(body?.config || {}) });
-      await sdk.storage.global.set("resumeConfig", resumeConfig);
-      // 重建状态机让新上限立刻生效；已有的待决信号因此清空（用户主动改的，可接受）。
-      resumeTracker = makeResumeTracker(resumeConfig);
-      resumeSignals.clear();
-      return c.json({ ok: true, config: resumeConfig });
+      // 改自动或上限不重建状态机：已经续过几次要留着，不然调个上限就白送几次。
+      // 只有总开关转成「关」时才清场。
+      const config = await applyResumeConfig(body?.config || {});
+      return c.json({ ok: true, config });
     });
     app.get("/resume-status", async (c) => {
       const sessionId = String(c.req.query("sessionId") || "");
@@ -599,83 +2296,172 @@ activeFusionServiceDispose = disposeFusionService;
         config: resumeConfig,
         eventsAvailable: resumeEventsAvailable,
         session: sessionId ? resumeTracker.snapshot(sessionId) : null,
+        // 没有球的时候靠这里查结果：达到了上限就安静停着，不弹任何窗。
+        progress: await describeResumeProgress(),
       });
     });
     app.post("/resume/continue", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "续接参数读不出来。" }, 400); }
-      const sessionId = String(body?.sessionId || "");
-      try {
-        // 用户点的是「继续哈」，这是他明确的动作，不受自动续接开关约束。
-        const sent = await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId });
-        resumeTracker.markRecovered(sessionId);
-        resumeSignals.delete(sessionId);
-        await pushResumeNotice(null);
-        return c.json({ ok: true, ...sent });
-      } catch (error) {
-        return c.json({ ok: false, error: friendlySendError(error) }, 502);
-      }
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!sessionId) return c.json({ ok: false, error: "没解析出这段对话的编号，这次不续接。" }, 400);
+      if (!resumeConfig.enabled) return c.json({ ok: false, error: "断点续接已关闭。" }, 409);
+      const sent = await sendResumeContinue(sessionId, "", { epoch: resumeEpoch });
+      if (!sent) return c.json({ ok: false, error: "续接未能确认发送，原提醒保留，请检查设置后重试。" }, 502);
+      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      await pushResumeProgress();
+      return c.json({ ok: true, sessionId, text: RESUME_TEXT });
     });
     app.post("/resume/dismiss", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
-      const sessionId = String(body?.sessionId || "");
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!sessionId) return c.json({ ok: false, error: "缺少对话编号。" }, 400);
       resumeTracker.forget(sessionId);
       resumeSignals.delete(sessionId);
-      await pushResumeNotice(null);
+      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      await pushResumeProgress();
       return c.json({ ok: true });
+    });
+
+    // ── 守门人（活干完再关机）──
+    // 面板和传音樱都从这三个口子读：状态、参数、撤掉。
+    app.get("/sleep-guard", async (c) => {
+      const status = await readSleepGuard(sdk, { withLog: true });
+      const timeline = await readSleepTimeline(sdk, 120);
+      const config = await readSleepGuardConfig(sdk);
+      const realEnabled = await isRealEnabled(sdk);
+      const state = status.state || {};
+      return c.json({
+        ok: true,
+        armed: status.armed === true,
+        status: state.status || "idle",
+        idleSeconds: Math.round((status.idleForMs || 0) / 1000),
+        needSeconds: Math.round((state.idleMs || 0) / 1000),
+        countdownSeconds: Math.round((status.countdownLeftMs || 0) / 1000),
+        sinceArmedSeconds: Math.round((status.sinceArmedMs || 0) / 1000),
+        result: state.result || null,
+        cancelReason: state.cancelReason || null,
+        note: state.note || "",
+        realEnabled,
+        dryRun: state.armed ? state.dryRun !== false : null,
+        config,
+        log: (status.log || []).slice(-8),
+        timeline: timeline.slice(-60),
+      });
+    });
+    app.post("/sleep-guard/config", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const config = await saveSleepGuardConfig(sdk, body || {});
+      return c.json({ ok: true, config });
+    });
+    app.post("/sleep-guard/real", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const realEnabled = await setRealEnabled(sdk, body?.enabled === true);
+      await sdk.logger.info(`真关机开关（面板）：${realEnabled ? "已打开" : "已关闭"}`);
+      return c.json({ ok: true, realEnabled });
+    });
+    app.post("/sleep-guard/cancel", async (c) => {
+      const result = await cancelSleepGuard(sdk, "在知意面板上手动撤掉");
+      return c.json({ ok: true, ...result });
     });
 
     app.get("/ball/status", (c) => c.json(ball.state()));
     app.post("/ball/start", async (c) => {
       const result = await ball.start();
+      if (result?.running) {
+        ballDesired = true;
+        void saveConfig("ballDesired", true).catch(() => {});
+        rememberCurrentHost();
+      }
       if (result?.running) scheduleVoiceBridgeTick(sdk, ball);
       if (result?.running) scheduleBallBridgeTick(sdk, ball);
+      if (result?.running) startSleepBallPush(sdk, ball);
+      if (result?.running) void adoptPendingBallAsks().catch(() => {});
+      if (result?.running) {
+        // 球刚起来时它手里没有任何全局状态（默认按「关」算），不同步就会把手动弹出来的
+        // 那条 notice 误藏起来。序号基线也得重立，否则球重开后新动作会被旧序号卡死。
+        resumeActionBaselineAdopted = false;
+        // 冻结期这里走的是清理分支：把球上可能还挂着的旧小条收掉，不然重载后用户还看得见一张旧提醒。
+        void syncResumeVisibility();
+        void syncPendingResumeNotice();
+      }
       return c.json(result);
     });
-    app.post("/ball/stop", async (c) => c.json(await ball.stop()));
+    app.post("/ball/stop", async (c) => {
+      // 用户亲手关的：记住这个意图，下次 App 重载不要再自作主张拉起来。
+      ballDesired = false;
+      void saveConfig("ballDesired", false).catch(() => {});
+      return c.json(await ball.stop());
+    });
 
     // ── 语音朗读 ──
     // 配置一条朗读模型 + 朗读偏好 + 按伙伴分的音色；Key 落盘前用系统加密保护。
-    app.get("/voice-config", async (c) => {
-      const config = normalizeVoiceConfig(await sdk.storage.global.get("voiceConfig", {}));
-      // 伙伴名单不单独申请授权：从已授权的 session:list 里聚合出你最近聊过的伙伴。
-      // 拿不到就明说，不静默给一个空列表让界面假装「你没聊过别人」。
-      let partners = [];
-      let partnersNote = "";
+
+    // 伙伴名单：先问宿主要完整名单（茶话会走的就是 agent:list），拿不到再退回会话名单。
+    async function readVoicePartners(sdk) {
       try {
-        const listed = await sdk.bus.request("session:list", { scope: "all" }, { timeoutMs: 8_000 });
-        const sessions = Array.isArray(listed) ? listed : listed?.sessions;
-        const seen = new Map();
-        for (const item of Array.isArray(sessions) ? sessions : []) {
-          const agentId = String(item?.agentId || "").trim();
-          if (!agentId || seen.has(agentId)) continue;
-          seen.set(agentId, {
-            agentId,
-            agentName: String(item?.agentName || "").trim(),
-            modified: Number(item?.modified ?? 0) || 0,
-          });
-        }
-        partners = [...seen.values()]
-          .sort((a, b) => b.modified - a.modified)
-          .slice(0, 12)
-          .map(({ agentId, agentName }) => ({ agentId, agentName: agentName || agentId }));
+        const listed = await sdk.bus.request("agent:list", { scope: "all", lifecycle: "active" }, { timeoutMs: 8_000 });
+        const rows = Array.isArray(listed) ? listed : listed?.agents;
+        const partners = (Array.isArray(rows) ? rows : [])
+          .map((row) => ({
+            agentId: String(row?.id || row?.agentId || "").trim(),
+            agentName: String(row?.name || row?.displayName || row?.agentName || "").trim(),
+          }))
+          .filter((row) => row.agentId)
+          .map((row) => ({ agentId: row.agentId, agentName: row.agentName || row.agentId }));
+        return { partners, partnersNote: "" };
       } catch (error) {
-        partnersNote = `伙伴名单读不到（${String(error?.message || error).slice(0, 80)}），暂时不能按伙伴分音色。`;
-        await sdk.logger.warn(`朗读伙伴名单读取失败：${error?.message ?? String(error)}`);
+        await sdk.logger.warn(`朗读伙伴名单（agent:list）读取失败，退回会话名单：${error?.message ?? String(error)}`);
+        try {
+          const listed = await sdk.bus.request("session:list", { scope: "all" }, { timeoutMs: 8_000 });
+          const sessions = Array.isArray(listed) ? listed : listed?.sessions;
+          const seen = new Map();
+          for (const item of Array.isArray(sessions) ? sessions : []) {
+            const agentId = String(item?.agentId || "").trim();
+            if (!agentId || seen.has(agentId)) continue;
+            seen.set(agentId, {
+              agentId,
+              agentName: String(item?.agentName || "").trim(),
+              modified: Number(item?.modified ?? 0) || 0,
+            });
+          }
+          const partners = [...seen.values()]
+            .sort((a, b) => b.modified - a.modified)
+            .slice(0, 12)
+            .map(({ agentId, agentName }) => ({ agentId, agentName: agentName || agentId }));
+          return { partners, partnersNote: "这份名单是从最近聊过的对话里凑的，没聊过的伙伴不会出现在这儿。" };
+        } catch (fallbackError) {
+          const partnersNote = `伙伴名单读不到（${String(fallbackError?.message || fallbackError).slice(0, 80)}），暂时不能按伙伴分音色。`;
+          await sdk.logger.warn(`朗读伙伴名单读取失败：${fallbackError?.message ?? String(fallbackError)}`);
+          return { partners: [], partnersNote };
+        }
       }
-      return c.json({
+    }
+
+    // GET 与 PUT 回同一份形状。少了这份，页面每次保存后都会把音色库和伙伴名单清空：
+    // 面板拿到精简响应就把 voiceLibrary 当成空，音色下拉里只剩「跟随默认」。
+    async function buildVoiceConfigPayload(sdk, config) {
+      const { partners, partnersNote } = await readVoicePartners(sdk);
+      return {
         ok: true,
         config: maskVoiceConfig(config),
         presets: VOICE_PRESETS,
         voices: voicesForProtocol(config.protocol),
-        voiceLibrary: { t2a: voicesForProtocol("t2a"), chat: voicesForProtocol("chat") },
+        voiceLibrary: { t2a: voicesForProtocol("t2a"), chat: voicesForProtocol("chat"), speech: voicesForProtocol("speech") },
         partners,
         partnersNote,
         encrypted: encryptionAvailable(),
         encryptionNote: encryptionAvailable() ? "" : (encryptionStatus().reason || "系统加密不可用"),
         limits: { maxChars: MAX_REPLY_CHARS * 10 },
-      });
+      };
+    }
+
+    app.get("/voice-config", async (c) => {
+      const config = normalizeVoiceConfig(await sdk.storage.global.get("voiceConfig", {}));
+      return c.json(await buildVoiceConfigPayload(sdk, config));
     });
     app.put("/voice-config", async (c) => {
       let body;
@@ -686,12 +2472,8 @@ activeFusionServiceDispose = disposeFusionService;
       const rawKey = isMaskedKey(body?.config?.apiKey) ? current.apiKey : submitted.apiKey;
       const next = { ...submitted, apiKey: rawKey === current.apiKey ? current.apiKey : await protectKey(rawKey) };
       await sdk.storage.global.set("voiceConfig", next);
-      return c.json({
-        ok: true,
-        config: maskVoiceConfig(next),
-        encrypted: encryptionAvailable(),
-        encryptionNote: encryptionAvailable() ? "" : (encryptionStatus().reason || "系统加密不可用"),
-      });
+      // 回完整的一份：只回 config 的话，页面保存后会把音色库和伙伴名单当成空的。
+      return c.json(await buildVoiceConfigPayload(sdk, next));
     });
     app.post("/voice-config/test", async (c) => {
       let body;
@@ -723,11 +2505,80 @@ activeFusionServiceDispose = disposeFusionService;
         return c.json({ ok: false, error: String(error?.message || error).slice(0, 240) }, 502);
       }
     });
+    // 音色试听：合成一句固定的话给人听，音色调好了再决定用哪个。
+    // 跟 /voice-config/test 的区别是：这条按音色缓存，同一个音色再点不重复花钱。
+    app.post("/voice/preview", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "试听参数读不出来。" }, 400); }
+      const stored = normalizeVoiceConfig(await sdk.storage.global.get("voiceConfig", {}));
+      // 页面没传配置时不能拿空配置去盖住已存的那份：
+      // normalizeVoiceConfig({}) 会填出一套默认值（空的 Key、默认地址），盖上去就说「没配齐」。
+      const submitted = body?.config ? normalizeVoiceConfig(body.config) : {};
+      const probe = {
+        ...stored,
+        ...submitted,
+        enabled: true,
+        apiKey: isMaskedKey(body?.config?.apiKey)
+          ? stored.apiKey
+          : (String(submitted.apiKey || "").trim() || stored.apiKey),
+      };
+      const voiceId = String(body?.voiceId || "").trim() || probe.defaultVoiceId;
+      const text = "这是这个音色的试听，听听看合不合适。";
+      const fingerprint = voiceFingerprint(text, voiceId, probe);
+      const hit = await readCachedSpeak(sdk, fingerprint);
+      if (hit) {
+        return c.json({
+          ok: true,
+          cached: true,
+          clipId: hit.clipId,
+          format: hit.format || "mp3",
+          durationMs: hit.durationMs,
+          timings: hit.timings || null,
+          text,
+        });
+      }
+      try {
+        const result = await synthesizeVoice(sdk, { text, config: probe, voiceId });
+        const clipId = `clip_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        saveClip(sdk, clipId, result.audio, result.format);
+        saveClipMeta(sdk, clipId, { fingerprint, format: result.format, durationMs: result.durationMs, timings: result.timings || null, voiceId });
+        await rememberCachedSpeak(sdk, fingerprint, clipId);
+        await sdk.logger.info(`音色试听已合成：${probe.protocol}/${probe.model} / ${voiceId || "默认音色"} / ${result.format}`);
+        return c.json({
+          ok: true,
+          cached: false,
+          clipId,
+          format: result.format,
+          durationMs: result.durationMs,
+          timings: result.timings || null,
+          text,
+        });
+      } catch (error) {
+        await sdk.logger.warn(`音色试听失败：${probe.protocol}/${probe.model} ${error?.message ?? String(error)}`);
+        return c.json({ ok: false, error: String(error?.message || error).slice(0, 240) }, 502);
+      }
+    });
     app.get("/voice/replies", async (c) => {
       try {
         const result = await listSpeakableReplies(sdk, {
           sessionId: String(c.req.query("sessionId") || ""),
           limit: Number(c.req.query("limit")) || 8,
+        });
+        return c.json({ ok: true, ...result });
+      } catch (error) {
+        return c.json({ ok: false, error: String(error?.message || error).slice(0, 240) }, 502);
+      }
+    });
+    // 列表里的 text 只带前 1200 字（桥的 64KB 上限）；进「改稿」时要一次全文，
+    // 不然长回复在编辑器里只有前半截，删完保存就把后半截默默丢了。
+    app.get("/voice/reply-text", async (c) => {
+      try {
+        const rawIds = String(c.req.query("entryIds") || "");
+        const entryIds = rawIds.split(",").map((value) => value.trim()).filter(Boolean);
+        const result = await readFullReplyText(sdk, {
+          sessionId: String(c.req.query("sessionId") || ""),
+          entryId: String(c.req.query("entryId") || ""),
+          entryIds,
         });
         return c.json({ ok: true, ...result });
       } catch (error) {
@@ -741,12 +2592,45 @@ activeFusionServiceDispose = disposeFusionService;
         return c.json({ ok: true, ...(await speakByEntry(sdk, {
           sessionId: String(body?.sessionId || ""),
           entryId: String(body?.entryId || ""),
+          entryIds: Array.isArray(body?.entryIds) ? body.entryIds : [],
           text: String(body?.text || ""),
+          draft: body?.draft === true,
         })) });
       } catch (error) {
         return c.json({ ok: false, error: String(error?.message || error).slice(0, 240) }, 502);
       }
     });
+    // ─── 语音收藏：只存引用，不复制音频 ───
+    // 合成好的音频已经落在 clip 里（voice/clip/:clipId 能取），所以收藏只记
+    // clipId + 文本 + 音色 + 来源伙伴，试听直接读原 clip，不用再占一份磁盘。
+    app.get("/voice/favorites", async (c) => {
+      const items = await listVoiceFavorites(sdk);
+      return c.json({ ok: true, items: items.slice().reverse() });
+    });
+    app.post("/voice/favorites", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { body = {}; }
+      try {
+        return c.json({ ok: true, ...(await favoriteVoiceClip(sdk, body)) });
+      } catch (error) {
+        const status = error?.code === "VOICE_FAV_NOT_FOUND" ? 404 : 400;
+        return c.json({ ok: false, error: String(error?.message || "收藏失败了，再试一次") }, status);
+      }
+    });
+    // 路由对象只有 get/post/put，没有 delete（SDK 实测）；删除走 POST + body 里的 id，
+    // 与旧插件的 /tts/favorites/delete 同一约定。
+    app.post("/voice/favorites/delete", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { body = {}; }
+      const id = String(body?.id || "");
+      if (!id) return c.json({ ok: false, error: "缺收藏 id" }, 400);
+      const items = await listVoiceFavorites(sdk);
+      const next = items.filter((item) => item.id !== id);
+      if (next.length === items.length) return c.json({ ok: false, error: "这条收藏不在了。" }, 404);
+      await sdk.storage.global.set(VOICE_FAVORITES_KEY, next);
+      return c.json({ ok: true, message: "已删除" });
+    });
+
     app.get("/voice/clip/:clipId", (c) => {
       const clipId = String(c.req.param("clipId") || "");
       if (!isValidClipId(clipId)) return c.json({ ok: false, error: "音频编号不合法。" }, 400);
@@ -771,7 +2655,7 @@ activeFusionServiceDispose = disposeFusionService;
       });
     });
     app.post("/recommendation-config/refine-request", async (c) => {
-      await sdk.storage.global.set("styleRefineRequested", true);
+      await saveConfig("styleRefineRequested", true);
       return c.json({ ok: true, hint: "下一轮对话里知意会问你，想好怎么改再回它。" });
     });
     app.post("/recommendation-config/restore", async (c) => {
@@ -786,10 +2670,14 @@ activeFusionServiceDispose = disposeFusionService;
       const config = normalizeRecommendationConfig({
         display: body?.display,
         count: body?.count,
+        inputButton: body?.inputButton,
+        quickReplies: body?.quickReplies,
         styles: body?.styles,
         selectedByCount: body?.selectedByCount,
       });
       await sdk.storage.global.set("recommendationConfig", config);
+      // 开关一改，输入栏那一格得立刻跟着变。
+      void syncInputStatusVisibility(config.inputButton !== false);
       return c.json({ ok: true, ...config });
     });
     app.get("/content-model", async (c) => {
@@ -849,7 +2737,7 @@ activeFusionServiceDispose = disposeFusionService;
         }
         // 推荐回复、Ask 判断、长回复速览共用一条内容模型：一次写入，三个调用点同步。
         for (const key of ["recommendationModel", "askJudgeModel", "summaryModel"]) {
-          await sdk.storage.global.set(key, modelRef);
+          await saveConfig(key, modelRef);
         }
         return c.json({ ok: true, modelRef });
       } catch {
@@ -911,7 +2799,43 @@ activeFusionServiceDispose = disposeFusionService;
           const exists = chatModelOptions(catalog).some((row) => row.provider === modelRef.provider && row.model === modelRef.model);
           if (!exists) return c.json({ ok: false, error: "这条模型已不在 Hana 配置列表中，请重新选择。" }, 400);
         }
-        await sdk.storage.global.set("recommendationModel", modelRef);
+        await saveConfig("recommendationModel", modelRef);
+        return c.json({ ok: true, modelRef });
+      } catch {
+        return c.json({ ok: false, error: "保存模型失败；请确认知意已获模型使用权限。" }, 403);
+      }
+    });
+    // 备用模型：主模型连着撞不动的时候才上。单独一条 key，不跟「内容模型」三个调用点绑在一起，
+    // 因为它只在推荐回复这一条路上有明确定义（速览、Ask 判断没有“再换个人问”的需求）。
+    app.get("/fallback-model", async (c) => {
+      try {
+        const catalog = await sdk.models.list();
+        return c.json({
+          ok: true,
+          models: chatModelOptions(catalog),
+          modelRef: normalizeModelRef(await sdk.storage.global.get("recommendationFallbackModel", null)),
+        });
+      } catch {
+        return c.json({ ok: false, models: [], modelRef: null,
+          error: "读取 Hana 已配置模型失败；请在应用权限中允许知意使用模型。" });
+      }
+    });
+    app.put("/fallback-model", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "模型设置读不出来。" }, 400); }
+      const modelRef = body?.modelRef === null ? null : normalizeModelRef(body?.modelRef);
+      if (body?.modelRef !== null && !modelRef) return c.json({ ok: false, error: "模型选项无效。" }, 400);
+      try {
+        if (modelRef) {
+          const catalog = await sdk.models.list();
+          const exists = chatModelOptions(catalog).some((row) => row.provider === modelRef.provider && row.model === modelRef.model);
+          if (!exists) return c.json({ ok: false, error: "这条模型已不在 Hana 配置列表中，请重新选择。" }, 400);
+          const primary = normalizeModelRef(await sdk.storage.global.get("recommendationModel", null));
+          if (primary && primary.provider === modelRef.provider && primary.model === modelRef.model) {
+            return c.json({ ok: false, error: "备用模型跟主模型是同一条，兜不住；换一条别的。" }, 400);
+          }
+        }
+        await saveConfig("recommendationFallbackModel", modelRef);
         return c.json({ ok: true, modelRef });
       } catch {
         return c.json({ ok: false, error: "保存模型失败；请确认知意已获模型使用权限。" }, 403);
@@ -950,22 +2874,87 @@ activeFusionServiceDispose = disposeFusionService;
           const exists = chatModelOptions(catalog).some((row) => row.provider === modelRef.provider && row.model === modelRef.model);
           if (!exists) return c.json({ ok: false, error: "这条模型已不在 Hana 配置列表中，请重新选择。" }, 400);
         }
-        await sdk.storage.global.set("askJudgeModel", modelRef);
+        await saveConfig("askJudgeModel", modelRef);
         return c.json({ ok: true, modelRef });
       } catch (error) {
         return c.json({ ok: false, error: "保存模型失败；请确认知意已获模型使用权限。" }, 403);
+      }
+    });
+    // ── 快速档：速览、会话标题这类要快不要精的小功能专用一条模型 ──
+    app.get("/fast-model", async (c) => {
+      try {
+        const catalog = await sdk.models.list();
+        const modelRef = normalizeModelRef(await sdk.storage.global.get(FAST_TASK_MODEL_KEY, null));
+        return c.json({ ok: true, models: chatModelOptions(catalog), modelRef });
+      } catch {
+        return c.json({ ok: false, models: [], modelRef: null, error: "读取 Hana 已配置模型失败；请在应用权限中允许知意使用模型。" });
+      }
+    });
+    app.post("/fast-model/test", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "模型测试参数读不出来。" }, 400); }
+      const modelRef = body?.modelRef === null ? null : normalizeModelRef(body?.modelRef);
+      if (body?.modelRef !== null && !modelRef) return c.json({ ok: false, error: "模型选项无效。" }, 400);
+      const startedAt = Date.now();
+      try {
+        const resolved = await resolveFastModel(sdk, modelRef
+          || normalizeModelRef(await sdk.storage.global.get("askJudgeModel", null)), { useStored: false });
+        // 测的就是真实短任务：压缩一段真文字，看它到底能不能又快又出正文。
+        const outcome = await invokeFastTextModel(sdk, resolved, {
+          requestId: `zhiyi_fast_test_${Date.now().toString(36)}`,
+          systemPrompt: "你只做一件事：把下面这段话压缩成两行要点。只输出要点本身。",
+          messages: [{ role: "user", content: "今天修好了通知链路，超时上限从二十秒放宽到四十五秒，另外把注册表里那条失效的图标路径改成了真实存在的文件，整个过程没有换模型，也没有动发布版本号。" }],
+          maxTokens: 400,
+        });
+        const name = modelRef ? `${modelRef.provider}/${modelRef.model}` : "跟随 Ask 判断那条";
+        return c.json({
+          ok: true,
+          sample: outcome.text.slice(0, 120),
+          modelRef,
+          modelName: name,
+          effort: outcome.effort,
+          attempts: outcome.attempts,
+          reasoningTokens: outcome.reasoningTokens,
+          elapsedMs: Date.now() - startedAt,
+        });
+      } catch (error) {
+        await sdk.logger.warn(`快速档模型测试失败：${error?.code ?? "no-code"} ${error?.message ?? String(error)}`);
+        return c.json({
+          ok: false,
+          code: error?.code || "MODEL_ERROR",
+          error: error?.code === "MODEL_EMPTY"
+            ? "连上了但没有返回正文；思考可能吃光了输出额度。"
+            : "快速档测试失败，请检查模型配置和应用权限。",
+          reasoningTokens: error?.reasoningTokens ?? null,
+        }, 502);
+      }
+    });
+    app.put("/fast-model", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "模型设置读不出来。" }, 400); }
+      const modelRef = body?.modelRef === null ? null : normalizeModelRef(body?.modelRef);
+      if (body?.modelRef !== null && !modelRef) return c.json({ ok: false, error: "模型选项无效。" }, 400);
+      try {
+        if (modelRef) {
+          const catalog = await sdk.models.list();
+          const exists = chatModelOptions(catalog).some((row) => row.provider === modelRef.provider && row.model === modelRef.model);
+          if (!exists) return c.json({ ok: false, error: "这条模型已不在 Hana 配置列表中，请重新选择。" }, 400);
+        }
+        await saveConfig(FAST_TASK_MODEL_KEY, modelRef);
+        return c.json({ ok: true, modelRef });
+      } catch {
+        return c.json({ ok: false, error: "保存快速档模型失败；请确认知意已获模型使用权限。" }, 403);
       }
     });
     app.get("/ask-config", async (c) => c.json({
       ...normalizeAskConfig(await sdk.storage.global.get("askConfig", {})),
       registeredAtLoad: askEnabledAtLoad,
       guidancePerTurn: true,
-    }));
-    app.put("/ask-config", async (c) => {
+    }));    app.put("/ask-config", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "Ask 开关读不出来。" }, 400); }
       const config = normalizeAskConfig({ enabled: body?.enabled !== false });
-      await sdk.storage.global.set("askConfig", config);
+      await saveConfig("askConfig", config);
       await sdk.logger.info("Ask card switch saved", {
         enabled: config.enabled,
         toolsStillRegistered: askEnabledAtLoad,
@@ -975,13 +2964,30 @@ activeFusionServiceDispose = disposeFusionService;
     app.get("/polish/levels", async (c) => c.json({ ok: true, levels: POLISH_LEVEL_OPTIONS }));
     app.post("/polish", async (c) => {
       let body;
-      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "润色请求读不出来。" }, 400); }
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "理顺请求读不出来。" }, 400); }
       try {
-        const result = await polishText(sdk, body?.text, { level: body?.level });
+        const result = await polishText(sdk, body?.text, {
+          level: body?.level,
+          source: String(body?.source || ""),
+          previous: String(body?.previous || ""),
+          instruction: String(body?.instruction || ""),
+        });
         return c.json({ ok: true, ...result });
       } catch (error) {
         await sdk.logger.warn("Polish failed", { code: error?.code || "POLISH_ERROR" });
-        return c.json({ ok: false, error: error?.message || "润色失败，原文没动。" }, 400);
+        return c.json({ ok: false, error: error?.message || "理顺失败，原文没动。" }, 400);
+      }
+    });
+    // 候选方向：直接问“这段还能往哪儿改”。拿不到就回空列表，不报错。
+    app.post("/polish/suggest", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
+      try {
+        const items = await suggestPolishFixes(sdk, String(body?.text || ""));
+        return c.json({ ok: true, items: items || [] });
+      } catch (error) {
+        await sdk.logger.warn("Polish suggest failed", { code: error?.code || "POLISH_SUGGEST_ERROR" });
+        return c.json({ ok: true, items: [] });
       }
     });
     app.post("/session-title", async (c) => {
@@ -1026,6 +3032,38 @@ activeFusionServiceDispose = disposeFusionService;
         return c.json({ ok: false, error: error?.message || "没撤回成。" }, 400);
       }
     });
+    // 面板头部的「起名」：按输入框所在的这段对话起名并写回。
+    // 一定要用面板报上来的会话编号，不能走「最近活跃那段」——面板就杵在某个窗口上，
+    // 该改的是她正在看的这段，拿「最近动过的那段」去改名是最烦人的一种错。
+    app.post("/suggest-panel/rename", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!sessionId) return c.json({ ok: false, error: "不知道这是哪段对话。收起面板，重新点一次输入栏的知意按钮。" }, 400);
+      try {
+        const drafted = await summarizeSessionTitle(sdk, { sessionId });
+        const title = String(drafted?.title || "").trim();
+        // 兜底不报错，所以要自己记一笔原因，不然下次只能看见「兜底名字」四个字。
+        if (drafted?.fallback) {
+          await sdk.logger.warn(`面板起名退回兜底：${drafted?.error || "没拼出可用上下文"}`);
+        }
+        if (!title) throw new Error("这次没起出名字，再试一次。");
+        const targetId = String(drafted?.session?.sessionId || sessionId);
+        // 旧标题必须自己读出来交给写入方：不给的话「还原」只能退回「未命名对话」。
+        const previous = await resolveResumeTarget({ sessionId: targetId }, { force: true });
+        const written = await applySessionTitle(sdk, {
+          sessionId: targetId,
+          title,
+          previousTitle: previous?.title || "",
+        });
+        await sdk.logger.info("面板起名完成", { sessionId: targetId, fallback: drafted?.fallback === true });
+        return c.json({ ok: true, sessionId: targetId, title: written.title || title, fallback: drafted?.fallback === true });
+      } catch (error) {
+        await sdk.logger.warn("面板起名失败", { code: error?.code || "TITLE_ERROR" });
+        return c.json({ ok: false, error: String(error?.message || "没改成，再试一次。").slice(0, 200) }, 400);
+      }
+    });
+
     app.post("/send", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
@@ -1040,6 +3078,556 @@ activeFusionServiceDispose = disposeFusionService;
         return c.json({ ok: false, error: message }, 400);
       }
     });
+
+    // 面板里的「收起」：宿主那个关闭入口在 iframe 外面（背景还是透明的），
+    // 我们自己再给一个清楚的按钮，把这块面板撤掉。
+    app.post("/suggest-panel/dismiss", async (c) => {
+      try {
+        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const state = readPanelState(raw);
+        if (state.sessionId) {
+          await sdk.userInteraction.dismiss({ sessionId: state.sessionId, id: SUGGEST_PANEL_ID });
+          openSuggestPanels.delete(state.sessionId);
+        }
+        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({ sessionId: state.sessionId }));
+        return c.json({ ok: true });
+      } catch (error) {
+        await sdk.logger.warn("面板收起失败", { code: error?.code || "PANEL_DISMISS_ERROR" });
+        return c.json({ ok: false, error: "没收起，再点一次。" }, 400);
+      }
+    });
+
+    // 面板自己被宿主收起/关掉时前端报一声，只清标记：下次点按钮应该是「打开」而不是「收起」。
+    app.post("/suggest-panel/hidden", async (c) => {
+      const sessionId = String(c.req.query("sessionId") || "").trim();
+      if (sessionId) openSuggestPanels.delete(sessionId);
+      return c.json({ ok: true });
+    });
+
+    // 面板页读候选：输入框上那块板子自己来问，不等谁推给它。
+    app.get("/suggest-panel/state", async (c) => {
+      try {
+        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const state = readPanelState(raw);
+        // 常用回复实时读配置：她在设置里改了，面板里立刻就是新的。
+        const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+        return c.json({
+          ok: state.ok,
+          suggestions: state.suggestions,
+          quickReplies: recConfig.quickReplies,
+          createdAt: state.createdAt,
+        });
+      } catch (error) {
+        await sdk.logger.warn("面板候选读取失败", { code: error?.code || "PANEL_STATE_ERROR" });
+        return c.json({ ok: false, suggestions: [], quickReplies: [], error: "没读到内容。" }, 500);
+      }
+    });
+
+    // 面板里直接改常用回复：增、删、改都落到同一份设置里（设置页那边刷新也看得到）。
+    app.post("/suggest-panel/quick-replies", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
+      try {
+        const raw = await sdk.storage.global.get("recommendationConfig", {});
+        const config = normalizeRecommendationConfig(raw);
+        const list = normalizeQuickReplies(Array.isArray(body?.list) ? body.list : []);
+        await sdk.storage.global.set("recommendationConfig", { ...config, quickReplies: list });
+        await sdk.logger.info("常用回复已更新", { count: list.length });
+        return c.json({ ok: true, quickReplies: list });
+      } catch (error) {
+        await sdk.logger.warn("常用回复保存失败", { code: error?.code || "QUICK_REPLY_SAVE_ERROR" });
+        return c.json({ ok: false, error: "没存上，再试一次。" }, 400);
+      }
+    });
+
+    // 面板里点「生成推荐回复」：这时才调模型（这一下才花钱），生成完把面板调高。
+    app.post("/suggest-panel/generate", async (c) => {
+      try {
+        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const state = readPanelState(raw);
+        const sessionId = state.sessionId;
+        if (!sessionId) {
+          return c.json({ ok: false, error: "不知道这是哪段对话。关掉面板，重新点一次输入栏的知意按钮。" }, 400);
+        }
+        const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+        const result = await generateRecommendations(sdk, { sessionId });
+        const suggestions = normalizeSuggestionTexts(result.suggestions);
+        if (!suggestions.length) {
+          return c.json({ ok: false, error: "这轮没拟出合适的句子，再点一次试试。" }, 400);
+        }
+        // 方向按设置页里选中的那组顺序标（不采信模型自己写的 direction）。
+        const chosenDirections = (recConfig.selectedByCount?.[String(recConfig.count)] || [])
+          .map((index) => recConfig.styles?.[index]?.name || "")
+          .filter(Boolean);
+        const labeled = suggestions.map((item, index) => ({
+          text: item.text,
+          direction: chosenDirections[index] || item.direction || "",
+        }));
+        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, {
+          ...state,
+          suggestions: labeled,
+          quickReplies: recConfig.quickReplies,
+          createdAt: Date.now(),
+        });
+        // 内容多了，面板得跟着长高（updatePanel 不用重挂，不会闪）。
+        if (state.panelId) {
+          try {
+            await sdk.userInteraction.updatePanel({
+              sessionId,
+              panelId: state.panelId,
+              presentation: buildPanelPresentation({
+                height: estimatePanelHeight({ quickCount: recConfig.quickReplies.length, suggestionCount: labeled.length }),
+              }),
+            });
+          } catch (error) {
+            await sdk.logger.warn("面板高度没调上去", { code: error?.code || "PANEL_PRESENTATION_ERROR" });
+          }
+        }
+        await sdk.logger.info("面板推荐已生成", { count: labeled.length, sessionId, fallback: result.model?.usedFallback === true });
+        // 走了备用就要说出来：面板上要写一句，这不算小事，不能默默换掉。
+        return c.json({ ok: true, suggestions: labeled, model: result.model || null });
+      } catch (error) {
+        const message = String(error?.message || "这次没拟出来，再点一次试试。");
+        // 只记 code 等于把线索丢了：今天这一整轮排障，最后还是从 usage-ledger 里把
+        // provider 原话挖出来的。日志里带一句原文，下次一眼就能看出是哪类失败。
+        await sdk.logger.warn("面板推荐生成失败", {
+          code: error?.code || "PANEL_GENERATE_ERROR",
+          message: message.slice(0, 300),
+          raw: String(error?.rawMessage || "").slice(0, 300),
+        });
+        return c.json({ ok: false, error: message.slice(0, 200) }, 400);
+      }
+    });
+
+    // 面板页点「发这句」：以她的口吻把那句发进这段对话。
+    // 面板里的句子可以改过，所以优先用面板传来的文字，没传才按序号取原始推荐语。
+    app.post("/suggest-panel/send", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
+      const index = Number(body?.index);
+      try {
+        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const state = readPanelState(raw);
+        const edited = pickEditableText(body?.text);
+        const picked = Number.isInteger(index) ? state.suggestions[index] : null;
+        const text = edited || (picked && typeof picked === "string" ? picked : picked?.text) || "";
+        if (!text) {
+          return c.json({ ok: false, error: state.ok ? "这句话现在是空的。" : "这几句已经不在了，再点一次输入栏的知意按钮。" }, 400);
+        }
+        const result = await sendToConversation(sdk, { text, mode: "followUp", sessionId: state.sessionId });
+        await sdk.logger.info("面板推荐已发送", { mode: result.mode, sessionId: result.sessionId });
+        return c.json({ ok: true, text: result.text });
+      } catch (error) {
+        const message = error instanceof Error && error.name === "SendError" ? error.message : friendlySendError(error);
+        await sdk.logger.warn("面板推荐发送失败", { code: error?.code || "PANEL_SEND_ERROR" });
+        return c.json({ ok: false, error: message }, 400);
+      }
+    });
+  });
+
+  // 输入栏那个按钮的显隐：宿主里 inputStatus 是静态声明 + 按会话动态覆盖，
+  // 所以「关掉」得挨个会话盖 visible=false；新开的会话没有覆盖、默认是显示的，
+  // 所以还得分会话创建事件补一次。这个坑不补，开关就会对新窗口失效。
+  async function currentInputButtonEnabled() {
+    try {
+      const raw = await sdk.storage.global.get("recommendationConfig", {});
+      return normalizeRecommendationConfig(raw).inputButton !== false;
+    } catch {
+      return true;
+    }
+  }
+
+  async function syncInputStatusVisibility(enabled) {
+    let rows = [];
+    try {
+      const result = await sdk.bus.request("session:list", { scope: "all" }, { timeoutMs: 8000 });
+      const list = Array.isArray(result) ? result : result?.sessions;
+      rows = (Array.isArray(list) ? list : [])
+        .map((row) => ({ sessionId: String(row?.sessionId || "").trim(), modified: Number(row?.modified ?? 0) || 0 }))
+        .filter((row) => row.sessionId)
+        .sort((a, b) => b.modified - a.modified)
+        .slice(0, 30);
+    } catch (error) {
+      await sdk.logger.warn("列会话失败，输入栏按钮显隐没同步", { code: error?.code || "SESSION_LIST_ERROR" });
+      return;
+    }
+    for (const row of rows) {
+      try {
+        await sdk.inputStatus.set({ sessionId: row.sessionId, id: SUGGEST_INPUT_STATUS_ID, visible: enabled });
+      } catch (error) {
+        // 一个会话失败（比如那个伙伴里没激活知意）不影响其他会话；
+        // 但如果整批都失败，那多半是权限没批或者声明还没被宿主认，记一笔就收手。
+        await sdk.logger.warn("输入栏按钮显隐同步失败", { code: error?.code || "INPUT_STATUS_ERROR" });
+        continue;
+      }
+    }
+  }
+
+  // 输入栏里那个 sync 按钮：点一下就把面板挂出来。
+  // 面板里有常用回复（点一下就发）和一个「生成推荐回复」按钮——生成这一步由她点，
+  // 才轮到调模型，也才轮到花钱；点按钮本身不花钱。
+  // 走 ui-actions 通道，不进模型车道：模型看不见这个工具，只有人点得到。
+  await sdk.tools.register({
+    name: "jiegehua.zhiyi_suggest",
+    description: "在输入栏的「知意」按钮上被点开时：在输入框上方挂出知意面板，里面有常用回复和「生成推荐回复」按钮。",
+    sessionPermission: { readOnly: true },
+    parameters: { type: "object", additionalProperties: false, properties: {} },
+    execute: async (args) => {
+      const context = args?.context || {};
+      const sessionPath = String(context.sessionPath || "").trim();
+      if (!sessionPath) {
+        return { isError: true, content: [{ type: "text", text: "没认出这是哪段对话。" }] };
+      }
+      try {
+        // ui-actions 通道不一定带 callToken；先按路径反查会话编号，
+        // 拿到编号就能走「App 侧直给编号」那条路，不必再要凭证。
+        const sessionId = await resolveSessionIdByPath(sdk, sessionPath);
+        if (!sessionId) {
+          return { isError: true, content: [{ type: "text", text: "没认出这是哪段对话。" }] };
+        }
+        const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+        // 再点一下 = 收起：同一个会话的面板还开着，就没必要再挂一遍
+        if (openSuggestPanels.has(sessionId)) {
+          try {
+            await sdk.userInteraction.dismiss({ sessionId, id: SUGGEST_PANEL_ID });
+          } catch (error) {
+            await sdk.logger.warn("收起输入栏面板失败", { code: error?.code || "PANEL_DISMISS_ERROR" });
+          }
+          openSuggestPanels.delete(sessionId);
+          await sdk.logger.info("输入栏面板已收起", { sessionPath });
+          return { content: [{ type: "text", text: "面板收起来了。再点一下还能叫回来。" }] };
+        }
+        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({
+          sessionId,
+          suggestions: [],
+          quickReplies: recConfig.quickReplies,
+        }));
+        const shown = await sdk.userInteraction.show({
+          sessionId,
+          id: SUGGEST_PANEL_ID,
+          title: "知意",
+          message: "常用回复点一下就发；要现成的点「生成推荐回复」",
+          contentFrame: { route: SUGGEST_PANEL_ROUTE },
+          presentation: buildPanelPresentation({
+            height: estimatePanelHeight({ quickCount: recConfig.quickReplies.length }),
+          }),
+        });
+        // 记下 panelId：生成完之后内容变多，要靠它把面板调高（不用重挂）。
+        const state = readPanelState(await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {}));
+        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, { ...state, panelId: shown?.panelId || "" });
+        openSuggestPanels.set(sessionId, { openedAt: Date.now() });
+        await sdk.logger.info("输入栏面板已挂上", { sessionPath, quick: recConfig.quickReplies.length });
+        return { content: [{ type: "text", text: "面板打开了：常用回复点一下就发，要现成的点里面的「生成推荐回复」。" }] };
+      } catch (error) {
+        const message = String(error?.message || "面板没挂上，再点一次试试。");
+        await sdk.logger.warn(`输入栏面板失败：${message.slice(0, 160)}`);
+        return { isError: true, content: [{ type: "text", text: message.slice(0, 200) }] };
+      }
+    },
+  });
+
+  // 启动时先对一遍输入栏按钮的显隐：上次关着的会话得盖回去，
+  // 以后每开一个新会话也补一次（新建会话默认是显示的）。
+  // ① 不能写成顶层 await：这段要等会话名单，慢一点不能把整个 App 启动挂住。
+  // ② 必须延后：App 还在加载时宿主的贡献表里还没投影这个 App 的 inputStatus 声明，
+  //    这时候调 set 会报「has no declared input status item」并把装载带崩。
+  const scheduleInputStatusSync = () => {
+    const timer = setTimeout(() => {
+      void currentInputButtonEnabled()
+        .then((enabled) => syncInputStatusVisibility(enabled))
+        .catch(() => {});
+    }, 2000);
+    timer.unref?.();
+  };
+  scheduleInputStatusSync();
+
+  // 开发期探针：只采样、只记录，不发关机命令，也不改任何设置。
+  // 真正的守门人在下面那个工具里，这个只是开发时肉眼对时间线用的壳。
+  await sdk.tools.register({
+    name: "jiegehua_zhiyi_idle_probe",
+    description: "（开发期只读探针）采样 Hana 所有活跃会话与后台任务的忙闲状态，只记录不动作，不发关机命令。",
+    sessionPermission: { readOnly: true },
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["snapshot", "watch", "report", "stop", "list"],
+          description: "snapshot 采一次就回；watch 连续采样；report 取记录；stop 停掉；list 看有哪些在跑。",
+        },
+        durationMs: { type: "number", description: "watch 持续多久，默认 10 分钟。" },
+        intervalMs: { type: "number", description: "watch 采样间隔，默认 5 秒。" },
+        recentMs: { type: "number", description: "只细查最近多久内有动静的会话，默认 10 分钟；更早的直接跳过。" },
+        maxProbe: { type: "number", description: "单次最多细查多少个会话，默认 40。" },
+        watchId: { type: "string", description: "watch 的编号，默认 default；同一个编号再 watch 会覆盖旧的。" },
+        offset: { type: "number", description: "report 从第几条开始取，默认 0。" },
+        limit: { type: "number", description: "report 一次取多少条，默认 200，最多 400。" },
+        label: { type: "string", description: "给这次采样起个名字，方便事后对时间线。" },
+      },
+      required: ["action"],
+    },
+    execute: async (args) => {
+      const action = String(args?.action || "snapshot");
+      try {
+        if (action === "watch") {
+          const started = startIdleWatch(sdk, {
+            durationMs: args?.durationMs,
+            intervalMs: args?.intervalMs,
+            recentMs: args?.recentMs,
+            maxProbe: args?.maxProbe,
+            watchId: args?.watchId,
+            label: args?.label,
+          });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ ok: true, action, ...started }, null, 2),
+            }],
+          };
+        }
+        if (action === "report") {
+          const report = reportIdleWatch(args?.watchId, { offset: args?.offset, limit: args?.limit });
+          return { content: [{ type: "text", text: JSON.stringify({ ok: true, action, ...report }) }] };
+        }
+        if (action === "stop") {
+          const stopped = stopIdleWatch(args?.watchId);
+          return { content: [{ type: "text", text: JSON.stringify({ ok: true, action, ...stopped }, null, 2) }] };
+        }
+        if (action === "list") {
+          return { content: [{ type: "text", text: JSON.stringify({ ok: true, action, watches: listIdleWatches() }, null, 2) }] };
+        }
+        const snapshot = await sampleIdleSnapshot(sdk, {
+          recentMs: args?.recentMs,
+          maxProbe: args?.maxProbe,
+        });
+        const summary = summarizeSnapshot(snapshot);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ ok: true, action: "snapshot", summary, errors: snapshot.errors.slice(0, 8) }, null, 2),
+          }],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `探针没跑成：${String(error?.message || error).slice(0, 200)}` }],
+        };
+      }
+    },
+  });
+
+  // 「活干完了帮我关」的入口。
+  // 默认演练；真关机要先打开总开关，且要用户在对话里明确同意才能调。
+  await sdk.tools.register({
+    name: "jiegehua_zhiyi_sleep_guard",
+    description: "守门人：当 Hana 里所有窗口和后台任务都停下来一段时间，就在用户睡后替他收尾。用户说「干完帮我关」「我睡了以后自己关」时用。默认只演练（到点只记录和提醒）；只有用户明确说要真关机时，才先调 enable-real 再挂 arm。",
+    sessionPermission: { readOnly: true },
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["arm", "status", "cancel", "enable-real", "disable-real", "selftest", "probe-shutdown", "test-shutdown"],
+          description: "arm 挂上守门；status 看现在守着没、空了多久、历史上的记录；cancel 撤掉；enable-real / disable-real 是真关机的总开关，只在用户明确要求真关机时才打开；selftest 验起进程的能力；probe-shutdown 在 App 进程里试一下 shutdown.exe 能不能跑（跑 /a，无副作用）。",
+        },
+        idleMinutes: { type: "number", description: "要连续空多久才算真的干完，默认 10 分钟。" },
+        maxWaitMinutes: { type: "number", description: "最多守多久，超过就放弃并提醒，默认 240 分钟。" },
+        graceMinutes: { type: "number", description: "真关机前的可撤销窗，默认 5 分钟；这期间一有动静就自动取消。" },
+        real: { type: "boolean", description: "已废弃：现在挂上就是真关机，这个参数不再起作用。" },
+        note: { type: "string", description: "为什么守着，写一句，方便事后看记录。" },
+        reason: { type: "string", description: "cancel 时说明原因。" },
+        timelineLimit: { type: "number", description: "status 时带多少条复盘时间线，默认 60。" },
+      },
+      required: ["action"],
+    },
+    execute: async (args) => {
+      const action = String(args?.action || "status");
+      try {
+        if (action === "enable-real" || action === "disable-real") {
+          return {
+            content: [{ type: "text", text: "真关机开关已经退役：现在挂上就是真关机，不用再开开关。" }],
+          };
+        }
+        if (action === "selftest") {
+          try {
+            const { spawn } = await import("node:child_process");
+            const child = spawn("cmd.exe", ["/c", "exit", "0"], { stdio: "ignore", windowsHide: true });
+            const outcome = await new Promise((resolve) => {
+              child.on("exit", (code) => resolve(`退出码 ${code}`));
+              child.on("error", (error) => resolve(`起不来：${String(error?.message || error).slice(0, 120)}`));
+              const timer = setTimeout(() => resolve("超时没回话"), 5_000);
+              timer.unref?.();
+            });
+            return {
+              content: [{ type: "text", text: `起进程能力自检：${outcome}` }],
+              details: { sleepGuard: { selftest: outcome } },
+            };
+          } catch (error) {
+            return { isError: true, content: [{ type: "text", text: `自检没跑成：${String(error?.message || error).slice(0, 160)}` }] };
+          }
+        }
+        if (action === "probe-shutdown") {
+          try {
+            const { spawn } = await import("node:child_process");
+            const absolute = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "shutdown.exe");
+            const runOnce = (exe, args, options) => new Promise((resolve) => {
+              const child = spawn(exe, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
+              let stdout = "";
+              let stderr = "";
+              child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+              child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+              child.on("error", (error) => resolve(`起不来：${String(error?.message || error).slice(0, 140)}`));
+              child.on("exit", (code) => resolve(`退码 ${code}｜out=${stdout.trim().slice(0, 80)}｜err=${stderr.trim().slice(0, 120)}`));
+              const timer = setTimeout(() => resolve("超时没回话"), 6_000);
+              timer.unref?.();
+            });
+            const attempts = [
+              { label: "裸名 shutdown.exe", outcome: await runOnce("shutdown.exe", ["/a"], {}) },
+              { label: "绝对路径", outcome: await runOnce(absolute, ["/a"], {}) },
+              { label: "绝对路径 + 继承环境变量", outcome: await runOnce(absolute, ["/a"], { env: process.env }) },
+              { label: "经 cmd 转一道", outcome: await runOnce("cmd.exe", ["/c", "shutdown.exe /a"], {}) },
+              { label: "补 SESSIONNAME=Console", outcome: await runOnce(absolute, ["/a"], { env: { ...process.env, SESSIONNAME: "Console" } }) },
+              {
+                label: "补全常见变量",
+                outcome: await runOnce(absolute, ["/a"], {
+                  env: {
+                    ...process.env,
+                    SESSIONNAME: "Console",
+                    COMPUTERNAME: process.env.COMPUTERNAME || "SUMMER椰",
+                    SystemDrive: process.env.SystemDrive || "C:",
+                    SystemRoot: process.env.SystemRoot || "C:\\WINDOWS",
+                    windir: process.env.windir || "C:\\WINDOWS",
+                    USERPROFILE: process.env.USERPROFILE || "C:\\Users\\laotv",
+                    TEMP: process.env.TEMP || "C:\\Users\\laotv\\AppData\\Local\\Temp",
+                  },
+                }),
+              },
+              { label: "子进程看到的 SESSIONNAME", outcome: await runOnce("cmd.exe", ["/c", "echo [%SESSIONNAME%][%COMPUTERNAME%]"], {}) },
+              { label: "PowerShell 能不能跑", outcome: await runOnce("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Stop-Computer -WhatIf"], {}) },
+            ];
+            const envSummary = ["SESSIONNAME", "USERNAME", "USERDOMAIN", "SystemRoot", "windir"]
+              .map((key) => `${key}=${process.env[key] ?? "（空）"}`)
+              .concat(`PATH=${process.env.PATH ? "有" : "（空）"}`)
+              .join("；");
+            const text = attempts.map((item) => `${item.label}：${item.outcome}`).join("\n");
+            return {
+              content: [{ type: "text", text: `关机命令探针（全跑 /a，无副作用）：\n${text}\n\nApp 进程环境：${envSummary}` }],
+              details: { sleepGuard: { probeShutdown: attempts, envSummary } },
+            };
+          } catch (error) {
+            return { isError: true, content: [{ type: "text", text: `探针没跑成：${String(error?.message || error).slice(0, 160)}` }] };
+          }
+        }
+        if (action === "test-shutdown") {
+          // 真发一次关机请求，但留 120 秒撤销窗口；只给验证用，不能当正式路径。
+          try {
+            const { spawn } = await import("node:child_process");
+            const outcome = await new Promise((resolve) => {
+              const child = spawn("shutdown.exe", ["/s", "/t", "120"], { env: buildShutdownEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+              let stderr = "";
+              child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+              child.on("error", (error) => resolve(`起不来：${String(error?.message || error).slice(0, 140)}`));
+              child.on("exit", (code) => resolve(`退码 ${code}｜err=${stderr.trim().slice(0, 120)}`));
+              const timer = setTimeout(() => resolve("超时没回话"), 6_000);
+              timer.unref?.();
+            });
+            return {
+              content: [{ type: "text", text: `已尝试发起关机（120 秒后生效）：${outcome}` }],
+              details: { sleepGuard: { testShutdown: outcome } },
+            };
+          } catch (error) {
+            return { isError: true, content: [{ type: "text", text: `测试没跑成：${String(error?.message || error).slice(0, 160)}` }] };
+          }
+        }
+        if (action === "arm") {
+          const result = await armSleepGuard(sdk, {
+            idleMs: Number(args?.idleMinutes) > 0 ? Number(args.idleMinutes) * 60_000 : undefined,
+            maxWaitMs: Number(args?.maxWaitMinutes) > 0 ? Number(args.maxWaitMinutes) * 60_000 : undefined,
+            graceMs: Number(args?.graceMinutes) > 0 ? Number(args.graceMinutes) * 60_000 : undefined,
+            note: args?.note,
+            armedBy: "model",
+          });
+          const state = result.state || {};
+          const minutes = Math.round((state.idleMs || 0) / 6000) / 10;
+          return {
+            content: [{
+              type: "text",
+              text: [
+                `静候已挂上：所有窗口和后台任务都停下来之后满 ${minutes} 分钟，才算真的结束。`,
+                `最多守 ${Math.round((state.maxWaitMs || 0) / 6000) / 10} 分钟，超过就放弃并提醒。`,
+                `到点会先进 ${Math.round((state.graceMs || 0) / 60_000)} 分钟可撤销倒计时，期间一有动静就当场取消，然后真的关机。`,
+              ].join("\n"),
+            }],
+            details: { sleepGuard: result },
+          };
+        }
+        if (action === "cancel") {
+          const result = await cancelSleepGuard(sdk, args?.reason || "手动取消");
+          return {
+            content: [{ type: "text", text: result.cancelled ? "守门已经撤掉了，不会再触发。" : "现在没有在守门，不用撤。" }],
+            details: { sleepGuard: result },
+          };
+        }
+        const status = await readSleepGuard(sdk, { withLog: true });
+        const timeline = await readSleepTimeline(sdk, Number(args?.timelineLimit) > 0 ? Number(args.timelineLimit) : 60);
+        const state = status.state || {};
+        const labels = {
+          idle: "没在守",
+          watching: "正在守",
+          countdown: "活已完，正在倒计时",
+          "preview-done": "演练走完了整个流程（没真关）",
+          "shutdown-issued": "已经发出关机命令",
+          fired: "已经触发过（演练）",
+          expired: "等太久放弃了",
+          cancelled: "已撤掉",
+        };
+        const line = state.status
+          ? `当前：${labels[state.status] || state.status}`
+          : "当前：没在守";
+        const idleLine = state.status === "countdown"
+          ? `还剩 ${Math.round((status.countdownLeftMs || 0) / 1000)} 秒关机，这期间一有动静就取消。`
+          : status.armed
+            ? `已经空了 ${Math.round(status.idleForMs / 1000)} 秒，需要满 ${Math.round((state.idleMs || 0) / 1000)} 秒。`
+            : "";
+        const switchLine = "现在是真关机：判定成立后会真的关机器。";
+        const timeText = (iso) => {
+          const d = new Date(iso);
+          return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+        };
+        const timelineLines = timeline.slice(-40).map((entry) => {
+          const who = (entry.busy || []).map((item) => (item.kind === "task"
+            ? `任务 ${item.id || "?"}（${item.type || "?"}/${item.status || "?"}）`
+            : `窗口 ${item.id || "?"}（${item.agent || "?"}）`)).join("、");
+          if (entry.kind === "idle") return `${timeText(entry.at)} 全空`;
+          return `${timeText(entry.at)} 忙 ${entry.count} 处：${who || "（没拿到明细）"}`;
+        });
+        return {
+          content: [{
+            type: "text",
+            text: [
+              line,
+              idleLine,
+              switchLine,
+              status.armed ? "" : `上一轮结果：${state.result || "无"}`,
+              "",
+              "最近事件：",
+              JSON.stringify(status.log || [], null, 2),
+              "",
+              `复盘时间线（最近 ${timelineLines.length} 条）：`,
+              timelineLines.length ? timelineLines.join("\n") : "（还没有记录）",
+            ].filter(Boolean).join("\n"),
+          }],
+          details: { sleepGuard: { ...status, realEnabled, timeline } },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `守门没弄成：${String(error?.message || error).slice(0, 200)}` }],
+        };
+      }
+    },
   });
 
   // Ask 关闭时整组工具都不注册，模型在工具列表里也看不到它们。
@@ -1085,20 +3673,41 @@ activeFusionServiceDispose = disposeFusionService;
       }
 
       try {
-        let answer = null;
+        // 球开着：把题送上去，送到就结束这次工具调用，不等作答。
+        // 以前这里一直等到用户点完（最长十分钟），而宿主给工具执行的 RPC 只有 30 秒，
+        // 两头尺度对不上，用户稍一犹豫工具就先报 timed out，球上的题还挂着。
+        // 现在答案由 ballAsks 轮询接收，作为一条新消息补回这段对话，那边会再开一轮接着做。
         if (ball.state().running) {
-          answer = await ball.ask(request);
+          const target = await resolveResumeTarget({ sessionPath });
+          const sent = await ball.enqueueAsk(request, {
+            sessionId: target?.sessionId || "",
+            sessionTitle: target?.title || "",
+            agentName: target?.agentName || "",
+          });
+          if (sent?.busy) {
+            return {
+              isError: true,
+              content: [{ type: "text", text: "传音樱上还压着一道没作答的题，这次没有继续发问。先等用户把那道题答完或跳过，别自己替用户选。" }],
+            };
+          }
+          if (sent?.askId) {
+            if (!target?.sessionId) {
+              // 题已经在球上了，但回传地址没解析出来：先告诉模型实情，不让它以为拿到了选择。
+              return {
+                isError: true,
+                content: [{ type: "text", text: "题已经送到传音樱上了，但没能定位这段对话（回传地址解析失败）。用户作答后答案回不到这一轮，请不要当作已取得选择；先告诉用户这个情况。" }],
+              };
+            }
+            ballAsks.add({ askId: sent.askId, request, sessionId: target.sessionId });
+            return {
+              content: [{ type: "text", text: "已经在传音樱上向用户发出了这道题，现在还没有答案。这一轮先停在这里，不要自行选一个、也不要继续做依赖这个选择的事。用户答完之后会有一条新消息把选择送回来，到那时再接着做。" }],
+            };
+          }
         }
-        if (answer === null) {
-          const handoff = cardAsks.prepare(request, sessionPath);
-          return {
-            content: [{ type: "text", text: `知意待发卡（还没有收到用户决定；不要继续依赖这个选择的操作）：${JSON.stringify(handoff)}\n下一步用已安装的知意 Ask 配方 show_card 发到当前会话，拿到宿主卡片实例编号后调用 ${CARD_BIND_TOOL}。若配方不可用，调用 ${CARD_FALLBACK_TOOL} 回退原生确认卡，绝不能假称已发卡。` }],
-          };
-        }
-        const result = formatAskAnswer(answer, request);
+        // 没有球（或刚启动失败、或正在退出）：走配方卡交接，跟以前一样。
+        const handoff = cardAsks.prepare(request, sessionPath);
         return {
-          isError: result.isError,
-          content: [{ type: "text", text: result.text }],
+          content: [{ type: "text", text: `知意待发卡（还没有收到用户决定；不要继续依赖这个选择的操作）：${JSON.stringify(handoff)}\n下一步用已安装的知意 Ask 配方 show_card 发到当前会话，拿到宿主卡片实例编号后调用 ${CARD_BIND_TOOL}。若配方不可用，调用 ${CARD_FALLBACK_TOOL} 回退原生确认卡，绝不能假称已发卡。` }],
         };
       } catch (error) {
         await sdk.logger.warn("Ask interaction failed", {
@@ -1127,7 +3736,7 @@ activeFusionServiceDispose = disposeFusionService;
 
   await sdk.tools.register({
     name: CARD_RESOLVE_TOOL,
-    description: "仅在收到知意 Ask 卡片的真实点击事件，按事件 cardInstanceId 用 ui_inspect 核验来源后调用。重复、跨会话、过期、非法选项均拒绝；没有真实事件禁止自行构造选择。",
+    description: "收到知意 Ask 卡片的真实点击事件后，把事件的 askId、action、choice、note 与 cardInstanceId 原样传进来；本工具自行核验卡片归属、会话、有效期和选项合法性，回报有效才续上任务。ui_inspect 只是可选旁证，它说卡不在 open instances 不构成拒绝作答的理由。重复、跨会话、过期、非法选项均拒绝；没有真实事件禁止自行构造选择。",
     sessionPermission: { readOnly: true },
     parameters: { type: "object", additionalProperties: false, required: ["askId", "cardInstanceId", "action"], properties: {
       askId: { type: "string" }, cardInstanceId: { type: "string" },
@@ -1245,4 +3854,54 @@ activeFusionServiceDispose = disposeFusionService;
       }
     },
   });
+
+  // 守门人接上一轮：App 重载、宿主重启之后，上次还在守的接着守。
+  // 计时从重挂开始重算——中间断过那段根本看不见，不能凭空算数。
+  void (async () => {
+    try {
+      // 给 App 自己的初始化让一步，刚加载时 bus 还没铺完。
+      await new Promise((resolve) => { const timer = setTimeout(resolve, 1_500); timer.unref?.(); });
+      const restored = await restoreSleepGuard(sdk);
+      if (restored.restored) await sdk.logger.info("守门人已接上一轮");
+    } catch (error) {
+      await sdk.logger.warn(`守门人恢复跳过：${String(error?.message || error).slice(0, 120)}`);
+    }
+  })();
+
+  // App 启动后把用户上次开着的球恢复回来。重载、宿主重启都走这里。
+  // 只认用户明确开过的（ballDesired）：默认不开，不代替人做决定。
+  void (async () => {
+    try {
+      const wanted = await sdk.storage.global.get("ballDesired", false);
+      ballDesired = wanted === true;
+      if (!ballDesired || ball.state().running) return;
+      const sameHost = await sameHostAsLastRun();
+      if (sameHost === null) {
+        await sdk.logger.warn("传音樱没自动恢复：读不到宿主进程号，分不清重载还是重开，这次按老规矩恢复。");
+      } else if (!sameHost) {
+        ballDesired = false;
+        await saveConfig("ballDesired", false);
+        await sdk.logger.info("传音樱没自动恢复：Hana 已经重开过，球不自己冒出来，要用请手动开一次。");
+        return;
+      }
+      // 给 App 自己的初始化让一步：刚加载时 routes、钩子都还在铺，抢资源只会两头慢。
+      await new Promise((resolve) => { const timer = setTimeout(resolve, 1_200); timer.unref?.(); });
+      if (ball.state().running) return;
+      const result = await ball.start();
+      if (!result?.ok) {
+        await sdk.logger.warn(`传音樱自动恢复失败：${result?.error || "未知原因"}`);
+        return;
+      }
+      await sdk.logger.info("传音樱已按上次的状态自动恢复");
+      scheduleVoiceBridgeTick(sdk, ball);
+      scheduleBallBridgeTick(sdk, ball);
+      startSleepBallPush(sdk, ball);
+      void adoptPendingBallAsks().catch(() => {});
+      resumeActionBaselineAdopted = false;
+      void syncResumeVisibility();
+      void syncPendingResumeNotice();
+    } catch (error) {
+      await sdk.logger.warn(`传音樱自动恢复跳过：${String(error?.message || error).slice(0, 120)}`);
+    }
+  })();
 });

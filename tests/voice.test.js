@@ -168,7 +168,7 @@ test("MiniMax 合成：HEX 音频解对、词级字幕解对、请求带上限�
   const synthCall = net.calls[0];
   assert.match(synthCall.url, /api\.minimaxi\.com\/v1\/t2a_v2\?GroupId=123/);
   assert.equal(synthCall.init.timeoutMs, 30_000);
-  assert.equal(synthCall.init.maxResponseBytes, 4 * 1024 * 1024);
+  assert.equal(synthCall.init.maxResponseBytes, 8 * 1024 * 1024);
   const body = JSON.parse(synthCall.init.body);
   assert.equal(body.voice_setting.voice_id, "female-yujie");
   assert.equal(body.subtitle_type, "word");
@@ -189,5 +189,113 @@ test("OpenAI 兼容合成缺音频时报人话，不把报错文本当音频", a
   await assert.rejects(
     () => synthesizeVoice({ network: net }, { text: "念我", config: { ...readyConfig, protocol: "chat", providerId: "mimo", model: "mimo-v2.5-tts", baseUrl: "https://api.xiaomimimo.com/v1" } }),
     /没有返回可播放的音频/,
+  );
+});
+
+test("宿主报响应超限时给人话，不把英文原文甩到面板上", async () => {
+  const net = {
+    calls: [],
+    async fetch() {
+      throw new Error("Plugin network.fetch response exceeded 8388608");
+    },
+  };
+  await assert.rejects(
+    () => synthesizeVoice({ network: net }, { text: "念我", config: readyConfig }),
+    (error) => {
+      assert.match(String(error?.message), /这段太长/);
+      assert.ok(!/response exceeded/i.test(String(error?.message)), "英文原文不能原样冒出去");
+      return true;
+    },
+  );
+});
+
+// ─── speech 协议（自建 / 第三方标准 TTS）───
+const speechConfig = {
+  enabled: true,
+  protocol: "speech",
+  baseUrl: "http://127.0.0.1:9880/",
+  model: "tts-1",
+  authStyle: "none",
+  apiKey: "",
+  speed: 1,
+  scope: "all",
+  maxChars: 800,
+  defaultVoiceId: "zh-CN-XiaoxiaoNeural",
+  voiceByAgent: {},
+};
+
+test("speech 协议：不要求 Key，音色手填，走 /audio/speech 取二进制", async () => {
+  const audio = Buffer.from("4944330400000000", "hex");
+  const net = createFetch(() => new Response(audio, { status: 200, headers: { "content-type": "audio/mpeg" } }));
+  assert.equal(voiceIsConfigured(speechConfig), true, "自建 TTS 不校验 Key，缺 Key 也算配齐");
+  const result = await synthesizeVoice({ network: net }, { text: "念我", config: speechConfig });
+  assert.equal(result.format, "mp3");
+  assert.ok(result.audio.equals(audio));
+  assert.equal(result.timings, null, "这套协议没有字幕能力，不编一份出来");
+  const call = net.calls[0];
+  assert.equal(call.url, "http://127.0.0.1:9880/audio/speech");
+  const body = JSON.parse(call.init.body);
+  assert.equal(body.response_format, "mp3");
+  assert.equal(body.voice, "zh-CN-XiaoxiaoNeural");
+  assert.equal(body.input, "念我");
+  assert.equal(call.init.headers.Authorization, undefined, "鉴权选 none 就不该带 Authorization");
+});
+
+test("speech 协议：不支持 mp3 时退一次 wav，404 不重试", async () => {
+  const wav = Buffer.from("5249464600000000", "hex");
+  const net = createFetch((url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.response_format === "mp3") {
+      return new Response(JSON.stringify({ error: "unsupported format" }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+    return new Response(wav, { status: 200, headers: { "content-type": "audio/wav" } });
+  });
+  const result = await synthesizeVoice({ network: net }, { text: "念我", config: speechConfig });
+  assert.equal(result.format, "wav");
+  assert.equal(net.calls.length, 2, "退格式只多打一次，不反复试");
+
+  const notFound = createFetch(() => new Response("{}", { status: 404, headers: { "content-type": "application/json" } }));
+  await assert.rejects(
+    () => synthesizeVoice({ network: notFound }, { text: "念我", config: speechConfig }),
+    /没有 \/audio\/speech 接口/,
+  );
+  assert.equal(notFound.calls.length, 1, "404 换格式也没用，不该再打一次");
+});
+
+test("鉴权方式显式化，没选过的老配置仍按 providerId 猜", () => {
+  assert.deepEqual(voiceRequestHeaders({ authStyle: "bearer" }, "k"), { Authorization: "Bearer k" });
+  assert.deepEqual(voiceRequestHeaders({ authStyle: "api-key" }, "k"), { "api-key": "k" });
+  assert.deepEqual(voiceRequestHeaders({ authStyle: "none" }, "k"), {});
+  const legacyMimo = normalizeVoiceConfig({ protocol: "chat", providerId: "mimo", baseUrl: "https://x", model: "mimo-v2.5-tts" });
+  assert.equal(legacyMimo.authStyle, "", "老配置不该被默默改成 bearer");
+  assert.deepEqual(voiceRequestHeaders(legacyMimo, "k"), { "api-key": "k" });
+});
+
+test("协议归一化认识 speech，认不出的值仍落回 chat，音色目录给空", () => {
+  assert.equal(normalizeVoiceConfig({ protocol: "speech" }).protocol, "speech");
+  assert.equal(normalizeVoiceConfig({ protocol: "weird" }).protocol, "chat");
+  assert.deepEqual(voicesForProtocol("speech"), []);
+  assert.equal(voiceIsConfigured({ ...speechConfig, baseUrl: "" }), false);
+});
+
+test("宿主 Response 没暴露 arrayBuffer 时退回文本读法，拿到文字就报错", async () => {
+  const audio = Buffer.from([0x49, 0x44, 0x33, 0x00, 0xff, 0x10]);
+  const asText = {
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      headers: [["content-type", "audio/mpeg"]],
+      text: async () => audio.toString("latin1"),
+    }),
+  };
+  const result = await synthesizeVoice({ network: asText }, { text: "念我", config: speechConfig });
+  assert.ok(result.audio.equals(audio), "latin1 一对一还原字节");
+
+  const broken = {
+    fetch: async () => ({ ok: true, status: 200, headers: [["content-type", "audio/mpeg"]], text: async () => "这是文字" }),
+  };
+  await assert.rejects(
+    () => synthesizeVoice({ network: broken }, { text: "念我", config: speechConfig }),
+    /二进制音频/,
   );
 });

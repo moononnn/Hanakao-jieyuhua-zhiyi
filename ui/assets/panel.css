@@ -161,6 +161,14 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .is-off .rec-only-card { display: none; }
 .switch input { width: 16px; height: 16px; accent-color: var(--mint-deep); cursor: pointer; }
 .threshold-controls { flex: 0 0 auto; align-items: center; }
+#resume-section .threshold-controls, #resume-section .segmented { flex-wrap: nowrap; }
+#resume-section .segmented button:disabled { opacity: 1; color: var(--muted); background: var(--surface); cursor: not-allowed; }
+#resume-section .segmented button[aria-pressed="true"]:disabled { background: var(--mint); color: var(--mint-deep); }
+.resume-results { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow: auto; }
+.resume-results[hidden] { display: none; }
+.resume-results li { min-width: 0; padding: 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow-wrap: anywhere; }
+.resume-results strong { font-size: 13px; color: var(--mint-deep); }
+.resume-results p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .stepper-button { width: 36px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--mint-deep); font: inherit; font-size: 18px; font-weight: 600; cursor: pointer; }
 .stepper-button:hover:not(:disabled) { border-color: var(--mint-deep); background: var(--mint); }
 .stepper-button:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
@@ -291,8 +299,6 @@ html[data-appearance="dark"] .permission-state[data-status="not-asked"], html[da
 html[data-appearance="dark"] .modal-overlay { background: rgba(8, 12, 10, .58); }
 html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
 
-.resume-only-on[hidden] { display: none; }
-
 /* ── 语音朗读 ── */
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; padding: 16px 2px 4px; }
 .field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
@@ -305,10 +311,15 @@ html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 
 .voice-presets { flex: 0 0 auto; flex-wrap: wrap; }
 .voice-presets button { white-space: nowrap; }
 .partner-voice-list { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 0; }
-.partner-voice-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
-.partner-voice-name { min-width: 0; overflow: hidden; color: var(--ink); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
-.partner-voice-trigger { position: relative; flex: 0 0 min(100%, 220px); min-height: 34px; padding: 6px 10px; font-size: 12px; }
-.partner-voice-options { top: calc(100% + 4px); }
+/* 伙伴行用两行网格：第一行「名字 + 试听」，第二行音色下拉。
+   之前用 flex 时，下拉带着 width:100% 会把试听按钮挤到另一行，页面就散了。 */
+.partner-voice-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name preview" "trigger trigger"; align-items: center; gap: 8px 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.partner-voice-name { grid-area: name; min-width: 0; overflow: hidden; color: var(--ink); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.partner-voice-trigger { grid-area: trigger; position: relative; width: auto; min-width: 0; min-height: 34px; padding: 6px 10px; font-size: 12px; }
+.partner-voice-preview { grid-area: preview; justify-self: end; min-height: 34px; padding: 6px 12px; font-size: 12px; }
+.partner-voice-preview.is-playing { border-color: var(--mint-deep); background: var(--mint); }
+.partner-voice-options { top: calc(100% + 6px); right: 0; left: auto; width: min(100%, 260px); }
+.partner-voice-row.is-open { z-index: 40; }
 .reply-picker { display: flex; max-height: 268px; overflow: auto; flex-direction: column; gap: 6px; margin: 4px 0 0; padding: 4px; }
 .reply-picker:empty { display: none; }
 .reply-option { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
@@ -343,7 +354,64 @@ html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 
   .model-controls { width: 100%; flex-basis: auto; }
   .permission-grid { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
-  .partner-voice-row { flex-direction: column; align-items: stretch; }
-  .partner-voice-trigger { flex: 1 1 auto; }
+  .partner-voice-row { grid-template-columns: minmax(0, 1fr) auto; }
   .permission-note { padding: 13px; }
 }
+
+/* 常用快捷回复：设置页里的一排标签 + 一个输入框 */
+.quick-edit { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+
+.quick-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.quick-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--line, #e5e8e1);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.quick-tag-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.quick-tag-remove {
+  font: inherit;
+  line-height: 1;
+  color: #8b9188;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 2px 5px;
+}
+
+.quick-tag-remove:hover { color: #b24a3a; background: rgba(178, 74, 58, .08); }
+
+.quick-add { display: flex; gap: 6px; }
+
+.quick-add input {
+  flex: 1;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 9px;
+  border: 1px solid var(--line, #e5e8e1);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.quick-add button {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #2f8f6f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.quick-add button:hover { filter: brightness(1.05); }

@@ -5,15 +5,22 @@
   "version": "0.1.39",
   "entry": "index.js",
   "capabilities": [
+    "app/agents.read",
     "app/tools.expose-to-model",
     "app/process.spawn",
     "app/hooks.agent-before-start",
     "app/hooks.messages-post-assistant",
+    "app/hooks.provider-before-request",
     "app/models.infer",
     "app/sessions.read",
     "app/sessions.manage",
+    "app/tasks.read-all",
+    "app/notifications.show",
+    "app/session.start-turn",
     "app/provider.credentials.read",
-    "app/services.provide"
+    "app/services.provide",
+    "app/input.status",
+    "app/input.panels"
   ],
   "network": {
     "allowedHosts": [
@@ -25,9 +32,20 @@
     "methods": ["GET", "POST"],
     "allowLocalhost": true,
     "defaultTimeoutMs": 5000,
-    "maxResponseBytes": 1048576
+    "maxResponseBytes": 8388608
   },
   "contributes": {
+    "ui": {
+      "inputStatus": [
+        {
+          "id": "zhiyi-suggest",
+          "title": "知意·替你想回话",
+          "text": "🌸",
+          "tooltip": "点一下，拟几句你要发的话",
+          "toolName": "jiegehua.zhiyi_suggest"
+        }
+      ]
+    },
     "cards": [
       {
         "id": "panel",

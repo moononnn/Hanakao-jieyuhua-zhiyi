@@ -5,21 +5,21 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>知意 · 等你决定</title>
 <style>
-:root{--paper:#f8f5ed;--surface:#fffdfa;--ink:#345547;--muted:#687b70;--mint:#e8f2e9;--line:#dbe7dc;--deep:#477a66;font-family:'LXGW WenKai','Microsoft YaHei',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{max-width:600px;margin:auto;padding:44px 18px 18px}.eyebrow{font-size:12px;color:var(--deep);letter-spacing:.07em}h1{margin:8px 0;font-size:19px;line-height:1.45;overflow-wrap:anywhere}.question{font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 9px}.background{font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}.recommend{background:var(--mint);border-radius:12px;padding:10px 12px;margin:0 0 12px;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.recommend strong{color:var(--deep)}.options{display:grid;gap:8px}button{font:inherit;cursor:pointer}.option{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;padding:11px 12px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}.option:hover,.option:focus-visible,.option[aria-checked="true"]{border-color:var(--deep);background:var(--mint);outline:none}.option b{display:block;font-size:14px;overflow-wrap:anywhere}.option small{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.badge{flex:none;color:var(--deep);font-size:11px}.choice-mark{flex:none;min-width:18px;text-align:center;color:var(--deep);font-weight:700}.selection-hint{margin:8px 0 0;color:var(--muted);font-size:11px;line-height:1.5}.write{display:block;margin-top:14px;color:var(--deep);font-size:12px;font-weight:600}.write span{color:var(--muted);font-weight:400}textarea{display:block;margin:7px 0;width:100%;min-height:58px;resize:vertical;padding:9px 10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;color:var(--ink);font:inherit;font-size:12px}.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.actions button{border:0;border-radius:9px;padding:8px 11px;color:var(--deep);background:var(--mint);font-size:12px}.actions .confirm{background:var(--deep);color:#fff;font-weight:600}.actions .decline{background:transparent;color:var(--muted)}button:disabled,textarea:disabled{cursor:not-allowed;opacity:.55}.status{font-size:11px;color:var(--muted);margin:11px 0 0;min-height:16px}*[hidden]{display:none!important}*{scrollbar-width:thin;scrollbar-color:#c9dfd3 transparent}
+:root{--paper:#f8f5ed;--surface:#fffdfa;--ink:#345547;--muted:#687b70;--mint:#e8f2e9;--line:#dbe7dc;--deep:#477a66;font-family:'LXGW WenKai','Microsoft YaHei',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{max-width:600px;margin:auto;padding:34px 20px 20px}.eyebrow{font-size:12px;color:var(--deep);letter-spacing:.07em}h1{margin:6px 0 4px;font-size:20px;line-height:1.45;overflow-wrap:anywhere}.question{font-size:15px;font-weight:600;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}.background{font-size:12.5px;color:var(--muted);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}.recommend{background:var(--mint);border-radius:14px;padding:12px 14px;margin:0 0 12px;font-size:12.5px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.recommend strong{color:var(--deep)}.options{display:grid;gap:10px}button{font:inherit;cursor:pointer}.option{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;padding:14px 16px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink)}.option:hover,.option:focus-visible{border-color:var(--deep);outline:none}.option[aria-checked="true"]{border-color:var(--deep);border-width:2px;background:var(--mint);box-shadow:inset 3px 0 0 var(--deep);outline:none}.option b{display:block;font-size:15px;line-height:1.5;overflow-wrap:anywhere}.option small{display:block;margin-top:5px;color:var(--muted);font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}.badge{flex:none;color:var(--deep);font-size:11px}.choice-mark{flex:none;min-width:18px;text-align:center;color:var(--deep);font-weight:700}.selection-hint{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.5}.write{display:block;margin-top:16px;color:var(--deep);font-size:13px;font-weight:600}.write span{color:var(--muted);font-weight:400}textarea{display:block;margin:7px 0;width:100%;min-height:62px;resize:vertical;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--ink);font:inherit;font-size:13px}.actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap}.actions button{border:0;border-radius:11px;padding:10px 15px;color:var(--deep);background:var(--mint);font-size:13px}.actions .confirm{background:var(--deep);color:#fff;font-weight:600}.actions .decline{background:transparent;color:var(--muted)}button:disabled,textarea:disabled{cursor:not-allowed;opacity:.55}.status{font-size:12px;color:var(--muted);margin:12px 0 0;min-height:16px}*[hidden]{display:none!important}*{scrollbar-width:thin;scrollbar-color:#c9dfd3 transparent}
 </style>
 </head>
 <body>
 <main>
   <div class="eyebrow">知意 · 等你决定</div>
-  <h1 id="title">待展示的问题</h1>
+  <h1 id="title" hidden></h1>
   <p class="question" id="question">问题会在这里展开；尚未绑定到对话时不能作答。</p>
   <p class="background" id="background" hidden></p>
   <div class="recommend" id="recommend" hidden><strong>建议方向</strong><div id="rec-text"></div><div id="reason"></div></div>
   <div class="options" id="options" role="group" aria-label="选择项"></div>
   <p class="selection-hint" id="selection-hint" hidden aria-live="polite"></p>
-  <label class="write" for="note">补充说明 <span>可不填；若想自己定方案，写完点「用我的答案」</span></label>
-  <textarea id="note" maxlength="500" placeholder="还有什么想告诉伙伴的？" disabled></textarea>
-  <div class="actions"><button type="button" class="confirm" id="confirm" hidden disabled>确认选择</button><button type="button" id="custom" disabled>用我的答案</button><button type="button" class="decline" id="decline" disabled>暂不决定</button></div>
+  <label class="write" for="note">补充说明 <span>可不填</span></label>
+  <textarea id="note" maxlength="500" placeholder="还想补充什么？" disabled></textarea>
+  <div class="actions"><button type="button" class="confirm" id="confirm" disabled>确认发送</button><button type="button" class="decline" id="decline" disabled>暂不决定</button></div>
   <p class="status" id="status" role="status" aria-live="polite">等待与原对话绑定…</p>
 </main>
 <script type="application/json" data-card-manifest>{"spec":"1.0","display":{"preferredWidthPx":600,"styleProfile":"custom"},"toolBindings":{}}</script>
@@ -28,13 +28,38 @@
 (function(){
   const $=id=>document.getElementById(id);
   let snapshot={};try{snapshot=JSON.parse(document.querySelector('[data-card-state]').textContent||'{}')}catch{}
-  const choices=Array.isArray(snapshot.options)?snapshot.options.filter(o=>o&&typeof o.label==='string'):[];
+  // 宿主把 state 写进 data-card-state 时，标量一律变成字符串（2026-10-18 实机：
+  // expiresAt 被写成 "1792282978972"）。Number.isFinite 对字符串返回 false，
+  // 卡片一出生就判自己过期、选项全 disabled。所有数值取值都走这个口。
+  const num=v=>{const n=Number(v);return Number.isFinite(n)?n:NaN};
+  // 布尔同理：2026-10-20 实机，宿主写的 host-data 里 ready 是字符串 "true"，
+  // 用严格布尔比较判，卡片永远停在「正在与原对话绑定」。认两种写法。
+  const yes=v=>v===true||v==='true'||v===1||v==='1';
+  const expiresAt=num(snapshot.expiresAt);
+  // options 偶尔被包成 {item:[...]}（调用方传错形状），别让整张卡没选项。
+  // 宿主还会把数组再包一层，{item:{item:[...]}} 也得认出来。
+  function unwrapOptions(value){
+    let current=value;
+    for(let i=0;i<5;i++){
+      if(Array.isArray(current))return current;
+      if(current&&typeof current==='object'&&'item' in current){current=current.item;continue}
+      return [];
+    }
+    return [];
+  }
+  const rawOptions=unwrapOptions(snapshot.options);
+  const choices=rawOptions.filter(o=>o&&typeof o.label==='string');
   const multiple=snapshot.selectionMode==='multiple';
-  const minSelections=multiple&&Number.isInteger(snapshot.minSelections)?snapshot.minSelections:1;
-  const maxSelections=multiple&&Number.isInteger(snapshot.maxSelections)?snapshot.maxSelections:choices.length;
+  const minSelections=multiple&&Number.isInteger(num(snapshot.minSelections))?num(snapshot.minSelections):1;
+  const maxSelections=multiple?(Number.isInteger(num(snapshot.maxSelections))?num(snapshot.maxSelections):choices.length):1;
   const selected=new Set();
-  $('title').textContent=String(snapshot.title||'待展示的问题');
-  $('question').textContent=String(snapshot.question||'问题尚未送达。');
+  // 宿主会把 state.title 提走当卡片自身的标题字段，state 里拿不到（2026-10-18 实机）。
+  // 拿不到就不渲染空标题，题干本身就是问题。
+  const heading=String(snapshot.title||'');
+  const questionText=String(snapshot.question||'问题尚未送达。');
+  // 标题和问题常常是同一句话，并排显示就成了重复；题干已经含标题就不占两行。
+  $('title').textContent=heading;$('title').hidden=!heading||questionText.includes(heading);
+  $('question').textContent=questionText;
   $('background').textContent=String(snapshot.background||'');$('background').hidden=!snapshot.background;
   $('recommend').hidden=!snapshot.recommendation;
   $('rec-text').textContent=String(snapshot.recommendation||'');
@@ -42,14 +67,14 @@
   const buttons=[],marks=[];
   choices.forEach((option,index)=>{
     const button=document.createElement('button');button.type='button';button.className='option';button.disabled=true;
-    if(multiple){button.setAttribute('role','checkbox');button.setAttribute('aria-checked','false')}
+    button.setAttribute('role',multiple?'checkbox':'radio');button.setAttribute('aria-checked','false');
     const copy=document.createElement('span'),label=document.createElement('b');label.textContent=option.label;copy.append(label);
     if(option.detail){const detail=document.createElement('small');detail.textContent=option.detail;copy.append(detail)}
     button.append(copy);
     if(snapshot.recommendation===option.label){const badge=document.createElement('span');badge.className='badge';badge.textContent='推荐';button.append(badge)}
     if(multiple){const mark=document.createElement('span');mark.className='choice-mark';mark.setAttribute('aria-hidden','true');mark.textContent='□';button.append(mark);marks.push(mark)}
     button.addEventListener('click',()=>{
-      if(!multiple){void send('confirmed',option.label);return}
+      if(!multiple){if(selected.has(index))selected.delete(index);else{selected.clear();selected.add(index)}updateSelection();return}
       if(selected.has(index))selected.delete(index);
       else if(selected.size>=maxSelections){status.textContent=`最多选择 ${maxSelections} 项。`;return}
       else selected.add(index);
@@ -59,30 +84,32 @@
   });
   let home='',ready=false,sent=false;
   const status=$('status'),note=$('note'),confirm=$('confirm'),selectionHint=$('selection-hint');
-  confirm.hidden=!multiple;
-  const controls=[...buttons,confirm,$('custom'),$('decline'),note];
-  function isUsable(){return ready&&!sent&&Number.isFinite(snapshot.expiresAt)&&Date.now()<snapshot.expiresAt}
+  const controls=[...buttons,confirm,$('decline'),note];
+  function isUsable(){return ready&&!sent&&Number.isFinite(expiresAt)&&Date.now()<expiresAt}
   function updateSelection(){
     buttons.forEach((button,index)=>{
       const checked=selected.has(index);
-      if(multiple)button.setAttribute('aria-checked',String(checked));
+      button.setAttribute('aria-checked',String(checked));
       if(multiple)marks[index].textContent=checked?'✓':'□';
     });
     if(multiple){
       selectionHint.hidden=false;
-      selectionHint.textContent=`可多选 · 至少 ${minSelections} 项，最多 ${maxSelections} 项 · 已选 ${selected.size} 项`;
-      confirm.disabled=!isUsable()||selected.size<minSelections;
-    }else selectionHint.hidden=true;
+      selectionHint.textContent=`可多选 · 已选 ${selected.size}/${maxSelections}`;
+    }else{
+      selectionHint.hidden=false;
+      selectionHint.textContent=`单选 · 已选 ${selected.size}`;
+    }
+    confirm.disabled=!isUsable()||(selected.size?selected.size<minSelections:!note.value.trim());
   }
   function refresh(){
-    const expired=!Number.isFinite(snapshot.expiresAt)||Date.now()>=snapshot.expiresAt;
+    const expired=!Number.isFinite(expiresAt)||Date.now()>=expiresAt;
     const usable=ready&&!sent&&!expired;
     controls.forEach(item=>item.disabled=!usable);
     updateSelection();
     if(expired)status.textContent='这道题已过期，请在对话里重新发问。';
     else if(sent)status.textContent='已送达原对话，等伙伴接话。';
     else if(!ready)status.textContent='正在与原对话绑定，暂不能作答。';
-    else status.textContent=multiple?'勾选符合条件的项目，再点「确认选择」；关闭卡片不会替你作决定。':'选一项，或写自己的答案；关闭卡片不会替你作决定。';
+    else status.textContent='选好后点「确认发送」；关闭卡片不算作答。';
   }
   async function send(action,choice){
     if(!isUsable())return refresh();
@@ -91,26 +118,51 @@
     sent=true;refresh();status.textContent='正在送回原对话…';
     try{
       const result=await window.card.emit('zhiyi_ask_answer',{askId:snapshot.askId,action,choice,note:action==='confirmed'?note.value.trim():''},home);
-      if(result&&result.ok===true){await window.card.state.set('zhiyiAnswerSent',true);refresh();return}
+      if(result&&result.ok===true){await markSent();refresh();return}
     }catch{}
     sent=false;refresh();status.textContent='没送达，选择仍在这里，可再试一次。';
   }
-  confirm.addEventListener('click',()=>void send('confirmed',[...selected].sort((a,b)=>a-b).map(index=>choices[index].label)));
-  $('custom').addEventListener('click',()=>void send('custom',note.value.trim()));
+  confirm.addEventListener('click',()=>{
+    const picked=[...selected].sort((a,b)=>a-b).map(index=>choices[index].label);
+    if(picked.length)void send('confirmed',multiple?picked:picked[0]);
+    else void send('custom',note.value.trim());
+  });
+  note.addEventListener('input',updateSelection);
   $('decline').addEventListener('click',()=>void send('rejected',''));
-  function applyData(data){if(!data||data.askId!==snapshot.askId||data.ready!==true)return;
+  function applyData(data){if(!data||data.askId!==snapshot.askId||!yes(data.ready))return;
     // homeSessionId 是可选的：卡片就嵌在原对话里，emit 不带目标时会发给嵌它的那个对话。
     // 旧版把它当成必填，调用方一旦没传就永远不解锁，所有选项 disabled——整张卡点不动。
     // 现在：有就用来定向，没有就交给默认路由。
     home=typeof data.homeSessionId==='string'?data.homeSessionId:'';
     ready=true;refresh()}
+  // 绑定数据是宿主后写的，卡片启动得早还是晚全看运气：卡若先启动，它读到的是空数据，
+  // 之后宿主写入也不会把它推过来（onChange 未必带完整数据），卡片就永远停在「正在绑定」。
+  // 所以每次收到变化提示都自己重新拉一次，拉到 ready 为止；启动时也主动拉。
+  async function pullData(){
+    try{
+      const doc=await window.card.data.get();
+      if(doc&&doc.ok===true)applyData(doc.result?.data);
+    }catch{}
+    return ready;
+  }
+  // 「已送达原对话」这句话不能空口说：emit 被宿主收下（ok:true）只说明事件投递了，
+  // 伙伴那边接不接得住是另一回事。写进 state，让伙伴能查这张卡到底走到哪一步。
+  async function markSent(){try{await window.card.state.set('zhiyiAnswerSent',true)}catch{}}
   refresh();
   if(!window.card){status.textContent='这张卡需要 Hana 才能送回选择。';return}
   Promise.all([window.card.capabilities(),window.card.data.get(),window.card.state.get('zhiyiAnswerSent')]).then(([caps,doc,previous])=>{
     if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){status.textContent='卡片回传不可用；请在对话里说明。';return}
     sent=previous?.ok===true&&previous.result?.value===true;
     applyData(doc.result?.data);
-    window.card.data.onChange(applyData);
+    window.card.data.onChange(()=>{void pullData()});
+    // 有限重试：宿主写绑定数据与卡片启动之间没有顺序保证，靠几次轮询兜住这个时序差。
+    if(!ready){
+      let tries=0;
+      const timer=setInterval(()=>{
+        if(ready||++tries>40){clearInterval(timer);return}
+        void pullData();
+      },500);
+    }
   }).catch(()=>{status.textContent='卡片连接失败，请在对话里说明。'});
 })();
 </script>

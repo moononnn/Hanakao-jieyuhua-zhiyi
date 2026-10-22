@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>知意</title>
+  <link rel="stylesheet" href="./assets/suggest-panel.css">
+</head>
+<body>
+  <main class="panel">
+    <div class="head">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 30 16" aria-hidden="true">
+          <path d="M1.6 13.4C6.6 13.4 9.6 9.6 15.2 7.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path>
+          <path d="M9.4 10.6c-1.5-2.5-.4-4.7 2-4.5 1.9.2 2.8 2 1.8 3.4" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>
+          <g fill="#e89bb0">
+            <circle cx="19.4" cy="4.8" r="2.5"></circle>
+            <circle cx="22.8" cy="7.2" r="2.5"></circle>
+            <circle cx="21" cy="11.2" r="2.5"></circle>
+            <circle cx="16.6" cy="11.2" r="2.5"></circle>
+            <circle cx="14.9" cy="6.8" r="2.5"></circle>
+          </g>
+          <circle cx="18.8" cy="8" r="1.2" fill="#f3d9a6"></circle>
+        </svg>
+        <span class="brand-name">解语花·知意</span>
+      </div>
+      <div class="head-actions">
+        <button id="edit-quick" class="link-btn" type="button" hidden>编辑常用</button>
+        <button id="close-panel" class="link-btn" type="button">收起</button>
+      </div>
+    </div>
+
+    <nav class="page-tabs" role="tablist" aria-label="知意面板">
+      <button id="tab-recommend" class="page-tab active" type="button" role="tab" aria-selected="true" aria-controls="recommend-page">推荐回复</button>
+      <button id="tab-tools" class="page-tab" type="button" role="tab" aria-selected="false" aria-controls="tools-page" tabindex="-1">小工具</button>
+      <button id="tab-polish" class="page-tab" type="button" role="tab" aria-selected="false" aria-controls="polish-page" tabindex="-1">帮我理顺</button>
+    </nav>
+
+    <section id="recommend-page" class="tool-page" role="tabpanel" aria-labelledby="tab-recommend">
+      <section class="quick" id="quick" hidden>
+        <div class="quick-list" id="quick-list"></div>
+        <div class="quick-editor" id="quick-editor" hidden>
+          <input id="quick-input" type="text" maxlength="30" placeholder="写一句常用的…">
+          <button id="quick-add" class="mini-btn" type="button">添加</button>
+        </div>
+      </section>
+
+      <div class="toolbar">
+        <button id="generate" class="gen" type="button">生成推荐回复</button>
+        <span class="gen-note" id="gen-note"></span>
+      </div>
+
+      <ul class="list" id="list" aria-live="polite"></ul>
+      <p class="empty" id="empty" hidden>还没生成。点上面「生成推荐回复」来几条。</p>
+    </section>
+
+    <!-- 小工具：把散在面板各处的小动作收一处。
+         以后想到新的小功能，往这页的 tools-grid 里加一格就行。 -->
+    <section id="tools-page" class="tool-page tools-page" role="tabpanel" aria-labelledby="tab-tools" hidden>
+      <div id="tools-grid" class="tools-grid">
+        <button id="rename-slug" class="tool-tile" type="button">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M13.4 3.6 16.4 6.6 7.3 15.7l-3.9.7.7-3.9 9.3-8.9Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path><path d="M11.7 5.3 14.7 8.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label">重新命名标题</span>
+            <span class="tool-tile-hint" id="rename-hint">给这段对话起个名</span>
+          </span>
+        </button>
+
+        <button id="open-voice" class="tool-tile" type="button">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M3.8 7.8v4.4h2.7L10 15V5l-3.5 2.8H3.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path><path d="M12.6 7.6a3.4 3.4 0 0 1 0 4.8M14.9 5.4a6.6 6.6 0 0 1 0 9.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label">朗读</span>
+            <span class="tool-tile-hint">听听 ta 刚说了什么</span>
+          </span>
+        </button>
+      </div>
+
+      <p id="slug-note" class="slug-note" role="status" aria-live="polite"></p>
+
+      <div id="voice-list-view" class="voice-list-view" hidden>
+        <div class="voice-head">
+          <div>
+            <button id="voice-back" class="reader-back" type="button" aria-label="返回小工具">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <span>小工具</span>
+            </button>
+            <strong id="voice-target">当前对话的最近回复</strong>
+            <p id="voice-source">读的是这个窗口的对话。</p>
+          </div>
+          <button id="refresh-voice" class="mini-btn" type="button">刷新</button>
+        </div>
+        <p id="voice-note" class="voice-note" role="status" aria-live="polite">切到「朗读」页后读取当前对话。</p>
+        <ul id="voice-list" class="voice-list"></ul>
+      </div>
+
+      <div id="voice-reader-view" class="voice-reader" hidden>
+        <div class="reader-head">
+          <button id="reader-back" class="reader-back" type="button" aria-label="返回回复列表">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            <span>返回列表</span>
+          </button>
+          <span id="reader-partner" class="reader-partner">正在朗读</span>
+        </div>
+
+        <article class="reader-paper" aria-label="正在朗读的回复">
+          <div class="reader-kicker">
+            <span>这一段</span>
+            <span id="reader-count" class="reader-count"></span>
+          </div>
+          <p id="reader-text" class="reader-text"></p>
+          <textarea id="reader-draft" class="reader-draft" spellcheck="false" aria-label="朗读稿" hidden></textarea>
+        </article>
+        <div class="reader-status-row">
+          <p id="reader-note" class="reader-note" role="status" aria-live="polite">正在准备语音…</p>
+          <span class="reader-status-actions">
+            <button id="voice-favorite" class="mini-btn" type="button" hidden>♡ 收藏</button>
+            <button id="retry-voice" class="mini-btn" type="button" hidden>重试合成</button>
+          </span>
+        </div>
+
+        <div class="reader-actions">
+          <button id="reader-edit" class="mini-btn" type="button">改稿</button>
+          <button id="reader-restore" class="mini-btn" type="button" hidden>还原原文</button>
+          <button id="reader-speak" class="reader-speak" type="button">朗读这篇</button>
+        </div>
+
+        <div id="voice-player" class="voice-player">
+          <audio id="reply-audio" preload="none" aria-hidden="true"></audio>
+          <div class="player-main">
+            <button id="player-toggle" class="player-toggle" type="button" aria-label="播放朗读" disabled>
+              <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13L18.5 12 8 5.5Z" fill="currentColor"></path></svg>
+              <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M8 6v12M16 6v12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></path></svg>
+            </button>
+            <div class="player-progress-wrap">
+              <input id="player-progress" class="player-range" type="range" min="0" max="1000" step="1" value="0" aria-label="播放进度" disabled>
+              <div class="player-time"><span id="player-current-time">0:00</span><span id="player-duration">0:00</span></div>
+            </div>
+          </div>
+          <div class="player-options">
+            <div class="volume-control">
+              <button id="volume-toggle" class="volume-toggle" type="button" aria-label="静音" aria-pressed="false" disabled>
+                <svg class="volume-on-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9v6h4l5 4V5l-5 4h-4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path><path d="M17 9a4 4 0 0 1 0 6M19.5 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>
+                <svg class="volume-off-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M4.5 9v6h4l5 4V5l-5 4h-4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path><path d="m17 9 5 6m0-6-5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg>
+              </button>
+              <input id="volume-range" class="player-range volume-range" type="range" min="0" max="100" step="1" value="100" aria-label="音量" disabled>
+            </div>
+            <div class="speed-control">
+              <button id="speed-button" class="speed-button" type="button" aria-haspopup="menu" aria-expanded="false" disabled>1×</button>
+              <div id="speed-menu" class="speed-menu" role="menu" aria-label="朗读速度" hidden>
+                <button class="speed-option" type="button" role="menuitemradio" aria-checked="false" data-rate="0.75">0.75×</button>
+                <button class="speed-option active" type="button" role="menuitemradio" aria-checked="true" data-rate="1">1×</button>
+                <button class="speed-option" type="button" role="menuitemradio" aria-checked="false" data-rate="1.25">1.25×</button>
+                <button class="speed-option" type="button" role="menuitemradio" aria-checked="false" data-rate="1.5">1.5×</button>
+                <button class="speed-option" type="button" role="menuitemradio" aria-checked="false" data-rate="2">2×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="polish-page" class="tool-page polish-page" role="tabpanel" aria-labelledby="tab-polish" hidden>
+      <p class="polish-intro">话写得潦草就丢进来，我帮你理顺，原意不乱。理顺完可以直接发给 ta。</p>
+
+      <textarea id="polish-input" class="polish-input" rows="5" spellcheck="false" placeholder="写下你要发的话，随手写就行…"></textarea>
+
+      <input id="polish-require" class="polish-require" type="text" maxlength="200" placeholder="还想怎么改？（可选：语气客气点、拆成两句…）">
+
+      <div id="polish-suggest" class="polish-suggest" hidden>
+        <span class="polish-suggest-title">还能往哪儿改</span>
+        <div id="polish-suggest-list" class="polish-suggest-list"></div>
+      </div>
+
+      <div class="polish-actions">
+        <button id="polish-run" class="polish-run" type="button">理顺</button>
+        <button id="polish-queue" class="polish-send" type="button" hidden>排队发给 ta</button>
+        <button id="polish-send" class="polish-send" type="button" hidden>现在就发</button>
+      </div>
+
+      <p id="polish-status" class="polish-status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script type="module" src="./assets/suggest-panel.js"></script>
+</body>
+</html>

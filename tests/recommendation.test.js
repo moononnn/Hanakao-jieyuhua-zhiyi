@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateRecommendations, resolveRecommendationModel } from "../lib/recommendation.js";
 
-function createSdk({ selectedModel = null, currentModel = { provider: "test-provider", modelId: "test-model" }, history = null, modelText = '[{"text":"那你再讲讲刚才的办法？","direction":"追问/延伸"},{"text":"我也想试试这个","direction":"行动/请求"}]', sessionList = null } = {}) {
+function createSdk({ selectedModel = null, currentModel = { provider: "test-provider", modelId: "test-model" }, history = null, modelText = '[{"text":"那你再讲讲刚才的办法？","direction":"追问/延伸"},{"text":"我也想试试这个","direction":"行动/请求"}]', sessionList = null, streamImpl = null, fallbackModel = null } = {}) {
   const modelCalls = [];
   const historyCalls = [];
   const contextCalls = [];
@@ -12,6 +12,7 @@ function createSdk({ selectedModel = null, currentModel = { provider: "test-prov
   ];
   const values = new Map([
     ["recommendationModel", selectedModel],
+    ["recommendationFallbackModel", fallbackModel],
     ["recommendationConfig", { count: 2 }],
   ]);
   return {
@@ -32,6 +33,7 @@ function createSdk({ selectedModel = null, currentModel = { provider: "test-prov
         ] }),
         stream: async (request) => {
           modelCalls.push(request);
+          if (streamImpl) return streamImpl(request, modelCalls.length);
           return new Response([
             JSON.stringify({ type: "text-delta", delta: modelText }),
             JSON.stringify({ type: "done", stopReason: "stop", assistant: { content: [{ type: "text", text: modelText }] } }),
@@ -54,6 +56,63 @@ function createSdk({ selectedModel = null, currentModel = { provider: "test-prov
     },
   };
 }
+
+test("gives reasoning models enough output budget and retries once with double", async () => {
+  // 实机踩过的坑：gpt-6-luna 这类推理模型的思考 token 与正文共用一份 maxTokens，
+  // 给少了会出现「模型已返回但没有正文」或服务商那句含糊的 could not complete。
+  const flaky = createSdk({
+    streamImpl: (request, callNo) => {
+      if (callNo === 1) {
+        return new Response([
+          JSON.stringify({ type: "error", code: "PROVIDER_INCOMPLETE", message: "The model provider could not complete the request." }),
+          "",
+        ].join("\n"));
+      }
+      return new Response([
+        JSON.stringify({ type: "text-delta", delta: '[{"text":"那我试试","direction":"行动/请求"},{"text":"再讲讲","direction":"追问/延伸"}]' }),
+        JSON.stringify({ type: "done", stopReason: "stop", assistant: { content: [{ type: "text", text: "ok" }] } }),
+        "",
+      ].join("\n"));
+    },
+  });
+  const result = await generateRecommendations(flaky.sdk, { sessionPath: "sessions/current.jsonl", callToken: "t" });
+  assert.equal(result.suggestions.length, 2, "第一次失败不该直接判死");
+  assert.equal(flaky.modelCalls.length, 2);
+  assert.equal(flaky.modelCalls[0].maxTokens, 1800);
+  assert.equal(flaky.modelCalls[1].maxTokens, 3600, "重试要翻倍额度");
+});
+
+test("both attempts failing still says something a person can act on", async () => {
+  const dead = createSdk({
+    streamImpl: () => new Response([
+      JSON.stringify({ type: "error", code: "PROVIDER_INCOMPLETE", message: "The model provider could not complete the request." }),
+      "",
+    ].join("\n")),
+  });
+  await assert.rejects(
+    generateRecommendations(dead.sdk, { sessionPath: "sessions/current.jsonl", callToken: "t" }),
+    (error) => {
+      assert.match(error.message, /服务商这次没接住/);
+      assert.match(error.message, /换一条内容模型/, "连续失败要给出路，而不是只说再试");
+      assert.doesNotMatch(error.message, /could not complete/, "面板上不放英文原文，那里放不下");
+      assert.match(error.rawMessage, /could not complete/, "原文要留着，好对账");
+      return true;
+    },
+  );
+  assert.equal(dead.modelCalls.length, 3, "三次都撞上，才算真的没路");
+  assert.equal(dead.modelCalls[1].maxTokens, 3600);
+});
+
+// 会话凭证、模型不在列表这类错误，重发一百次也还是同一个结果。
+// 拦在重试之外，一是别让人白白坐等，二是别把真正该修的问题拖成「网络不好，回头再试」。
+test("unfixable errors are not retried", async () => {
+  const mock = createSdk({ currentModel: null });
+  await assert.rejects(
+    generateRecommendations(mock.sdk, { sessionPath: "sessions/current.jsonl", callToken: "t" }),
+    /不会擅自改用另一条模型/,
+  );
+  assert.equal(mock.modelCalls.length, 0);
+});
 
 test("recommendation follows the invoking session's model and reads only bounded visible history", async () => {
   const mock = createSdk();
@@ -124,7 +183,7 @@ test("removes filler candidates and returns a model error if no useful candidate
     generateRecommendations(mock.sdk, { sessionPath: "sessions/current.jsonl", callToken: "call-token" }),
     /没有生成合适的推荐回复/,
   );
-  assert.equal(mock.modelCalls.length, 2);
+  assert.equal(mock.modelCalls.length, 3, "全是套话也算没成，三次都试过再说");
 });
 
 test("App 侧直给会话编号：不反查名单，也不要求工具调用凭证", async () => {
@@ -143,4 +202,49 @@ test("直给编号但名单里找不到 path 时，不静默换模型而是报�
     /没有取得当前对话位置|不会擅自改用另一条模型/,
   );
   assert.equal(mock.modelCalls.length, 0);
+});
+
+// 备用模型是用户显式选的，不是知意自己挑一条顶上；用上了还得把话说出口。
+test("主模型全撞墙时用上备用，并把“这次是备用”交代清楚", async () => {
+  const mock = createSdk({
+    selectedModel: { provider: "test-provider", model: "test-model" },
+    fallbackModel: { provider: "other-provider", model: "other-model" },
+    streamImpl: (request) => {
+      if (request.provider === "test-provider") {
+        return new Response([
+          JSON.stringify({ type: "error", code: "PROVIDER_INCOMPLETE", message: "The model provider could not complete the request." }),
+          "",
+        ].join("\n"));
+      }
+      return new Response([
+        JSON.stringify({ type: "text-delta", delta: '[{"text":"那我自己去查查","direction":"行动/请求"},{"text":"你先忙吧","direction":"分享/感慨"}]' }),
+        JSON.stringify({ type: "done", stopReason: "stop", assistant: { content: [{ type: "text", text: "ok" }] } }),
+        "",
+      ].join("\n"));
+    },
+  });
+  const result = await generateRecommendations(mock.sdk, { sessionId: "sess_current" });
+  assert.equal(result.model.usedFallback, true);
+  assert.equal(result.model.source, "fallback");
+  assert.equal(result.model.model, "other-model");
+  assert.equal(result.model.primaryName, "当前模型", "得能说清备用顶替的是谁");
+  assert.equal(mock.modelCalls.filter((call) => call.provider === "test-provider").length, 3, "主模型先把三次用完再换");
+  assert.equal(mock.modelCalls.at(-1).provider, "other-provider");
+});
+
+// 备用跟主模型是同一条等于没兜住，不该白花一次请求。
+test("备用跟主模型重复时不切换，直接说失败", async () => {
+  const mock = createSdk({
+    selectedModel: { provider: "test-provider", model: "test-model" },
+    fallbackModel: { provider: "test-provider", model: "test-model" },
+    streamImpl: () => new Response([
+      JSON.stringify({ type: "error", code: "PROVIDER_INCOMPLETE", message: "The model provider could not complete the request." }),
+      "",
+    ].join("\n")),
+  });
+  await assert.rejects(
+    generateRecommendations(mock.sdk, { sessionId: "sess_current" }),
+    /服务商这次没接住/,
+  );
+  assert.equal(mock.modelCalls.length, 3, "重复的备用不该多跑一轮");
 });

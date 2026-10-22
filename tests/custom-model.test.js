@@ -111,8 +111,55 @@ test("自定义档：HTTP 错误说人话，连上但没正文也明说，不假
   );
 });
 
+// 会话纽带：宿主只在收到 providerSessionKey 时才给底层 provider 传 sessionId。
+// 这个字段没写在公开契约里，所以得同时验两件事：带上了，以及宿主不认时能脱掉重发。
+// 也因为它没写在契约里，这个测试是在提醒后人：这层是“能用但未承诺”的。
+test("Hana 模型可以带会话纽带，宿主不认时自动脱掉重发", async () => {
+  const calls = [];
+  const makeSdk = (streamImpl) => ({
+    models: { stream: async (...args) => { calls.push(args); return streamImpl(args); } },
+  });
+  const okStream = () => new Response([
+    JSON.stringify({ type: "text-delta", delta: "好的" }),
+    JSON.stringify({ type: "done", stopReason: "stop", assistant: { content: [{ type: "text", text: "好的" }] } }),
+    "",
+  ].join("\n"));
+
+  const sdk1 = makeSdk(okStream);
+  const text = await invokeTextModel(sdk1, { kind: "host", model: { provider: "p", model: "m" } }, {
+    requestId: "r1",
+    messages: [{ role: "user", content: "嗨" }],
+    transport: { providerSessionKey: "sess_x", cacheRetention: "short" },
+  });
+  assert.equal(text, "好的");
+  assert.equal(calls[0].length, 2, "第二个参数要真的传出去");
+  assert.deepEqual(calls[0][1], { providerSessionKey: "sess_x", cacheRetention: "short" });
+
+  // 老宿主或将来收紧校验的宿主：一次拒绝就回到单参数，别让增强变成新的失败源。
+  calls.length = 0;
+  let attempt = 0;
+  const sdk2 = makeSdk(() => {
+    attempt += 1;
+    if (attempt === 1) {
+      const error = new Error("The environment supplied unsupported model transport options.");
+      error.code = "APP_MODEL_INVALID_REQUEST";
+      throw error;
+    }
+    return okStream();
+  });
+  const text2 = await invokeTextModel(sdk2, { kind: "host", model: { provider: "p", model: "m" } }, {
+    requestId: "r2",
+    messages: [{ role: "user", content: "嗨" }],
+    transport: { providerSessionKey: "sess_x" },
+  });
+  assert.equal(text2, "好的");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].length, 1, "降级时只传一个参数");
+});
+
 test("连通测试：缺项直接说缺哪个，测完不写任何配置", async () => {
   const bare = createSdk({ stored: {} });
+
   await assert.rejects(() => testCustomModel(bare.sdk, { baseUrl: "", model: "", apiKey: "" }), /还差/);
 
   const calls = [];

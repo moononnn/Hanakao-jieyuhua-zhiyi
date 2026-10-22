@@ -38,9 +38,10 @@ test('validates and returns multiple selections as one bound answer', () => {
   const pending = registry.prepare(multiple, 'sessions/a.jsonl');
   registry.bind({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId });
   assert.equal(registry.resolve({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId, choice: ['同步'] }).ok, false);
-  const accepted = registry.resolve({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId, choice: ['同步', '导出'] });
+  const accepted = registry.resolve({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId, choice: ['同步', '导出'], note: '仅在本地执行' });
   assert.equal(accepted.ok, true);
   assert.match(accepted.text, /- 同步\n- 导出/);
+  assert.match(accepted.text, /补充：仅在本地执行/);
   assert.equal(registry.resolve({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId, choice: ['加密', '导出'] }).ok, false);
 });
 

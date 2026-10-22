@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import secrets
 import threading
 import time
@@ -19,6 +20,10 @@ MAX_BODY_BYTES = 64 * 1024
 ASK_TTL_SECONDS = 600
 # 朗读结果只在球还开着的时候有意义；超过这个时间没人来取就丢掉，不留旧音频线索。
 VOICE_RESULT_TTL_SECONDS = 180
+# 断联提醒的寿命。旧版插件有同样的 RESUME_TTL_MS=30 分钟，迁到 App 时漏了。
+RESUME_NOTICE_TTL_MS = 30 * 60 * 1000
+# 自动续接成功的闪报只要亮几秒；留太久球会在下一轮轮询里把它当新消息重放。
+RESUME_FLASH_TTL_MS = 8 * 1000
 STOP_ACK = "zhiyi-ball-stopping-ack"
 PARENT_ACK_TIMEOUT_SECONDS = 1.0
 
@@ -74,9 +79,35 @@ class AppBallBridge:
             "result": None,
             "resultSeq": 0,
             "resultAt": 0.0,
+            # 球上换了目标时记一个时间戳：让 App 忽略推送缓存，重拉一次列表。
+            # 以前是个「读到即清」的布尔信号，但球自己也读同一个接口（开窗、刷新都要 GET），
+            # 它抢在 App 前面把信号消费掉，App 就一直不重拉，切了窗口还是旧列表（2026-10-22 实机）。
+            "forcePushAt": 0.0,
+            # 朗读稿：球上改过字再念，就把稿子随选择一起报上来（空串 = 按原文念）。
+            "selectedText": "",
+            # 改稿时要一次全文：球的列表只带前 1200 字，走这条请求/结果对取全文。
+            "textRequest": None,
+            "textSeq": 0,
+            "textResult": None,
+            # 语音收藏：挂在朗读这条已有的桥上，不另开通道。
+            "fav": None,
+            "favSeq": 0,
+            "favResult": None,
             "notice": None,
+            # 回复行上的「朗读」按钮：App 合成完把文件路径放这里，球轮询到就自己放。
+            # 宿主的 new Audio(...).play() 在 Electron 里会被自动播放策略静默拦掉（前端还 catch 掉不报错），
+            # 所以出声这步交给常驻的球，播放器不受浏览器那条限制。
+            "play": None,
+            "playSeq": 0,
+            # 循环续接状态（App 推来）：active/text/total/done，主面板用来显示进度。
+            "loop": None,
             "action": None,
             "actionSeq": 0,
+            "flash": None,
+            "resumeEnabled": False,
+            "autoResume": False,
+            "maxConsecutive": 3,
+            "progress": [],
         }
         # 球内推荐与目标跟随：球不能回调 App，只能轮询这个桥。
         # 球→App 只放一个 request（刷新/固定/取消固定），App→球 推目标+候选+推荐。
@@ -85,6 +116,39 @@ class AppBallBridge:
             "requestSeq": 0,
             "push": None,           # App 推给球的快照
             "pushSeq": 0,
+        }
+        # 守门人（活都干完再关机）：App 定时推一份快照过来，球只管显示。
+        # 球上不挂开关、不做判定：那一步只看 App 一个来源，免得两边各算一套。
+        self._sleep = {
+            "state": None,
+            "stateSeq": 0,
+            # 球 → App：球上一级按钮的意图。App 轮询看到新 seq 就执行。
+            # bootId 标记这是「哪一只球」：球重启后 seq 从 0 开始，
+            # App 靠它分辨「号变小了」是重启而不是倒流。
+            "action": None,
+            "actionSeq": 0,
+            "bootId": int(time.time() * 1000),
+        }
+        # 润色弹窗在球上，App 的 /polish 路由球够不着；走同款请求/结果对。
+        self._polish = {
+            "request": None,        # {kind: polish|send, text, level, sessionId, seq}
+            "requestSeq": 0,
+            "result": None,         # App 推给球的回包
+            "resultSeq": 0,
+        }
+        # 会话标题：球上点「生成新标题/还原」时，起名与写回都在 App 侧（session:update 只有 App 够得着）。
+        self._title = {
+            "request": None,        # {kind: rename|undo, sessionId, seq}
+            "requestSeq": 0,
+            "result": None,         # App 推给球的回包
+            "resultSeq": 0,
+        }
+        # 排队话单：球上写一句/一串话 → 排进对话；App 把话单状态推回来给球显示。
+        self._queue = {
+            "request": None,        # {kind: queue|queue-cancel, text, rounds, sessionId, seq}
+            "requestSeq": 0,
+            "state": None,          # App 推给球的话单状态（排队中第 n/N 轮等）
+            "stateSeq": 0,
         }
         bridge = self
 
@@ -212,6 +276,8 @@ class AppBallBridge:
             if path == "/voice/state":
                 self._prune_voice()
                 voice = self._voice
+                # forcePushAt 不清：球与 App 都在读这个接口，清就变成“谁先读谁吃掉”。
+                # App 那边按「这个时间戳比上次大」自己判断要不要重拉。
                 return 200, {
                     "ok": True,
                     "readOpen": bool(voice["readOpen"]),
@@ -221,13 +287,85 @@ class AppBallBridge:
                     "replies": voice["replies"],
                     "result": voice["result"],
                     "resultSeq": int(voice["resultSeq"]),
+                    "fav": voice["fav"],
+                    "favSeq": int(voice["favSeq"]),
+                    "favResult": voice["favResult"],
+                    "forcePushAt": float(voice.get("forcePushAt") or 0.0),
+                    "selectedText": voice.get("selectedText") or "",
+                    "textRequest": voice.get("textRequest"),
+                    "textSeq": int(voice.get("textSeq") or 0),
+                    "textResult": voice.get("textResult"),
                 }
-            if path == "/resume/state":
+            if path == "/voice/play":
+                # 球轮询这个：App 把「放哪个文件」放进来，seq 变大就是新任务。
                 return 200, {
                     "ok": True,
-                    "notice": self._voice["notice"],
+                    "seq": int(self._voice.get("playSeq") or 0),
+                    "play": self._voice.get("play"),
+                }
+            if path == "/resume/state":
+                # 提醒有寿命：旧版是 RESUME_TTL_MS = 30 分钟，这里补上。
+                # 少了它，那条「已经试了 N 次」能挂一整天，用户会对着一个早就
+                # 聊完的窗口点「继续哈」，它就真插进去一句。
+                notice = self._voice["notice"]
+                if isinstance(notice, dict) and notice.get("at"):
+                    if time.time() - float(notice["at"]) / 1000.0 > RESUME_NOTICE_TTL_MS:
+                        self._voice["notice"] = notice = None
+                flash = self._voice["flash"]
+                if isinstance(flash, dict) and flash.get("at"):
+                    if time.time() - float(flash["at"]) / 1000.0 > RESUME_FLASH_TTL_MS:
+                        self._voice["flash"] = flash = None
+                return 200, {
+                    "ok": True,
+                    "notice": notice,
                     "action": self._voice["action"],
                     "actionSeq": int(self._voice["actionSeq"]),
+                    "flash": flash,
+                    "loop": self._voice.get("loop"),
+                    "enabled": self._voice["resumeEnabled"],
+                    "autoResume": self._voice["autoResume"],
+                    "maxConsecutive": self._voice["maxConsecutive"],
+                    "progress": self._voice["progress"],
+                    # 话单状态顺手搭这条车：球已经每隔一会儿读一次这里了，
+                    # 不用再单开一个轮询。排队话单不属于断点续接，单独一个字段。
+                    "queue": self._queue["state"],
+                    "queueSeq": int(self._queue["stateSeq"]),
+                }
+            if path == "/sleep/state":
+                return 200, {
+                    "ok": True,
+                    "state": self._sleep["state"],
+                    "stateSeq": int(self._sleep["stateSeq"]),
+                    "action": self._sleep["action"],
+                    "actionSeq": int(self._sleep["actionSeq"]),
+                    "bootId": int(self._sleep["bootId"]),
+                }
+            if path == "/polish/state":
+                # 润色弹窗在球上，App 里的 /polish 路由球够不着，走这一对请求/结果。
+                return 200, {
+                    "ok": True,
+                    "request": self._polish["request"],
+                    "requestSeq": int(self._polish["requestSeq"]),
+                    "result": self._polish["result"],
+                    "resultSeq": int(self._polish["resultSeq"]),
+                }
+            if path == "/queue/state":
+                # 排队话单：球发请求、App 排队与回推状态，两边都从这条读。
+                return 200, {
+                    "ok": True,
+                    "request": self._queue["request"],
+                    "requestSeq": int(self._queue["requestSeq"]),
+                    "state": self._queue["state"],
+                    "stateSeq": int(self._queue["stateSeq"]),
+                }
+            if path == "/title/state":
+                # 会话标题：球发请求、App 起名与写回，结果从这条读回。
+                return 200, {
+                    "ok": True,
+                    "request": self._title["request"],
+                    "requestSeq": int(self._title["requestSeq"]),
+                    "result": self._title["result"],
+                    "resultSeq": int(self._title["resultSeq"]),
                 }
             if path == "/recommend/state":
                 # 球轮询：拿到自己上次请求的回执（App 已读到的 request）与 App 推来的最新快照。
@@ -313,8 +451,10 @@ class AppBallBridge:
                     "selectionMode": selection_mode,
                     "minSelections": min_selections,
                     "maxSelections": max_selections,
-                    "sessionTitle": "知意关键提问",
-                    "agentName": "",
+                    "sessionTitle": str(body.get("sessionTitle") or "").strip()[:120],
+                    "agentName": str(body.get("agentName") or "").strip()[:40],
+                    # 回传地址：App 重载后靠它把这道题认回来，不然用户答了也不知道送回哪。
+                    "sessionId": str(body.get("sessionId") or "").strip(),
                 }
                 self._asks[ask_id] = {
                     "status": "pending",
@@ -338,6 +478,15 @@ class AppBallBridge:
                 mode = body.get("mode")
                 choice = body.get("choice")
                 if mode == "option":
+                    # 选项和补充说明是两件事：说明不能顶掉选择，也不能因为没写就凭空多一个字段。
+                    raw_note = body.get("note")
+                    note = ""
+                    if raw_note is not None:
+                        if not isinstance(raw_note, str):
+                            return 400, {"ok": False, "error": "补充说明格式无效"}
+                        note = raw_note.strip()
+                        if len(note) > 500:
+                            return 400, {"ok": False, "error": "补充说明不能超过 500 个字符"}
                     allowed = {option["label"] for option in item["entry"]["options"]}
                     if item["entry"]["selectionMode"] == "multiple":
                         if not isinstance(choice, list) or any(not isinstance(value, str) for value in choice):
@@ -352,7 +501,10 @@ class AppBallBridge:
                         choice = selected
                     elif not isinstance(choice, str) or choice not in allowed:
                         return 400, {"ok": False, "error": "所选项目不在当前问题的选项中"}
-                    answer = {"action": "confirmed", "value": {"choice": choice}}
+                    value = {"choice": choice}
+                    if note:
+                        value["note"] = note
+                    answer = {"action": "confirmed", "value": value}
                 elif mode == "custom":
                     if not isinstance(choice, str) or not choice.strip() or len(choice.strip()) > 500:
                         return 400, {"ok": False, "error": "自定义回答不能为空且不能超过 500 个字符"}
@@ -370,15 +522,81 @@ class AppBallBridge:
                 self._voice["readOpen"] = bool(body.get("readOpen"))
                 if not self._voice["readOpen"]:
                     self._voice["result"] = None
+                if body.get("forcePush"):
+                    # 球上换了目标：给一个新的时间戳，App 下一轮读状态时看到变大就重推列表。
+                    self._voice["forcePushAt"] = time.time()
                 return 200, {"ok": True, "readOpen": self._voice["readOpen"]}
+            if path == "/voice/play":
+                # App → 球：回复行朗读的音频已经落盘，请球播放。
+                body = body if isinstance(body, dict) else {}
+                target = str(body.get("path") or "").strip()
+                if not target or not os.path.exists(target):
+                    return 400, {"ok": False, "error": "音频文件不存在"}
+                self._voice["playSeq"] = int(self._voice.get("playSeq") or 0) + 1
+                self._voice["play"] = {
+                    "path": target,
+                    "format": "wav" if body.get("format") == "wav" else "mp3",
+                    "seq": self._voice["playSeq"],
+                }
+                return 200, {"ok": True, "playSeq": self._voice["playSeq"]}
+            if path == "/voice/fav":
+                # 球 → App：把刚朗读完的那段存进语音收藏。
+                body = body if isinstance(body, dict) else {}
+                clip_id = str(body.get("clipId") or "").strip()
+                if not clip_id:
+                    return 400, {"ok": False, "error": "没有可收藏的音频"}
+                self._voice["favSeq"] = int(self._voice["favSeq"]) + 1
+                self._voice["fav"] = {
+                    "clipId": clip_id,
+                    "text": str(body.get("text") or "")[:600],
+                    "format": "wav" if body.get("format") == "wav" else "mp3",
+                    "voiceId": str(body.get("voiceId") or ""),
+                    "agentId": str(body.get("agentId") or ""),
+                    "agentName": str(body.get("agentName") or ""),
+                    "seq": self._voice["favSeq"],
+                }
+                return 200, {"ok": True, "favSeq": self._voice["favSeq"]}
+            if path == "/voice/fav-result":
+                # App → 球：收藏结果。
+                body = body if isinstance(body, dict) else {}
+                self._voice["favResult"] = body
+                return 200, {"ok": True}
             if path == "/voice/select":
                 entry_id = str(body.get("entryId") or "").strip()
                 if not entry_id:
                     return 400, {"ok": False, "error": "没有选中要朗读的回复"}
+                # 改过稿就带上稿子：App 那边走文字通道（不再拿 entryId 去拼原文）。
+                draft_text = str(body.get("text") or "")
                 self._voice["selectedEntryId"] = entry_id
+                self._voice["selectedText"] = draft_text
                 self._voice["selectionSeq"] = int(self._voice["selectionSeq"]) + 1
                 self._voice["result"] = None
                 return 200, {"ok": True, "entryId": entry_id, "selectionSeq": self._voice["selectionSeq"]}
+            if path == "/voice/text-request":
+                # 球点「改稿」时先要全文：列表里的 text 只到 1200 字，不能就让它在编辑器里缺后半截。
+                entry_id = str(body.get("entryId") or "").strip()
+                if not entry_id:
+                    return 400, {"ok": False, "error": "没有要读哪一条"}
+                self._voice["textSeq"] = int(self._voice["textSeq"]) + 1
+                self._voice["textRequest"] = {
+                    "seq": self._voice["textSeq"],
+                    "entryId": entry_id,
+                    "sessionId": self._voice["sessionId"],
+                }
+                self._voice["textResult"] = None
+                return 200, {"ok": True, "textSeq": self._voice["textSeq"]}
+            if path == "/voice/text-result":
+                # App → 桥：全文回包。seq 对不上就丢，不能让旧回包顶掉新请求。
+                body = body if isinstance(body, dict) else {}
+                request = self._voice.get("textRequest")
+                if isinstance(request, dict) and int(body.get("seq") or 0) == int(request.get("seq") or 0):
+                    self._voice["textResult"] = {
+                        "seq": int(body.get("seq") or 0),
+                        "text": str(body.get("text") or ""),
+                        "chars": int(body.get("chars") or 0),
+                        "error": str(body.get("error") or ""),
+                    }
+                return 200, {"ok": True}
             if path == "/voice/push":
                 replies = body.get("replies")
                 if not isinstance(replies, list):
@@ -392,26 +610,154 @@ class AppBallBridge:
                 self._voice["resultAt"] = time.time()
                 self._voice["resultSeq"] = int(self._voice["resultSeq"]) + 1
                 return 200, {"ok": True, "resultSeq": self._voice["resultSeq"]}
+            if path == "/resume/progress":
+                enabled = body.get("enabled", False)
+                auto_resume = body.get("autoResume", False)
+                maximum = body.get("maxConsecutive", 3)
+                items = body.get("items", [])
+                if type(enabled) is not bool or type(auto_resume) is not bool:
+                    return 400, {"ok": False, "error": "续接开关格式无效"}
+                if type(maximum) is not int or not 1 <= maximum <= 10:
+                    return 400, {"ok": False, "error": "续接上限须为 1 到 10 次"}
+                if not isinstance(items, list) or any(
+                    not isinstance(item, dict) or not isinstance(item.get("sessionId"), str)
+                    or not item["sessionId"] or item.get("status") not in ("waiting", "failed", "limit")
+                    or type(item.get("attempt")) is not int or item["attempt"] < 0
+                    or type(item.get("maxConsecutive")) is not int or not 1 <= item["maxConsecutive"] <= 10
+                    for item in items
+                ):
+                    return 400, {"ok": False, "error": "续接进度格式无效"}
+                self._voice.update({"resumeEnabled": enabled, "autoResume": auto_resume,
+                                    "maxConsecutive": maximum, "progress": [dict(item) for item in items] if enabled else []})
+                if not enabled:
+                    if (self._voice.get("notice") or {}).get("source") != "loop_confirm":
+                        self._voice["notice"] = None
+                    self._voice["flash"] = None
+                    action = self._voice.get("action") or {}
+                    if action.get("action") in ("continue", "dismiss", "auto", "config"):
+                        self._voice["action"] = None
+                return 200, {"ok": True}
             if path == "/resume/notice":
                 # App → 球：断联续接的小条（提醒落点，用户定的方案）。
-                self._voice["notice"] = body if isinstance(body, dict) and body else None
+                # at 由 App 写入；桥只做寿命判定，不自己造时间。
+                body = body if isinstance(body, dict) else {}
+                allowed = self._voice["resumeEnabled"] or body.get("source") == "loop_confirm"
+                self._voice["notice"] = ({**body, "at": body.get("at") or time.time() * 1000.0}) if body and allowed else None
                 return 200, {"ok": True, "hasNotice": self._voice["notice"] is not None}
+            if path == "/resume/loop":
+                # App → 球：循环续接的当前状态（主面板靠它显示进度和停止按钮）。
+                body = body if isinstance(body, dict) else {}
+                self._voice["loop"] = body or None
+                return 200, {"ok": True}
+            if path == "/resume/flash":
+                # 自动续接成功的短暂反馈：只亮几秒，不占常驻小条。
+                body = body if isinstance(body, dict) else {}
+                self._voice["flash"] = ({**body, "at": body.get("at") or time.time() * 1000.0}) if body and self._voice["resumeEnabled"] else None
+                return 200, {"ok": True}
             if path == "/resume/action":
-                # 球 → App：用户点了「继续哈 / 不用管 / 自动续接开关」。
+                # 球 → App：用户点了「继续哈 / 不用管 / 自动续接开关 / 循环相关」。
                 action = str(body.get("action") or "").strip()
-                if action not in ("continue", "dismiss", "auto"):
+                if action not in ("continue", "dismiss", "auto", "config", "loop-start", "loop-stop", "loop-resume", "loop-finish", "loop-prefs"):
                     return 400, {"ok": False, "error": "操作类型无效"}
+                config = body.get("config")
+                if action == "config" and (not isinstance(config, dict) or not config
+                        or set(config) - {"autoResume", "maxConsecutive"}
+                        or ("autoResume" in config and type(config["autoResume"]) is not bool)
+                        or ("maxConsecutive" in config and (type(config["maxConsecutive"]) is not int
+                            or not 1 <= config["maxConsecutive"] <= 10))):
+                    return 400, {"ok": False, "error": "续接配置格式无效"}
                 self._voice["action"] = {
                     "action": action,
                     "sessionId": str(body.get("sessionId") or ""),
                     "enabled": body.get("enabled"),
+                    "rounds": body.get("rounds"),
+                    **({"config": dict(config)} if action == "config" else {}),
                 }
                 self._voice["actionSeq"] = int(self._voice["actionSeq"]) + 1
                 return 200, {"ok": True, "actionSeq": self._voice["actionSeq"]}
-            if path == "/recommend/request":
-                # 球 → App：请求刷新推荐、固定某段对话或取消固定回跟随。
+            if path == "/polish/request":
+                # 球 → App：请 ta 捋一捋 / 问还能往哪儿改 / 把捋好的发进对话。
+                body = body if isinstance(body, dict) else {}
                 kind = str(body.get("kind") or "").strip()
-                if kind not in ("refresh", "pin", "auto"):
+                if kind not in ("polish", "suggest", "send"):
+                    return 400, {"ok": False, "error": "请求类型无效"}
+                if not str(body.get("text") or "").strip():
+                    return 400, {"ok": False, "error": "没有要处理的话"}
+                self._polish["requestSeq"] = int(self._polish["requestSeq"]) + 1
+                self._polish["request"] = {
+                    "kind": kind,
+                    "text": str(body.get("text") or ""),
+                    "level": str(body.get("level") or "standard"),
+                    "sessionId": str(body.get("sessionId") or ""),
+                    # 原文锚点：最初那版原话。安全校验永远对着它，不跟着上一版漂。
+                    "source": str(body.get("source") or ""),
+                    # 上一版结果：有这个才走“只改点名处”的迭代。
+                    "previous": str(body.get("previous") or ""),
+                    # 用户这次额外提的整理方向（单行短句）。
+                    "instruction": str(body.get("instruction") or ""),
+                    # 发送时机：followUp 等这一轮说完再发，steer 立刻插话。
+                    "deliverAs": "followUp" if str(body.get("deliverAs") or "") == "followUp" else "steer",
+                    "seq": self._polish["requestSeq"],
+                }
+                return 200, {"ok": True, "seq": self._polish["requestSeq"]}
+            if path == "/polish/push":
+                # App → 球：结果。
+                body = body if isinstance(body, dict) else {}
+                self._polish["result"] = body
+                self._polish["resultSeq"] = int(self._polish["resultSeq"]) + 1
+                return 200, {"ok": True}
+            if path == "/queue/request":
+                # 球 → App：排一句（或一串话）进对话，或把话单停掉。
+                body = body if isinstance(body, dict) else {}
+                kind = str(body.get("kind") or "").strip()
+                if kind not in ("queue", "queue-cancel"):
+                    return 400, {"ok": False, "error": "请求类型无效"}
+                if kind == "queue" and not str(body.get("text") or "").strip():
+                    return 400, {"ok": False, "error": "没有要排的话"}
+                try:
+                    rounds = int(body.get("rounds") or 1)
+                except (TypeError, ValueError):
+                    rounds = 1
+                self._queue["requestSeq"] = int(self._queue["requestSeq"]) + 1
+                self._queue["request"] = {
+                    "kind": kind,
+                    "text": str(body.get("text") or ""),
+                    "rounds": max(1, min(50, rounds)),
+                    "sessionId": str(body.get("sessionId") or ""),
+                    "agentName": str(body.get("agentName") or ""),
+                    "title": str(body.get("title") or ""),
+                    "seq": self._queue["requestSeq"],
+                }
+                return 200, {"ok": True, "seq": self._queue["requestSeq"]}
+            if path == "/queue/push":
+                # App → 球：话单状态（排队中第 n/N 轮）或这次请求的回执。
+                body = body if isinstance(body, dict) else {}
+                self._queue["state"] = body or None
+                self._queue["stateSeq"] = int(self._queue["stateSeq"]) + 1
+                return 200, {"ok": True}
+            if path == "/title/request":
+                # 球 → App：请 ta 给指定对话起名，或把上一次改的标题还原。
+                body = body if isinstance(body, dict) else {}
+                kind = str(body.get("kind") or "").strip()
+                if kind not in ("rename", "undo"):
+                    return 400, {"ok": False, "error": "请求类型无效"}
+                self._title["requestSeq"] = int(self._title["requestSeq"]) + 1
+                self._title["request"] = {
+                    "kind": kind,
+                    "sessionId": str(body.get("sessionId") or ""),
+                    "seq": self._title["requestSeq"],
+                }
+                return 200, {"ok": True, "seq": self._title["requestSeq"]}
+            if path == "/title/push":
+                # App → 球：起名/还原的结果。
+                body = body if isinstance(body, dict) else {}
+                self._title["result"] = body
+                self._title["resultSeq"] = int(self._title["resultSeq"]) + 1
+                return 200, {"ok": True}
+            if path == "/recommend/request":
+                # 球 → App：请求刷新推荐、清空当前列表、固定某段对话或取消固定回跟随。
+                kind = str(body.get("kind") or "").strip()
+                if kind not in ("refresh", "pin", "auto", "clear"):
                     return 400, {"ok": False, "error": "请求类型无效"}
                 session_id = str(body.get("sessionId") or "").strip()
                 if kind == "pin" and not session_id:
@@ -438,4 +784,28 @@ class AppBallBridge:
                 }
                 self._recommend["pushSeq"] = int(self._recommend["pushSeq"]) + 1
                 return 200, {"ok": True, "pushSeq": self._recommend["pushSeq"]}
+            if path == "/sleep/state":
+                # App → 球：守门人的当前快照，字段直接照搬，球不改写也不判定。
+                payload = body if isinstance(body, dict) else {}
+                self._sleep["state"] = {
+                    "armed": bool(payload.get("armed")),
+                    "status": str(payload.get("status") or "idle")[:24],
+                    "idleSeconds": int(payload.get("idleSeconds") or 0),
+                    "needSeconds": int(payload.get("needSeconds") or 0),
+                    "countdownSeconds": int(payload.get("countdownSeconds") or 0),
+                    "realEnabled": bool(payload.get("realEnabled")),
+                    "busyCount": int(payload.get("busyCount") or 0),
+                    "updatedAt": int(time.time() * 1000),
+                }
+                self._sleep["stateSeq"] = int(self._sleep["stateSeq"]) + 1
+                return 200, {"ok": True, "stateSeq": self._sleep["stateSeq"]}
+            if path == "/sleep/action":
+                # 球 → App：一级按钮按下去的意图（arm / cancel）。
+                # 球不做判定也不执行，只把 «人按了」 这件事交给 App。
+                kind = str(body.get("kind") or "").strip().lower()
+                if kind not in ("arm", "cancel"):
+                    return 400, {"ok": False, "error": "只认 arm 和 cancel"}
+                self._sleep["actionSeq"] = int(self._sleep["actionSeq"]) + 1
+                self._sleep["action"] = {"kind": kind, "seq": self._sleep["actionSeq"]}
+                return 200, {"ok": True, "actionSeq": self._sleep["actionSeq"]}
             return 404, {"ok": False, "error": "知意没有开放这个接口"}
