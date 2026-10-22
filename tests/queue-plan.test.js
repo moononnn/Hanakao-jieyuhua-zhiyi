@@ -10,7 +10,6 @@ import {
   planTotalRounds,
   QUEUE_MAX_ROUNDS,
   QueuePlanRegistry,
-  watchdogDecision,
 } from "../lib/queue-plan.js";
 
 test("轮数收敛到 1~50", () => {
@@ -145,61 +144,41 @@ test("总轮数是每句次数之和", () => {
   assert.equal(planTotalRounds([]), 0);
 });
 
-// 看门狗：轮末信号被宿主丢掉时，靠它自己把下一句补上。
-// 2026-10-22 实机踩的坑：钩子被 App RPC 并发限流整条丢掉，话单卡在第 2/2 轮不动。
+// 我们自己发的那句，要**在发之前**就记上。
+// 2026-10-22 实机踩的坑：发消息会立刻起一轮，宿主在那之前就可能跑 before-start 钩子，
+// 钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户插话，把整份话单停了。
 
-test("看门狗：ta 还在回话时不补发", () => {
-  const decision = watchdogDecision({
-    status: "running", busy: true, idleSince: 0, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false);
-  assert.equal(decision.idleSince, 0, "ta 一忙，之前那段闲就不作数");
+test("发之前就记下「这是我们发的话」", () => {
+  const registry = new QueuePlanRegistry();
+  const built = buildQueueItems("来试试？");
+  registry.start({ sessionId: "s1", items: built.items });
+  assert.equal(registry.isOwnPrompt("s1", "来试试？"), false, "还没发，不能算我们的话");
+  registry.markSending("s1", "来试试？");
+  assert.equal(registry.isOwnPrompt("s1", "来试试？"), true);
+  assert.equal(registry.isOwnPrompt("s1", "你好呀"), false, "用户自己说的话不算我们的");
 });
 
-test("看门狗：第一次看见闲只记起点，不急着发", () => {
-  const decision = watchdogDecision({
-    status: "running", busy: false, idleSince: 0, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false);
-  assert.equal(decision.idleSince, 100_000, "要连续闲一阵子才动");
+test("发之前记下的那句话不占轮数", () => {
+  const registry = new QueuePlanRegistry();
+  const built = buildQueueItems("一句", { rounds: 2 });
+  registry.start({ sessionId: "s1", items: built.items });
+  registry.markSending("s1", "一句");
+  assert.equal(registry.get("s1").done, 0, "记下不等于发出，轮数不能动");
+  registry.markFired("s1");
+  assert.equal(registry.get("s1").done, 1);
+  assert.equal(describeQueuePlan(registry.get("s1")), "排队中 第 2/2 轮");
 });
 
-test("看门狗：刚发完不久不补发", () => {
-  const decision = watchdogDecision({
-    status: "running", busy: false, idleSince: 90_000, lastFiredAt: 99_000, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false, "上一轮刚送出去，得等 ta 真的说完");
-  assert.equal(decision.idleSince, 90_000);
-});
-
-test("看门狗：连续闲够一阵子才补发下一句", () => {
-  const decision = watchdogDecision({
-    status: "running", busy: false, idleSince: 80_000, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, true);
-  assert.equal(decision.idleSince, 0);
-});
-
-test("看门狗：还有一句挂在宿主那儿排着时不补发", () => {
-  const decision = watchdogDecision({
-    status: "running", pending: true, busy: false, idleSince: 80_000, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false, "两句挤在一起会把 ta 打断");
-});
-
-test("看门狗：话单已经不在跑就不管了", () => {
-  const decision = watchdogDecision({
-    status: "finished", busy: false, idleSince: 80_000, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false);
-  assert.equal(decision.idleSince, 0);
-});
-
-test("看门狗：查不到忙闲时按「还在回话」处理", () => {
-  // sessionIsBusy 查不到就返回 true（宁可晚一轮也不打断 ta）。
-  const decision = watchdogDecision({
-    status: "running", busy: true, idleSince: 80_000, lastFiredAt: 0, startedAt: 0, now: 100_000,
-  });
-  assert.equal(decision.fire, false);
-  assert.equal(decision.idleSince, 0);
+test("用户自己开口时话单停：我们发的那句不算用户插话", () => {
+  const registry = new QueuePlanRegistry();
+  const built = buildQueueItems("来试试？");
+  registry.start({ sessionId: "s1", items: built.items });
+  registry.markSending("s1", "来试试？");
+  // 宿主把 our 提示接走时跑的就是这个钩子：认得出是我们的话 → 只清「在排」标记。
+  registry.markDelivered("s1");
+  assert.equal(registry.get("s1").status, "running", "我们自己的话不能把话单停了");
+  // 用户插话则相反：话单当场停。
+  const stopped = registry.onUserMessage("s1");
+  assert.equal(stopped.status, "stopped");
+  assert.equal(registry.get("s1"), null, "停掉的话单不留在表里");
 });

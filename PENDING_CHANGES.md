@@ -1,15 +1,19 @@
 # 未发布改动
 
-- 2026-10-22 | 修复 | **排队发送：第二轮接不上 + 明明排上了却报「知意那边没回话」**（用户实机：排 2 轮只发了一轮，弹窗报知意没回话）。
+- 2026-10-22 | 修复 | **排队发送：第二轮接不上 + 明明排上了却报「知意那边没回话」**（用户实机：排 2 轮只发了一轮，弹窗报知意没回话）。经审查伙伴复核后定稿。
 
   实机证据：宿主日志 20:37:51.489「排队话单已开始：共 2 轮，第一句已直接发出」——第一轮确实发进去了；之后 20 分钟再没有「已送出第 2/2 轮」，话单在桥里一直卡着 `done=1/total=2/running`；球上弹窗报的是「知意那边没回话，再点一次试试」。
 
-  ① **轮末信号会整轮丢掉**（这是「只发一轮」的根因）：轮末判定挂在 `messages/post-assistant` 钩子上，宿主对 App RPC 有并发上限，撞上限时整条钩子被丢掉——今天日志里 1136 次「adjudicator threw: App RPC concurrency limit reached」，其中 20 点那一个小时 543 次，连那一句回复的每一次 post-assistant 判定全被丢。`turn_end` 兜底那条路又要靠 `session:list` 认会话，认不出就静默作罢。两条路同时断，话单就永远停在第 2/2 轮。改法：① App 侧加**看门狗**（`watchdogDecision` + `watchdogQueuePlans`）——话单在跑、ta 连续闲够 8 秒、自己也空够 12 秒，就自己把下一句补上，不再只等那两个一次性信号；② 钩子里排队判定挪到循环续接前面并各自包 try/catch，别让前一段抛了把后一段带走；③ `turn_end` 兜底认不出会话时，只有一份话单在跑就按它认（`sess_xxx` 与事件给的文件名是两套编号，最容易在这儿空转）。
-  ② **回包少了 `ok` 字段**（这是假报错的根因）：App 推话单状态时没带 `ok`，球那边拿到回包先看 `ok`，没有就一律当成「没排上」——所以明明排上了，弹窗里也报一句「知意那边没回话」。改法：App 的 `pushQueueState` 带上 `ok/error`；球那边再加一道兜底（没带 `ok` 但有文字就按成功算）。
-  ③ **回执认得太死**：球原来只看「状态序号涨没涨」，等满 25 秒就报没回话。改法：新增 `queue_receipt_matches`——回包里回声带的那次请求号对上最准，序号涨了也行；25 秒到了再最后确认一次（App 可能早就收下了，只是回包晚到），确认到就不报失败。球侧另加 `queue-send` / `queue-receipt` / `queue-timeout` 三条排障记录，下次再出问题看 `panel-diag.log` 就有实证。
-  ④ **发送失败不再当场停话单**：早先一发失败就把整份话单停掉，而宿主 RPC 撞上限时失败是常事。改法：先记失败次数并让看门狗重试，连续 3 次才停，并把真实原因写进回执。排队这一路的日志也包了一层（`safeLog`）：logger 自己走 RPC，撞上限时它自己会抛，早先那句 warn 一抛，整条话单的收尾（停话单、推状态）就跟着没了。
+  ① **回包少了 `ok` 字段**（假报错的根因）：App 推给球的话单状态里没带 `ok`，球那边拿到回包先看 `ok`，没有就一律当成「没排上」——所以明明排上了，弹窗里也报一句假报错。改法：App 的 `pushQueueState` 带上 `ok/error`；球那边再加一道兜底（没带 `ok` 但有文字就按成功算）。
+  ② **我们自己的话被当成用户插话**（“只发一轮”的头号嫌疑）：`agent/before-start` 钩子靠 `sentTexts` 认「这是我们发的那句」，而 `sentTexts` 是在 `markFired` 里写的，`markFired` 又排在 `await sendToConversation` **之后**。steer 会立刻起轮，宿主在发送回包回来之前就可能跑钩子——那时 `sentTexts` 还是空，钩子判成用户插话，整份话单当场被停。改法：新增 `QueuePlanRegistry.markSending()`，**发之前**就把这句记成我们自己的（记下不占轮数）。
+  ③ **轮末信号会整轮丢掉**：轮末判定挂在 `messages/post-assistant` 钩子上，宿主对 App RPC 有并发上限，撞上限时整条钩子被丢弃（今天 1136 次「adjudicator threw: App RPC concurrency limit reached」，20 点那一个小时 543 次，连那一轮回复的每次 post-assistant 判定全被丢）。`turn_end` 兜底那条路又要靠 `session:list` 认会话，认不出就静默作罢。改法：① 钩子里排队判定**挪到最前面**并单独包 try/catch（logger 自己也走 RPC，撞上限时它自己会抛，早先一句 `await logger.warn` 一抛，整条话单的收尾就跟着没了）；② `turn_end` 兜底认不出会话时，只有一份话单在跑就按它认（事件给文件名、话单记 `sess_xxx`，两套编号对不上时最容易在这儿空转）；③ 日志包一层 `safeLog`，日志挂了不影响正事。
+  ④ **回执认得太松**：球原来只看「状态序号涨没涨」，会把别的请求推来的状态当成自己的回执；等满 25 秒就报没回话。改法：App 每次推状态都带上当前请求号，球只认 `requestSeq` 对得上自己的那次（对不上就绝不认，哪怕序号涨了）；状态里没带号时才退回看序号，且**预读失败时不启用**这条粗判据（那时基线是 0，条件恒真）；25 秒到了再做一次最终确认，确认到就不报失败。球侧另加 `queue-send` / `queue-receipt` / `queue-timeout` 三条排障记录，下次再出问题看 `panel-diag.log` 就有实证。
+  ⑤ **发送失败的处理**：早先一发失败就把整份话单停掉，而宿主 RPC 撞上限时失败是常事。改法：**超时是“说不准”**（可能已经送到，只是回包没回来）→ 不赌，不重发，如实停掉并说明；**其余错误（限流、busy、没权限）= 明确没送出去** → 5 秒后自己重试，连续 3 次才停。第一句也走同一套（明确失败重试一次，超时不重试）。
+  ⑥ 去重与互斥按会话记（`queueFiring` / `queueDecidedAt`）：全局记会让两段对话挨着结束时互相挡掉。同一段对话上再排一份时，旧的那份会明确停掉并告知，不再静默顶掉。
 
-  验证：`node --test tests/queue-plan.test.js` 20/20（新增 7 条看门狗判定）；`node --experimental-vm-modules --test tests/app-tool.test.js` 64/64；`node --test tests/continue-loop.test.js tests/send.test.js tests/resume-watch.test.js` 49/49；`cd python && python -m unittest test_queue_receipt test_queue_panel test_queue_bridge` 21 通过 / 0 失败（新增 `test_queue_receipt.py` 7 条 + 面板 2 条）；`node --check index.js lib/queue-plan.js tests/queue-plan.test.js` 通过，两个 `.py` 未留 `.pyc`。**仍未实机验收**：要看的就是那两条——① 排 2 轮时第二轮能不能自己接上（看球上「排队中 第 n/N 轮」会不会动）；② 弹窗里显示的是不是「已发出，ta 这轮说完就接下一句」而不是那句假报错。manifest 版本、简介、README 未动。
+  **被审查伙伴否掉的一处**（写在这里是因为它反着更值得记）：先前加过一个「自愈看门狗」——按“ta 连续闲够 8 秒、自己空够 12 秒”自己补发下一轮。审查后删了：忙闲只能**猜**“ta 说完了没有”，而 busy=false 同时对应“ta 说完了”和“我们刚把话塞进去、ta 还没起跑”两种状态；一旦判错就是当着 ta 的面插一句，而且工具调用中间段也会短暂不忙，容易误发。判据要从「猜”改成“事实”（比如读会话时间线看 ta 答没答），那是下一版的事。这一版的自愈靠三条路：钩子（挪到最前 + 各自包 try/catch）、turn_end 兜底（认不出就按唯一在跑的话单认）、明确失败后的重试。
+
+  验证：`node --test tests/queue-plan.test.js` 16/16（新增 3 条“发之前就记下我们的话”）；`node --experimental-vm-modules --test tests/app-tool.test.js` 64/64；`node --test tests/continue-loop.test.js tests/send.test.js tests/resume-watch.test.js` 49/49；`cd python && python -m unittest test_queue_receipt test_queue_panel test_queue_bridge` 23 通过 / 0 失败（新增 `test_queue_receipt.py` 8 条 + 面板 2 条）；`node --check index.js lib/queue-plan.js tests/queue-plan.test.js` 通过，未留 `.pyc`。**仍未实机验收**：要看的就是那两条——① 排 2 轮时第二轮能不能自己接上（看球上「排队中 第 n/N 轮」会不会动）；② 弹窗里显示的是不是「已发出，ta 这轮说完就接下一句」而不是那句假报错。manifest 版本、简介、README 未动。
 
 - 2026-10-22 | 新功能 | **排队发送：写一句或一串话，等 ta 说完这一轮再送进去；一串话就一轮一句往下推**（用户：把旧版「写一句」弹窗借形加回来，再加一串话逐条发）。
 

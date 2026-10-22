@@ -17,7 +17,7 @@ import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from 
 import { sampleIdleSnapshot, summarizeSnapshot } from "./lib/idle-watch.js";
 import { ContinueLoopRegistry, describeLoop, shouldJudgeLoop } from "./lib/continue-loop.js";
 // 排队话单：球上写一句或一串话，等 ta 这一轮说完就送进去；一串话一轮一条往下推。
-import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRounds, watchdogDecision } from "./lib/queue-plan.js";
+import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRounds } from "./lib/queue-plan.js";
 import {
   DEFAULT_MIN_CHARS,
   MAX_MIN_CHARS,
@@ -732,6 +732,18 @@ export default defineApp(async (sdk) => {
   // check 必须在 try 外面声明：catch 里要读它，写在 try 块内会在错误处理时再抛一次。
   let check = null;
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
+    // 排队话单：这一轮说完了，把下一句送进去。
+    // 带工具调用的那条不算「说完了」：那是一轮里的中间段，提前送下一句会把 ta 打断。
+    //
+    // 放在钩子最前面：钩子是一次性判定，宿主对 App RPC 有并发上限，撞上限时整条钩子会被丢掉。
+    // 前面任何一段抛了，排队这一段就轮不到——话单会一直停在「排队中 第 n/N 轮」。
+    if (invocation?.session?.sessionId && !hasToolCalls(invocation?.message)) {
+      try {
+        await fireQueuePlan(String(invocation.session.sessionId), readBodyText(invocation?.message), { source: "hook" });
+      } catch (error) {
+        safeLog.warn(`排队话单钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
     // 这一轮真的说完了才算恢复：工具中间轮只是把卡住计时作废，不能清失败计数，
     // 也不能收掉那条小条。bus 的 turn_end 偶尔会缺，这一处是兵底。
     if (resumeConfig.enabled && invocation?.session?.sessionId
@@ -749,18 +761,6 @@ export default defineApp(async (sdk) => {
         void pushResumeProgress();
       } else {
         resumeTracker.markProduced(sessionKey, agentId);
-      }
-    }
-    // 排队话单：这一轮说完了，把下一句送进去。
-    // 带工具调用的那条不算「说完了」：那是一轮里的中间段，提前送下一句会把 ta 打断。
-    //
-    // 放在循环续接前面：钩子是一次性判定，宿主对 App RPC 有并发上限，撞上限时整条钩子被丢掉。
-    // 循环续接那一段要是先抛了，排队这一段就轮不到——话单会一直停在「排队中 第 n/N 轮」。
-    if (!queueFiring && invocation?.session?.sessionId && !hasToolCalls(invocation?.message)) {
-      try {
-        await fireQueuePlan(String(invocation.session.sessionId), readBodyText(invocation?.message), { source: "hook" });
-      } catch (error) {
-        safeLog.warn(`排队话单钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
       }
     }
     // 循环续接：这一轮说完了，决定要不要再推一句「继续哈」。
@@ -1028,9 +1028,12 @@ activeFusionServiceDispose = disposeFusionService;
   // 球上写一句（或一串话），等 ta 这一轮说完再送进去；一串话就一轮一句往下推。
   // 与「循环续接」互斥：同一段对话上只留一样，免得两条一起往里塞话。
   const queuePlans = new QueuePlanRegistry();
-  let queueFiring = false;
-  // 轮末也有两条信号（钩子、turn_end），只判一次，不然会连发两句。
-  let lastQueueDecidedAt = 0;
+  // 正在发的那几段对话：按会话记，不做全局开关——一段对话在发的时候，
+  // 不该把另一段对话的轮末判定也一起挡住。
+  const queueFiring = new Set();
+  // 轮末也有两条信号（钩子、turn_end），同一段对话的同一轮只判一次，不然会连发两句。
+  // 按会话记：全局记会让两段对话挨着结束时互相挡掉。
+  const queueDecidedAt = new Map();
   // 排进宿主却一直没被接走，等多久就当它没了（会话被关/被中止时宿主会清掉排队输入）。
   const QUEUE_PENDING_TIMEOUT_MS = 90_000;
 
@@ -1042,16 +1045,19 @@ activeFusionServiceDispose = disposeFusionService;
     warn: (msg, fields) => { try { void Promise.resolve(sdk.logger.warn?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
     debug: (msg, fields) => { try { void Promise.resolve(sdk.logger.debug?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
   };
-  // 话单自愈的三个数：空多久才去看、每 5 秒问一次忙闲、连续闲多久才补发下一句。
-  const QUEUE_STALL_MS = 12_000;
-  const QUEUE_PROBE_MS = 5_000;
-  const QUEUE_IDLE_CONFIRM_MS = 8_000;
   // 连续送不出去几次才真的停：宿主 RPC 撞上限时一次失败不代表话单坏了。
   const QUEUE_SEND_FAIL_MAX = 3;
-  // 看门狗的记号：每段对话上次问忙闲是什么时候、连续闲了多久、送失败几次。
-  const queueProbeAt = new Map();
-  const queueIdleSince = new Map();
+  // 送失败几次（按会话）；以及明确没送出去时排的重试定时器。
   const queueSendFailures = new Map();
+  const queueRetryTimers = new Map();
+  // 当前这份话单属于桥上的第几次请求：推给球的状态里带着它，
+  // 球据此认「这份回包是我的」，不会把别的推送当成回执。
+  let queueStateRequestSeq = 0;
+
+  /** 发送失败是不是「说不准有没有送到」？超时说不准，其余都说明根本没送出去。 */
+  function isAmbiguousSendError(error) {
+    return /timeout|超时|ETIMEDOUT/i.test(`${error?.code || ""} ${error?.message || ""}`);
+  }
 
   /** 把话单状态推给球：主面板靠它显示「排队中 第 n/N 轮」和停止按钮。 */
   async function pushQueueState(state, extra = {}) {
@@ -1071,6 +1077,8 @@ activeFusionServiceDispose = disposeFusionService;
       sessionId: current?.sessionId || "",
       agentName: current?.agentName || "",
       title: current?.title || "",
+      // 这份状态属于桥上的第几次请求：球按它认回包（只认自己的那次，不认别人的推送）。
+      requestSeq: Number(queueStateRequestSeq || 0),
       ...extra,
     };
     try {
@@ -1100,7 +1108,7 @@ activeFusionServiceDispose = disposeFusionService;
    */
   async function fireQueuePlan(sessionId, assistantText, { source = "" } = {}) {
     const id = String(sessionId || "").trim();
-    if (!id || queueFiring) return null;
+    if (!id || queueFiring.has(id)) return null;
     const plan = queuePlans.get(id);
     if (!plan) return null;
     // 还有一句在宿主那儿排着：等它被接走再送下一句，不然两句会挤在一起。
@@ -1116,19 +1124,23 @@ activeFusionServiceDispose = disposeFusionService;
     if (plan.status !== "running") return null;
     // 同一段对话上，「循环续接」和「排队话单」只留一样。
     if (loopRegistry.get(id)) return null;
-    if (!shouldJudgeLoop(lastQueueDecidedAt, Date.now())) {
+    if (!shouldJudgeLoop(queueDecidedAt.get(id) || 0, Date.now())) {
       safeLog.debug(`排队话单判定去重（${source}）：同一轮已经判过`);
       return null;
     }
-    lastQueueDecidedAt = Date.now();
+    queueDecidedAt.set(id, Date.now());
     const text = queuePlans.nextText(id);
     if (!text) {
       safeLog.info("排队话单已发完");
       await pushQueueState(null, { message: "排的都发完了" });
       return null;
     }
-    queueFiring = true;
+    queueFiring.add(id);
     try {
+      // 先记成「这是我们发的话」，再发。发消息会立刻起一轮，宿主在那之前就可能跑
+      // before-start 钩子；钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户
+      // 插话，把整份话单停了（排 2 轮只发 1 轮就是这么来的）。记在发送之后就晚了半拍。
+      queuePlans.markSending(id, text);
       // 轮末这一发走直接发（steer）：排队语义挂上去会等一个不会再来的轮次结束。
       await sendToConversation(sdk, { text, mode: "steer", sessionId: id });
       const after = queuePlans.markFired(id);
@@ -1136,23 +1148,46 @@ activeFusionServiceDispose = disposeFusionService;
       safeLog.info(`排队话单：已送出第 ${after?.done ?? 0}/${after?.total ?? 0} 轮`);
       await pushQueueState(queuePlans.get(id), after?.status === "finished" ? { message: "排的都发完了" } : {});
     } catch (error) {
-      // 送不出去不等于话单该停：宿主 RPC 撞上限时这一发会失败，可话单本身没问题。
-      // 早先这里一失败就把话单停了，界面上只剩一句「没送出去」——其实只是这一轮没挤进去。
-      // 现在留着话单让看门狗再试，连续失败到上限才停，并把真实原因说出来。
-      const fails = (queueSendFailures.get(id) || 0) + 1;
-      queueSendFailures.set(id, fails);
       const reason = String(error?.message || error).slice(0, 160);
-      safeLog.warn(`排队话单这一轮没送出去（第 ${fails} 次）：${reason}`);
-      if (fails >= QUEUE_SEND_FAIL_MAX) {
-        queuePlans.stop(id, "发送失败");
-        await pushQueueState(null, { ok: false, error: `没送出去，话单停了（${reason}）`, message: "没送出去，话单停了" });
+      if (isAmbiguousSendError(error)) {
+        // 超时是「说不准」：可能已经送到了，只是回包没回来。再发一遍就会重一句。
+        // 这种不赌，直接停，并把话说清楚。
+        queuePlans.stop(id, "发送超时");
+        safeLog.warn(`排队话单这一轮没送出去（超时，不确定送到没有，话单停了）：${reason}`);
+        await pushQueueState(null, { ok: false, error: "这一轮没发出去（发送超时，话单停了）", message: "这一轮没发出去，话单停了" });
       } else {
-        await pushQueueState(queuePlans.get(id), {});
+        // 明确没送出去（限流、busy、没权限）：重试是安全的，不会重一句。
+        const fails = (queueSendFailures.get(id) || 0) + 1;
+        queueSendFailures.set(id, fails);
+        safeLog.warn(`排队话单这一轮没送出去（第 ${fails} 次）：${reason}`);
+        if (fails >= QUEUE_SEND_FAIL_MAX) {
+          queuePlans.stop(id, "发送失败");
+          await pushQueueState(null, { ok: false, error: `没送出去，话单停了（${reason}）`, message: "没送出去，话单停了" });
+        } else {
+          // 自己 5 秒后再试一次，不等下一个信号：这一轮没送到，ta 不会回话，信号不会来。
+          scheduleQueueRetry(id);
+          await pushQueueState(queuePlans.get(id), {});
+        }
       }
     } finally {
-      queueFiring = false;
+      queueFiring.delete(id);
     }
     return true;
+  }
+
+  /** 明确没送出去时的重试：5 秒后自己再送一次，不等信号。 */
+  function scheduleQueueRetry(sessionId) {
+    const id = String(sessionId || "");
+    const existing = queueRetryTimers.get(id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      queueRetryTimers.delete(id);
+      const plan = queuePlans.get(id);
+      if (!plan || plan.status !== "running" || plan.pending) return;
+      void fireQueuePlan(id, "", { source: "retry" });
+    }, 5_000);
+    timer.unref?.();
+    queueRetryTimers.set(id, timer);
   }
 
   /**
@@ -1167,45 +1202,6 @@ activeFusionServiceDispose = disposeFusionService;
    * 所以这里自己盯着：话单在跑、ta 已经不在回话、而且连续闲了一阵子，就自己把下一句补上。
    * 查忙闲失败按「还在回话」处理——宁可晚一轮，也不打断 ta 正在写的话。
    */
-  async function watchdogQueuePlans() {
-    if (queueFiring) return;
-    const running = queuePlans.list().filter((item) => item.status === "running");
-    // 不在跑的话单，记号清掉，别让这几张表一直涨。
-    for (const id of [...queueProbeAt.keys()]) {
-      if (!running.some((item) => item.sessionId === id)) {
-        queueProbeAt.delete(id);
-        queueIdleSince.delete(id);
-        queueSendFailures.delete(id);
-      }
-    }
-    for (const plan of running) {
-      if (queueFiring) return;
-      const id = plan.sessionId;
-      // 同一段对话上「循环续接」和「排队话单」只留一样。
-      if (loopRegistry.get(id)) continue;
-      // 每 5 秒才问一次忙闲，别把宿主的 RPC 池占满。
-      const lastProbe = queueProbeAt.get(id) || 0;
-      if (Date.now() - lastProbe < QUEUE_PROBE_MS) continue;
-      queueProbeAt.set(id, Date.now());
-      const busy = await sessionIsBusy(id);
-      const decision = watchdogDecision({
-        status: plan.status,
-        pending: plan.pending,
-        busy,
-        idleSince: queueIdleSince.get(id) || 0,
-        lastFiredAt: plan.lastFiredAt || 0,
-        startedAt: plan.startedAt || 0,
-        now: Date.now(),
-        stallMs: QUEUE_STALL_MS,
-        idleConfirmMs: QUEUE_IDLE_CONFIRM_MS,
-      });
-      if (decision.idleSince) queueIdleSince.set(id, decision.idleSince);
-      else queueIdleSince.delete(id);
-      if (!decision.fire) continue;
-      await fireQueuePlan(id, "", { source: "watchdog" });
-    }
-  }
-
   const resumeSignals = new Map();
   let lastBallActionSeq = 0;
   let resumeActionBaselineAdopted = false;
@@ -1705,6 +1701,13 @@ activeFusionServiceDispose = disposeFusionService;
       loopRegistry.stop(sessionId, "改排队话单");
       await pushLoopState(null);
     }
+    // 同一段对话上再排一份：旧的那份会被新的一份静默顶掉，轮数一起没。
+    // 先明确停掉旧的，并告诉球换了。
+    const previousPlan = queuePlans.get(sessionId);
+    if (previousPlan && previousPlan.status === "running") {
+      queuePlans.stop(sessionId, "被新的排队话单替掉了");
+      safeLog.warn("同一段对话上已有排队话单，被新的替掉了", { sessionId });
+    }
     const started = queuePlans.start({
       sessionId,
       agentId: String(request?.agentId || ""),
@@ -1715,12 +1718,29 @@ activeFusionServiceDispose = disposeFusionService;
     if (!started.ok) return { ok: false, error: started.error };
     const first = built.items[0]?.text || "";
     const busy = await sessionIsBusy(sessionId);
+    // 先记成「这是我们发的话」，再发：发消息会立刻起一轮，宿主在那之前就可能跑
+    // before-start 钩子；钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户插话，
+    // 把刚建的话单停了。记在发送之后就晚了半拍。
+    queuePlans.markSending(sessionId, first);
     try {
       await sendToConversation(sdk, { text: first, mode: busy ? "followUp" : "steer", sessionId });
     } catch (error) {
-      queuePlans.stop(sessionId, "第一句没发出去");
-      await pushQueueState(null, { ok: false, error: "第一句没发出去，话单没排上", message: "第一句没发出去，话单没排上" });
-      return { ok: false, error: friendlySendError(error) };
+      // 明确没送出去（限流、busy、没权限）可以安全重试一次；
+      // 超时是「说不准送到没有」，重试会变成重一句——那种不赌，如实报失败。
+      if (isAmbiguousSendError(error)) {
+        queuePlans.stop(sessionId, "第一句没发出去");
+        await pushQueueState(null, { ok: false, error: "第一句没发出去（发送超时，话单没排上）", message: "第一句没发出去，话单没排上" });
+        return { ok: false, error: friendlySendError(error) };
+      }
+      safeLog.warn(`排队话单第一句没送出去，重试一次：${String(error?.message || error).slice(0, 160)}`);
+      await new Promise((resolve) => { const timer = setTimeout(resolve, 2_000); timer.unref?.(); });
+      try {
+        await sendToConversation(sdk, { text: first, mode: busy ? "followUp" : "steer", sessionId });
+      } catch (retryError) {
+        queuePlans.stop(sessionId, "第一句没发出去");
+        await pushQueueState(null, { ok: false, error: "第一句没发出去，话单没排上", message: "第一句没发出去，话单没排上" });
+        return { ok: false, error: friendlySendError(retryError) };
+      }
     }
     const after = queuePlans.markFired(sessionId);
     // 排队语义的那一句还在宿主那儿挂着：等它被接走再送下一句。
@@ -1732,8 +1752,6 @@ activeFusionServiceDispose = disposeFusionService;
   }
 
   const queueBridgeTimer = setInterval(async () => {
-    // 话单自愈先跑：球关掉了话单也该继续往下送——排的是对话里的消息，不是球上的显示。
-    await watchdogQueuePlans();
     if (!ball.state().running) return;
     // 排进宿主却一直没被接走的，在这里收尾：会话被关/被中止时宿主会清掉排队输入。
     const now = Date.now();
@@ -1757,6 +1775,8 @@ activeFusionServiceDispose = disposeFusionService;
     if (requestSeq < lastQueueRequestSeq) lastQueueRequestSeq = 0;
     if (!request || requestSeq <= lastQueueRequestSeq) return;
     lastQueueRequestSeq = requestSeq;
+    // 这次请求的号：推给球的状态里带着它，球据此认「这份回包是我的」。
+    queueStateRequestSeq = requestSeq;
     const kind = String(request.kind || "");
     const sessionId = String(request.sessionId || "");
     let result;
@@ -2014,7 +2034,7 @@ activeFusionServiceDispose = disposeFusionService;
     }
     // 排队话单的兜底判定：与循环续接同一个道理——钩子是一次性判定，
     // 撞上宿主的 App RPC 并发限制就会永久错过，这一轮就再也接不上下一句。
-    if (event.type === "turn_end" && queuePlans.list().length && !queueFiring) {
+    if (event.type === "turn_end" && queuePlans.list().length) {
       void (async () => {
         try {
           const target = await resolveResumeTarget({ sessionId: String(event.sessionId || ""), sessionPath });

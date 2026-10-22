@@ -8207,11 +8207,13 @@ def merge_polish_result(payload, result):
     return payload
 
 
-def queue_receipt_matches(state, my_seq=0, baseline=0):
+def queue_receipt_matches(state, my_seq=0, baseline=0, baseline_known=True):
     """这份回包是不是我们这次排队请求的？认不出来就返回 None。
 
-    认两样东西：状态里回声带的那次请求号（准），以及状态序号有没有涨过我们发请求那一刻（粗）。
-    只认请求号会漏掉没带号的状态，只认序号会把别的请求推来的状态当成自己这一份。
+    主判据：状态里回声带的请求号（App 每次推状态都带着当前请求号）——准。
+    粗判据：状态序号涨过我们发请求那一刻——只认序号会把别的请求推来的状态当成自己这份，
+    所以它只在拿不到请求号时才用，而且**预读失败时不用**（那时候基线是 0，条件恒真，
+    第一次轮询就会拿一个可能很旧的状态当回执）。
     """
     if not isinstance(state, dict) or not state.get("ok"):
         return None
@@ -8219,19 +8221,24 @@ def queue_receipt_matches(state, my_seq=0, baseline=0):
     if not isinstance(pushed, dict):
         return None
     try:
-        seq = int(pushed.get("seq") or 0)
+        seq = int(pushed.get("seq") or pushed.get("requestSeq") or 0)
     except (TypeError, ValueError):
         seq = 0
     try:
         mine = int(my_seq or 0)
     except (TypeError, ValueError):
         mine = 0
+    if mine and seq == mine:
+        return pushed
+    # 推送带着别人的请求号：这份状态根本不是我们这份，粗判据也不能拿来凑。
+    if seq:
+        return None
+    if not baseline_known:
+        return None
     try:
         base = int(baseline or 0)
     except (TypeError, ValueError):
-        base = 0
-    if mine and seq == mine:
-        return pushed
+        return None
     try:
         if int(state.get("stateSeq") or 0) > base:
             return pushed
@@ -8251,10 +8258,12 @@ def bridge_queue_call(kind, text, rounds, session_id, timeout_s=25, cancelled=No
         return bool(callable(cancelled) and cancelled())
 
     deadline = time.time() + timeout_s
+    baseline_known = True
     try:
         before = api_get("/queue/state", timeout=4)
     except Exception:
         before = {}
+        baseline_known = False
     baseline = int(before.get("stateSeq") or 0) if isinstance(before, dict) else 0
     my_seq = 0
     try:
@@ -8268,7 +8277,8 @@ def bridge_queue_call(kind, text, rounds, session_id, timeout_s=25, cancelled=No
     except Exception:
         return None
     _panel_diag("queue-send", kind=kind, textLen=len(text or ""), rounds=int(rounds or 1),
-                sessionId=session_id or "", mySeq=my_seq, baseline=baseline)
+                sessionId=session_id or "", mySeq=my_seq, baseline=baseline,
+                baselineKnown=baseline_known)
 
     while time.time() < deadline:
         if _cancelled():
@@ -8278,7 +8288,7 @@ def bridge_queue_call(kind, text, rounds, session_id, timeout_s=25, cancelled=No
         except Exception:
             time.sleep(0.3)
             continue
-        pushed = queue_receipt_matches(state, my_seq, baseline)
+        pushed = queue_receipt_matches(state, my_seq, baseline, baseline_known)
         if pushed is not None:
             _panel_diag("queue-receipt", mySeq=my_seq, baseline=baseline,
                         stateSeq=(state or {}).get("stateSeq"), pushSeq=(pushed or {}).get("seq"),
@@ -8288,7 +8298,7 @@ def bridge_queue_call(kind, text, rounds, session_id, timeout_s=25, cancelled=No
     # 等不到不算没排上：最后再问一次，App 那边可能早就收下这一发了。
     try:
         state = api_get("/queue/state", timeout=4)
-        pushed = queue_receipt_matches(state, my_seq, baseline)
+        pushed = queue_receipt_matches(state, my_seq, baseline, baseline_known)
         if pushed is not None:
             _panel_diag("queue-receipt-late", mySeq=my_seq, baseline=baseline,
                         stateSeq=(state or {}).get("stateSeq"))
