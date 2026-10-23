@@ -550,6 +550,29 @@ class ResumeDialogTests(unittest.TestCase):
         raise_panel.assert_not_called()
 
 
+    def test_progress_line_shows_sent_over_planned_rounds(self):
+        """一级面板那一行只讲一件事：已发几句 / 计划几轮。
+
+        以前那里写「已发送继续哈 0/3」——0 是手动时恒为零的失败计数，3 是全局重试上限，
+        跟用户选的「连着接几轮」没关系，看着像已经失败三次。"""
+        m = self.menu
+        base = {"sessionId": "sess_p", "agentName": "小花", "title": "哈喽小花", "status": "waiting"}
+        m._apply_resume_state({"ok": True, "enabled": True, "autoResume": False, "maxConsecutive": 3,
+                               "progress": [dict(base, sent=1, total=2)]})
+        text = m.lbl_resume_progress.text()
+        self.assertIn("1/2", text)
+        self.assertNotIn("0/3", text)
+        # 连发跑完：显示已连着接
+        m._apply_resume_state({"ok": True, "enabled": True, "autoResume": False, "maxConsecutive": 3,
+                               "progress": [dict(base, sent=2, total=2, status="done")]})
+        self.assertIn("已连着接 2/2", m.lbl_resume_progress.text())
+        # 手动只发一句：没有计划轮数，就不摆分数
+        m._apply_resume_state({"ok": True, "enabled": True, "autoResume": False, "maxConsecutive": 3,
+                               "progress": [dict(base, sent=1, total=0)]})
+        text = m.lbl_resume_progress.text()
+        self.assertNotIn("0/3", text)
+        self.assertIn("正在等回应", text)
+
     def test_resume_rounds_stepper_bounds_and_button_text(self):
         """「这次接几轮」：1~10 之间，步进到头就停，按钮上直接写出这次要接几轮。"""
         m = self.menu

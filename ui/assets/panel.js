@@ -339,8 +339,13 @@ async function refreshResumeStatus() {
       const source = document.createElement('strong');
       source.textContent = `${item.agentName || '伙伴'} ·「${item.title || item.firstMessage || '未命名窗口'}」`;
       const detail = document.createElement('p');
-      const state = { waiting: '等待恢复', failed: '未能恢复', limit: '达到上限，已停止续接' }[item.status] || '待处理';
-      detail.textContent = `已发送 ${Number(item.attempt) || 0}/${Number(item.maxConsecutive) || 3} 次 · ${state}`;
+      const state = { waiting: '等待恢复', failed: '未能恢复', limit: '达到上限，已停止续接', done: '已连着接完' }[item.status] || '待处理';
+      // 一行只讲一件事：已发几句 / 计划几轮。旧数据只有失败计数（手动时恒为 0）。
+      const sent = Number(item.sent ?? item.attempt) || 0;
+      const total = Number(item.total ?? item.maxConsecutive) || 0;
+      detail.textContent = total
+        ? `已发送 ${sent}/${total} 次 · ${state}`
+        : `已发送 ${sent} 次 · ${state}`;
       row.append(source, detail);
       list.appendChild(row);
     }

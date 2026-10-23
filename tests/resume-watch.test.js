@@ -296,6 +296,23 @@ test("发送 RPC 失败：不占成功次数，也不后台一轮轮重发", () 
   assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "ignore", "报过一次就停手");
 });
 
+test("发出几句就是几句：手动单发也算一句，没送出去的那句不算", () => {
+  let clock = 1_000;
+  const tracker = createResumeTracker({ now: () => clock, autoResume: false, maxConsecutive: 3, cooldownMs: 0 });
+  // 手动：失败计数恒为 0，但确实发出去一句。
+  tracker.onAbnormal({ sessionId: "sess_m", agentId: "hanako" });
+  clock += 5_000;
+  tracker.resolve({ sessionId: "sess_m" });
+  tracker.markAwaiting("sess_m", "hanako");
+  let item = tracker.progressItems()[0];
+  assert.equal(item.attempt, 0, "手动模式不消耗失败重试次数");
+  assert.equal(item.sent, 1, "发出去一句就算一句");
+  // 这句没送出去 → 退回，不能让它冒充已发。
+  tracker.failAwaiting("sess_m", "hanako", "no such session");
+  item = tracker.progressItems()[0] || {};
+  assert.equal(item.sent, 0, "没送出去的不算已发");
+});
+
 test("进度项告诉面板现在到哪一步，恢复后自己消失，总开关关时清场", () => {
   let clock = 1_000;
   const tracker = createResumeTracker({ now: () => clock, autoResume: true, maxConsecutive: 2, cooldownMs: 0 });
@@ -304,7 +321,7 @@ test("进度项告诉面板现在到哪一步，恢复后自己消失，总开�
   tracker.resolve({ sessionId: "sess_w" });
   tracker.markAwaiting("sess_w", "hanako");
   assert.deepEqual(tracker.progressItems(), [
-    { sessionId: "sess_w", attempt: 1, maxConsecutive: 2, status: "waiting", at: clock },
+    { sessionId: "sess_w", attempt: 1, maxConsecutive: 2, status: "waiting", at: clock, sent: 1 },
   ]);
   tracker.markRecovered("sess_w", "hanako");
   assert.deepEqual(tracker.progressItems(), [], "恢复了就不该再占一条");

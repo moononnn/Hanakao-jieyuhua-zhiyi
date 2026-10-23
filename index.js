@@ -666,6 +666,8 @@ export default defineApp(async (sdk) => {
       if (!isResumePrompt) {
         resumeTracker.forget(invocation.session.sessionId);
         resumeSignals.delete(resumeTracker.canonicalId(invocation.session.sessionId));
+        // 用户自己接过了手：手动连发那笔账也就到头了，别让它一直挂在面板上。
+        manualRounds.delete(resumeTracker.canonicalId(invocation.session.sessionId));
         const hadNotice = resumeNoticeKey === resumeTracker.canonicalId(invocation.session.sessionId);
         if (hadNotice && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
       }
@@ -972,6 +974,11 @@ activeFusionServiceDispose = disposeFusionService;
   // 冻结那层已经拆了（2026-10-23 用户拍板）：不再藏界面、不再要暗号，
   const resumeUiFrozen = false;
   let resumeTracker = makeResumeTracker(resumeConfig);
+  // 手动「这次接几轮」的账：用户当场选了几轮、已经发出几句。
+  // 这跟断点续接的失败计数（那是「重试了几次」）是两笔账，混在一行里显示只会误导——
+  // 球上那一行以前写「已发送继续哈 0/3」，0 是手动时恒为零的失败计数，3 是全局重试上限，
+  // 跟用户选的「连着接几轮」一点关系都没有。
+  const manualRounds = new Map();
   // 循环续接（旧版「继续后自动循环」）：正常说完一轮也接着推「继续哈」，
   // 跑满设定轮数自己停；ta 说收工话时先屏住问用户。
   const loopRegistry = new ContinueLoopRegistry();
@@ -988,6 +995,10 @@ activeFusionServiceDispose = disposeFusionService;
   async function fireContinueLoop(sessionId, assistantText, { agentId = "", source = "" } = {}) {
     const id = String(sessionId || "").trim();
     if (!id || loopFiring || !loopRegistry.get(id)) return null;
+    // 手动「这次接几轮」也走循环机制发后续那几句，但进度显示归那一行自己管，
+    // 不再推循环状态（一级面板会出现两行进度，写着不同的轮数）。
+    const manualKey = resumeTracker.canonicalId(id);
+    const manual = manualRounds.get(manualKey) || null;
     if (!shouldJudgeLoop(lastLoopDecidedAt, Date.now())) {
       await sdk.logger.debug?.(`循环续接判定去重（${source}）：同一轮已经判过`);
       return null;
@@ -999,17 +1010,29 @@ activeFusionServiceDispose = disposeFusionService;
       try {
         await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId: id });
         const after = loopRegistry.markFired(id);
+        if (manual && manual.status === "running") manual.sent += 1;
         await sdk.logger.info(`循环续接：已发出一条继续哈（第 ${after?.done ?? decision.state.done + 1}/${decision.state.total} 轮）`);
-        await pushLoopState(loopRegistry.get(id));
+        if (manual) await pushResumeProgress();
+        else await pushLoopState(loopRegistry.get(id));
       } catch (error) {
         await sdk.logger.warn(`循环续接发送失败，循环停止：${String(error?.message || error).slice(0, 160)}`);
         loopRegistry.stop(id, "发送失败");
-        await pushLoopState(null);
+        if (manual) {
+          manual.status = "failed";
+          await pushResumeProgress();
+        } else {
+          await pushLoopState(null);
+        }
       } finally {
         loopFiring = false;
       }
     } else if (decision?.action === "confirm") {
-      await pushLoopState(decision.state);
+      if (manual) {
+        manual.status = "paused";
+        await pushResumeProgress();
+      } else {
+        await pushLoopState(decision.state);
+      }
       await pushResumeNotice({
         source: "loop_confirm",
         sessionId: id,
@@ -1018,7 +1041,12 @@ activeFusionServiceDispose = disposeFusionService;
       });
     } else if (decision?.action === "finished") {
       await sdk.logger.info("循环续接已完成设定轮数");
-      await pushLoopState(null);
+      if (manual) {
+        manual.status = "finished";
+        await pushResumeProgress();
+      } else {
+        await pushLoopState(null);
+      }
     }
     return decision;
   }
@@ -1424,16 +1452,33 @@ activeFusionServiceDispose = disposeFusionService;
   /** 设置页和球使用同一份带来源的进度；异步读取途中换代即作废。 */
   async function describeResumeProgress() {
     const epoch = resumeEpoch;
-    const items = [];
+    const bySession = new Map();
     if (resumeConfig.enabled) {
       for (const item of resumeTracker.progressItems()) {
         const signal = resumeSignals.get(item.sessionId) || null;
         const { target: _target, ...described } = await describeSession(item.sessionId, signal);
         if (!resumeConfig.enabled || resumeEpoch !== epoch) return [];
-        items.push({ ...item, ...described, sessionId: item.sessionId });
+        // 一行只讲一件事：已发出几句 / 计划几轮。
+        // 自动续接的分母是全局重试上限；手动单发没有计划，就不摆分数（以前的 0/3 是
+        // 拿失败计数冒充进度，看着像已经失败三次）。
+        const sent = item.sent ?? item.attempt ?? 0;
+        const total = resumeConfig.autoResume ? (item.maxConsecutive || resumeConfig.maxConsecutive) : 0;
+        bySession.set(item.sessionId, { ...item, ...described, sessionId: item.sessionId, sent, total });
+      }
+      // 手动「这次接几轮」也算进度：它不在失败计数的账上，但用户要看得见发到第几句了。
+      for (const [key, manual] of manualRounds) {
+        const base = bySession.get(key) || { sessionId: key, ...manual };
+        bySession.set(key, {
+          ...base,
+          sessionId: key,
+          sent: manual.sent,
+          total: manual.planned,
+          manualState: manual.status,
+          status: manual.status === "finished" ? "done" : "waiting",
+        });
       }
     }
-    return items;
+    return [...bySession.values()];
   }
 
   /** 把断点进度全量推给球：items 为空也发，让球知道总开关。冻结期一律不发。 */
@@ -1591,9 +1636,15 @@ activeFusionServiceDispose = disposeFusionService;
         if (!started.ok) {
           await sdk.logger.warn(`连着接 ${plan.loopRounds + 1} 轮没起步：${String(started.error || "").slice(0, 120)}`);
         } else if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
-          await sdk.logger.info(`手动续接：这次接 ${plan.loopRounds + 1} 轮`);
+          const planned = plan.loopRounds + 1;
+          const { target: _target, ...described } = await describeSession(sessionId, null);
+          manualRounds.set(resumeTracker.canonicalId(sessionId), {
+            planned, sent: 1, status: "running", ...described,
+          });
+          await sdk.logger.info(`手动续接：这次接 ${planned} 轮`);
           if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
-          await pushLoopState(started.state);
+          // 进度由这一行自己显示（sent/planned），别再推循环状态来抢一行显示。
+          await pushResumeProgress();
         } else {
           loopRegistry.stop(sessionId, "第一句没发出去");
         }

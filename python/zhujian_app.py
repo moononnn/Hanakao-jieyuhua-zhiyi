@@ -4635,8 +4635,20 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                 f"{who} ·「{title}」", Qt.TextElideMode.ElideRight, 270)
             attempt = item.get("attempt", 0)
             maximum = item.get("maxConsecutive") or self._resume_max_consecutive
-            state = {"waiting": "已发送继续哈", "failed": "续接未送达", "limit": "已达续接上限"}.get(item.get("status"), "续接中")
-            lines.append(f"{source}\n{state} {attempt}/{maximum}")
+            # 一行只讲一件事：已发出几句 / 计划几轮。
+            # sent/total 是新协议；旧协议只有失败计数（手动时恒为 0），不能拿它冒充进度。
+            sent = item.get("sent")
+            total = item.get("total")
+            if sent is None:
+                sent = attempt
+                total = maximum
+            state = {"waiting": "已发送继续哈", "failed": "续接未送达", "limit": "已达续接上限",
+                     "done": "已连着接"}.get(item.get("status"), "续接中")
+            if total:
+                lines.append(f"{source}\n{state} {sent}/{total}")
+            else:
+                # 没有计划轮数（手动只发一句）：别摆 0/3，那是全局重试上限，跟这里无关。
+                lines.append(f"{source}\n{state}，正在等回应")
         self.lbl_resume_progress.setText("\n\n".join(lines))
         self.resume_progress_scroll.setFixedHeight(min(120, max(48,
             QFontMetrics(self.lbl_resume_progress.font()).lineSpacing() * (3 * len(lines) - 1) + 20)))
