@@ -1142,6 +1142,7 @@ activeFusionServiceDispose = disposeFusionService;
    */
   const QUEUE_BANNER_ID = "zhiyi-queue";
   const queueBannerPaths = new Map();   // sessionId → sessionPath（挂提示条要路径）
+  const queueBannerShown = new Map();   // 已经挂出去的：sessionId → sessionPath（收的时候靠它）
   const queueBannerMuted = new Set();   // 用户手动关过的会话
 
   async function resolveQueueBannerPath(sessionId) {
@@ -1176,22 +1177,38 @@ activeFusionServiceDispose = disposeFusionService;
     return body ? `${head} · ${body}` : head;
   }
 
-  async function syncQueueBanner(plan) {
-    const sessionId = String(plan?.sessionId || "");
-    const sessionPath = sessionId ? await resolveQueueBannerPath(sessionId) : "";
-    try {
-      if (!plan || !sessionPath || queueBannerMuted.has(sessionId)) {
-        if (sessionPath) await sdk.inputBanner.dismiss({ sessionPath, bannerId: QUEUE_BANNER_ID });
-        return;
+  /**
+   * 提示条对齐：以「现在还在跑的话单」为准。
+   * 以前是拿着传进来的 plan 去挂/收，可排队跑完时 plan 已经被清掉了，
+   * 拿不到会话路径 → 收不掉 → 便签停在最后一次的样子（实机：一直显示 1/2）。
+   * 现在反过来：先看哪些在跑，该挂的挂、该收的收。
+   */
+  async function syncQueueBanner() {
+    const running = queuePlans.list().filter((item) => item.status === "running");
+    const wantIds = new Set();
+    for (const plan of running) {
+      const id = String(plan.sessionId || "");
+      if (!id || queueBannerMuted.has(id)) continue;
+      const path = await resolveQueueBannerPath(id);
+      if (!path) continue;
+      wantIds.add(id);
+      queueBannerShown.set(id, path);
+      try {
+        await sdk.inputBanner.set({ sessionPath: path, bannerId: QUEUE_BANNER_ID, text: describeQueueBanner(plan) });
+      } catch (error) {
+        // 挂不上就算了：这只是提示，不能因为一条提示条把排队本身带坏。
+        safeLog.debug("排队提示条没挂上", { error: String(error?.message || error).slice(0, 120) });
       }
-      await sdk.inputBanner.set({
-        sessionPath,
-        bannerId: QUEUE_BANNER_ID,
-        text: describeQueueBanner(plan),
-      });
-    } catch (error) {
-      // 挂不上就算了：这只是提示，不能因为一条提示条把排队本身带坏。
-      safeLog.debug("排队提示条没挂上", { error: String(error?.message || error).slice(0, 120) });
+    }
+    // 不在跑的那些（发完了、停了、被替掉了）把提示收掉。
+    for (const [id, path] of [...queueBannerShown]) {
+      if (wantIds.has(id)) continue;
+      queueBannerShown.delete(id);
+      try {
+        await sdk.inputBanner.dismiss({ sessionPath: path, bannerId: QUEUE_BANNER_ID });
+      } catch (error) {
+        safeLog.debug("排队提示条没收掉", { error: String(error?.message || error).slice(0, 120) });
+      }
     }
   }
 
@@ -1218,7 +1235,7 @@ activeFusionServiceDispose = disposeFusionService;
     const current = state || queuePlans.list().find((item) => item.status === "running") || null;
     const active = Boolean(current && current.status === "running");
     // 提示条先挂：它不依赖球是否开着。
-    void syncQueueBanner(active ? current : null);
+    void syncQueueBanner();
     // 这一轮排队结束后才清「用户关过」的标记；跑着的时候不碰，否则关了又马上重挂。
     if (!active) queueBannerMuted.clear();
     if (!ball.state().running) return;

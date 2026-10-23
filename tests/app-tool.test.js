@@ -1102,6 +1102,17 @@ test("排队一开始就在输入框上方挂提示条，写清轮次与文案",
   assert.equal(banner.bannerId, "zhiyi-queue");
   assert.match(banner.text, /排队中 第 1\/2 轮/);
   assert.match(banner.text, /在吗/);
+
+  // 排队停下来以后提示要自己收，不能挂在上面不走（实机：一直显示 1/2）。
+  await mock.route("POST", "/queue-plan/stop")({
+    req: { json: async () => ({ sessionId: "sess_this" }) },
+    json: (data, status) => ({ data, status }),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(
+    mock.inputBannerCalls.some((item) => item.kind === "dismiss"),
+    "排队结束后要把那条提示收掉",
+  );
 });
 
 test("queued send goes through session:send with followUp, no local queue state", async () => {
