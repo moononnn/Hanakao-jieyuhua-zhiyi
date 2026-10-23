@@ -186,7 +186,7 @@
           </div>
         </div>
 
-        <textarea id="queue-input" class="polish-input queue-input" rows="4" spellcheck="false" placeholder="一行一句。写一句排一句，写几句就一轮一句往下推。"></textarea>
+        <textarea id="queue-input" class="polish-input queue-input" rows="4" spellcheck="false" placeholder="一句一行。想连着说几句就这么写，ta 说完我替你接着发。"></textarea>
 
         <div class="queue-rounds">
           <span class="queue-rounds-label">每句排</span>
@@ -196,7 +196,7 @@
           <button id="queue-rounds-up" class="queue-step" type="button" aria-label="多排一轮">＋</button>
         </div>
 
-        <p class="queue-hint">等 ta 说完这一轮再发；你自己开口它就停；最多 50 轮。</p>
+        <p class="queue-hint">ta 说完再发；你自己开口，排队就停；最多 50 轮。</p>
 
         <div id="queue-status-row" class="queue-status-row" hidden>
           <p id="queue-status" class="queue-status" role="status" aria-live="polite"></p>
@@ -204,8 +204,8 @@
         </div>
 
         <div class="queue-actions">
-          <button id="queue-cancel" class="polish-run" type="button">取消</button>
-          <button id="queue-send" class="polish-send" type="button">就这么发</button>
+          <button id="queue-send" class="polish-run" type="button">就这么发</button>
+          <button id="queue-cancel" class="polish-send" type="button">取消</button>
         </div>
       </div>
     </section>

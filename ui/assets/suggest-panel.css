@@ -937,9 +937,10 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 .queue-stop:hover:not(:disabled) { border-color: var(--pink); }
 .queue-stop:disabled { cursor: default; opacity: .7; }
 
-.queue-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-.queue-actions .polish-run { flex: none; }
-.queue-actions .polish-send { flex: 1; text-align: center; }
+.queue-actions { display: flex; align-items: stretch; gap: 8px; margin-top: 2px; }
+/* 主操作在左、实心；取消在右、轻一些。两个各占一半，跟球上那个弹窗一致。 */
+.queue-actions .polish-run { flex: 1; text-align: center; }
+.queue-actions .polish-send { flex: 1; text-align: center; padding: 7px 16px; }
 
 @media (prefers-reduced-motion: reduce) {
   .reader-back, .reader-mark, .player-toggle, .volume-toggle, .speed-button { transition: none; }
