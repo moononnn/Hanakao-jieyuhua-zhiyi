@@ -144,6 +144,31 @@ test("总轮数是每句次数之和", () => {
   assert.equal(planTotalRounds([]), 0);
 });
 
+// 两套编号（sess_xxx / 文件名式 UUID）在钩子、事件、球桥三处不总一致。
+// 2026-10-23 实机：轮末拿钩子编号去 get() 拿不到话单，就静默 return，
+// 「排 2 轮只发 1 轮」就是从这儿来的。
+test("编号对不上时按唯一在跑兜底，两份在跑就不乱认", () => {
+  const registry = new QueuePlanRegistry();
+  const built = buildQueueItems("一句话");
+  registry.start({ sessionId: "sess_a", items: built.items });
+  assert.equal(registry.resolve("sess_a").sessionId, "sess_a", "编号对上就直给");
+  assert.equal(registry.resolve("sess_other").sessionId, "sess_a", "只有一份在跑就认它");
+  registry.start({ sessionId: "sess_b", items: built.items });
+  assert.equal(registry.resolve("sess_other"), null, "两份都在跑时不许乱认");
+  assert.equal(registry.resolve("sess_b").sessionId, "sess_b");
+});
+
+// 「自己盯会话忙闲」那一路不看 pending：它只关心「还有没有下一句」。
+test("peekText 不问宿主排着没有，nextText 问", () => {
+  const registry = new QueuePlanRegistry();
+  const built = buildQueueItems("第一句\n第二句", { rounds: 1 });
+  registry.start({ sessionId: "s1", items: built.items });
+  registry.markFired("s1");
+  registry.markQueued("s1");
+  assert.equal(registry.nextText("s1"), null, "排队语义那一路：没被接走就不发下一句");
+  assert.equal(registry.peekText("s1"), "第二句", "心跳那一路：只看下一句是什么");
+});
+
 // 我们自己发的那句，要**在发之前**就记上。
 // 2026-10-22 实机踩的坑：发消息会立刻起一轮，宿主在那之前就可能跑 before-start 钩子，
 // 钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户插话，把整份话单停了。

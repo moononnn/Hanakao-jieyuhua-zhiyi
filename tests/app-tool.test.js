@@ -372,32 +372,12 @@ test("panel full-module resume initialization and DOM interactions", { skip: !vm
     }
     assert.equal(intervals.length, 0, "legacy resume polling must not be started");
   });
-  await t.test("冻结时整段不显示，也不读设置与结果", () => {
-    assert.equal(get("resume-section").hidden, true);
-    assert.equal(get("resume-freeze-gate").hidden, true);
-    assert.equal(calls.filter(call => call.url === "/resume-config").length, 1, "只读一次冻结状态");
-    assert.equal(calls.filter(call => call.url === "/resume-status").length, 0, "冻结期不去读续接结果");
-    assert.equal(calls.filter(call => call.url === "/resume-freeze").length, 0);
-  });
-  await t.test("暗号不对时冻结状态不动", async () => {
-    for (let i = 0; i < 5; i++) await fire("page-title");
-    assert.equal(get("resume-freeze-gate").hidden, false, "连点五次标题才露出入口");
-    get("resume-freeze-phrase").value = "猜错的";
-    await click("resume-freeze-toggle");
-    assert.match(get("resume-freeze-status").textContent, /暗号不对/);
-    assert.equal(get("resume-section").hidden, true, "暗号不对不许解冻");
-  });
-  await t.test("暗号对了才解冻并把整段接回来", async () => {
-    get("resume-freeze-phrase").value = FREEZE_PHRASE;
-    await click("resume-freeze-toggle");
-    assert.equal(get("resume-section").hidden, false);
-    assert.match(get("resume-freeze-status").textContent, /已解除冻结/);
-    assert.equal(get("resume-freeze-toggle").textContent, "重新冻结", "解冻后按钮要改口成重新冻结");
-    assert.equal(calls.filter(call => call.url === "/resume-config").length, 2);
-    assert.equal(calls.filter(call => call.url === "/resume-status").length, 1, "解冻后补读一次结果");
-    assert.equal(get("resume-auto").children[0].disabled, true);
-    // 总开关这时还关着，结果列表就该是空的；真正渲染两行的那两条在后面把开关打开之后。
-    assert.equal(get("resume-results").hidden, true);
+  await t.test("冻结层拆了：设置区直接可见，进来就读设置与结果", async () => {
+    await Promise.resolve();
+    assert.notEqual(get("resume-section").hidden, true, "设置区必须直接露出来");
+    assert.equal(calls.filter(call => call.url === "/resume-config").length, 1, "进来读一次设置");
+    assert.equal(calls.filter(call => call.url === "/resume-status").length, 1, "进来读一次续接结果");
+    assert.equal(calls.filter(call => call.url === "/resume-freeze").length, 0, "解冻入口已经拆掉");
   });
   await t.test("enabled toggle sends exactly one enabled-only PUT", async () => {
     const count = puts.length;

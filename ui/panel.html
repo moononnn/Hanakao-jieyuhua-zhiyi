@@ -186,7 +186,7 @@
 
     <!-- 断点续接已冻结（2026-10-19）：引擎照跑，这一整段默认不显示。
          解除入口在页面标题「知意」连点五次，暗号只在后端比哈希。 -->
-    <section class="settings-section" id="resume-section" aria-labelledby="resume-title" hidden>
+    <section class="settings-section" id="resume-section" aria-labelledby="resume-title">
       <div class="section-heading">
         <span class="section-mark" aria-hidden="true">续</span>
         <div><p class="eyebrow">断点续接</p><h2 id="resume-title">停在半路时，怎么接上</h2></div>
@@ -235,29 +235,7 @@
       <ul id="resume-results" class="resume-results" aria-label="当前各窗口续接结果" hidden></ul>
     </section>
 
-    <!-- 冻结开关：连点页面标题五次才露出来，平时不显示。暗号只在后端比哈希，源码里没有明文。 -->
-    <section class="settings-section" id="resume-freeze-gate" aria-labelledby="resume-freeze-title" hidden>
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">冻</span>
-        <div>
-          <p class="eyebrow">内部</p>
-          <h2 id="resume-freeze-title">断点续接（已冻结）</h2>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>解除冻结</h3>
-          <p>冻结只关界面：后台照常判定、记账、写日志，只是不往设置页和传音樱上弹。填对暗号就恢复显示；再填一次可以重新收回去。</p>
-        </div>
-        <div class="model-controls">
-          <input id="resume-freeze-phrase" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="输入暗号">
-          <button id="resume-freeze-toggle" class="model-save" type="button">解除冻结</button>
-        </div>
-      </div>
-      <p id="resume-freeze-status" class="ball-status" role="status" aria-live="polite"></p>
-    </section>
-
-    <section class="settings-section" aria-labelledby="summary-title">
+<section class="settings-section" aria-labelledby="summary-title">
       <div class="section-heading">
         <span class="section-mark" aria-hidden="true">简</span>
         <div>

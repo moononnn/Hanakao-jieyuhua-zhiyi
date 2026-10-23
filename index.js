@@ -136,16 +136,6 @@ const openSuggestPanels = new Map();
 // 只是不再往设置页和球上送。当前 Hana 版本里真断联极少，弹出来的绝大多数是
 // 子代理会话、模型限流、宿主自己重试——都不该打扰用户，先收起来观察。
 // 解除入口留在设置页（标题连点五次），暗号只存哈希：源码里不落明文。
-const RESUME_FROZEN_DEFAULT = true;
-const RESUME_FROZEN_KEY = "resumeUiFrozen";
-const RESUME_UNFREEZE_SHA256 = "9fcc76bb555e29958888d5e438f463078b8420b01fe5da11f0330650341e5ab6";
-
-function phraseMatches(phrase, expectedHash = RESUME_UNFREEZE_SHA256) {
-  const text = String(phrase || "").trim();
-  if (!text) return false;
-  return createHash("sha256").update(text, "utf8").digest("hex") === expectedHash;
-}
-
 // ─── 语音收藏（2026-10-17 补回）───
 // 只存引用不复制音频：合成好的 clip 已经落在本机，收藏只记 clipId + 文本 + 音色 +
 // 来源伙伴，试听直接读原 clip。旧版是把 base64 音频再存一份，这里没那个必要。
@@ -643,20 +633,26 @@ export default defineApp(async (sdk) => {
         await pushLoopState(null);
       }
     }
-    // 排队话单：两种情况——我们排的那句被接走了（把「还在排」的标记清掉），
-    // 或者用户自己开口（活人接手，话单当场停，不跟人抢麦）。
+    // 排队话单在这里只做一件事：判断这一轮是不是用户自己开口（活人接手，话单当场停）。
+    // 「该发下一句」不再靠这里：这一轮到底结束没结束，由 pumpQueue 看会话忙闲决定。
     if (loopSessionId) {
-      const plan = queuePlans.get(loopSessionId);
+      const plan = queuePlans.get(loopSessionId) || queuePlans.resolve(loopSessionId);
       if (plan && plan.status === "running") {
-        if (queuePlans.isOwnPrompt(loopSessionId, incomingPrompt)) {
-          queuePlans.markDelivered(loopSessionId);
-          await pushQueueState(queuePlans.get(loopSessionId));
-        } else {
-          const stoppedPlan = queuePlans.onUserMessage(loopSessionId);
+        if (queuePlans.isOwnPrompt(plan.sessionId, incomingPrompt)) {
+          queuePlans.markDelivered(plan.sessionId);
+          safeLog.info("排队话单：这一轮是我们排的那句", { sessionId: plan.sessionId });
+          await pushQueueState(queuePlans.get(plan.sessionId));
+        } else if (plan.sessionId === loopSessionId) {
+          // 同一段对话里用户自己开口：活人接手，不跟人抢麦。
+          const stoppedPlan = queuePlans.onUserMessage(plan.sessionId);
           if (stoppedPlan) {
             await sdk.logger.info("用户接过话，排队话单已停");
             await pushQueueState(null, { message: "你自己接过话了，话单停了" });
           }
+        } else {
+          // 编号对不上（认的是「唯一在跑」那份）时不敢停：
+          // 那可能是另一段对话在说话，拿它去停话单属于误杀。
+          safeLog.debug("排队话单：编号对不上，这轮不当作用户插话", { got: loopSessionId, use: plan.sessionId });
         }
       }
     }
@@ -973,8 +969,8 @@ activeFusionServiceDispose = disposeFusionService;
 
   // ── 断联续接 ──
   let resumeConfig = await readResumeConfig(sdk);
-  // 冻结只关界面：引擎照常判定、照常记账、照常写日志，只是不往用户看得见的地方送。
-  let resumeUiFrozen = (await readConfig(RESUME_FROZEN_KEY, RESUME_FROZEN_DEFAULT)) !== false;
+  // 冻结那层已经拆了（2026-10-23 用户拍板）：不再藏界面、不再要暗号，
+  const resumeUiFrozen = false;
   let resumeTracker = makeResumeTracker(resumeConfig);
   // 循环续接（旧版「继续后自动循环」）：正常说完一轮也接着推「继续哈」，
   // 跑满设定轮数自己停；ta 说收工话时先屏住问用户。
@@ -1037,8 +1033,10 @@ activeFusionServiceDispose = disposeFusionService;
   // 轮末也有两条信号（钩子、turn_end），同一段对话的同一轮只判一次，不然会连发两句。
   // 按会话记：全局记会让两段对话挨着结束时互相挡掉。
   const queueDecidedAt = new Map();
-  // 排进宿主却一直没被接走，等多久就当它没了（会话被关/被中止时宿主会清掉排队输入）。
-  const QUEUE_PENDING_TIMEOUT_MS = 90_000;
+  // 同一段对话的轮末信号只判一次（钩子、turn_end、轮询三处都会喊）。
+  const QUEUE_SEND_COOLDOWN_MS = 4_000;
+  // 会话忙闲查不到时的等待：比冷却长得多，避免在 ta 写到一半时插进去。
+  const QUEUE_UNKNOWN_STATE_WAIT_MS = 20_000;
 
   // 排队这一路的日志不能把正事带崩：宿主对 App RPC 有并发上限，logger 自己也走 RPC，
   // 撞上限时它自己会抛。早先那句 warn 一抛，整条话单的收尾（停话单、推状态）就跟着没了，
@@ -1091,48 +1089,80 @@ activeFusionServiceDispose = disposeFusionService;
     }
   }
 
-  /** ta 现在还在回话吗？在 → 排队（followUp）；不在 → 直接发（steer）。 */
-  async function sessionIsBusy(sessionId) {
+  /**
+   * 把球上给的会话编号收成宿主那一套（sess_xxx）。
+   * 球上常常传的是文件名式编号，而钩子与事件给的是 sess_xxx；两套混着记账，
+   * 就会出现「钩子每次都要靠唯一在跑兜底」「轮末认不出话单」这类静默失败。
+   */
+  async function normalizeQueueSessionId(raw) {
+    const id = String(raw || "").trim();
+    if (!id) return "";
+    if (STABLE_SESSION_ID.test(id)) return id;
+    try {
+      const target = await resolveResumeTargetLite({ sessionId: id, sessionPath: id });
+      const stable = String(target?.sessionId || "");
+      if (stable && STABLE_SESSION_ID.test(stable)) return stable;
+    } catch (error) {
+      safeLog.debug("排队话单：会话编号没能归一", { error: String(error?.message || error).slice(0, 120) });
+    }
+    return id;
+  }
+
+  /**
+   * 读会话现在的忙闲。
+   * known=false 表示这条查询没成功（编号对不上、宿主 RPC 撞上限），
+   * 那时「忙」和「闲」都说不准，调用方要自己决定多小心。
+   */
+  async function readSessionActivity(sessionId) {
     try {
       const context = await sdk.bus.request("session:context", { sessionId, scope: "all" }, { timeoutMs: 4_000 });
-      if (context?.isStreaming === true) return true;
-      if (Number(context?.pendingMessageCount || 0) > 0) return true;
-      return false;
+      if (context?.isStreaming === true) return { busy: true, known: true };
+      if (Number(context?.pendingMessageCount || 0) > 0) return { busy: true, known: true };
+      return { busy: false, known: true };
     } catch (error) {
-      // 查不到就按「还在回话」处理：宁可让它等一会儿，也别把 ta 正在写的话打断。
-      await sdk.logger.warn("查不到会话忙闲，排队话单改用排队语义", { code: String(error?.code || "") });
-      return true;
+      await sdk.logger.warn("查不到会话忙闲", { code: String(error?.code || "") });
+      return { busy: false, known: false };
     }
+  }
+
+  async function sessionIsBusy(sessionId) {
+    return (await readSessionActivity(sessionId)).busy;
   }
 
   /**
    * 话单判定：这一轮说完了，该不该把下一句送进去。
    * 钩子（messages/post-assistant）与 turn_end 事件共用这一条路。
    */
-  async function fireQueuePlan(sessionId, assistantText, { source = "" } = {}) {
-    const id = String(sessionId || "").trim();
-    if (!id || queueFiring.has(id)) return null;
-    const plan = queuePlans.get(id);
-    if (!plan) return null;
-    // 还有一句在宿主那儿排着：等它被接走再送下一句，不然两句会挤在一起。
-    if (plan.pending) {
-      // 排了半天没被接走，多半是那段对话被关了或被中止了（宿主会清掉排队输入）。
-      if (plan.pendingSince && Date.now() - plan.pendingSince > QUEUE_PENDING_TIMEOUT_MS) {
-        queuePlans.stop(id, "排的那句一直没被接走");
-        safeLog.warn("排队话单没被接走，话单已停", { sessionId: id });
-        await pushQueueState(null, { ok: false, error: "排的那句没发出去（那段对话可能已经关了）", message: "排的那句没发出去（那段对话可能已经关了）" });
-      }
-      return null;
-    }
-    if (plan.status !== "running") return null;
+  /**
+   * 话单往前推一句：会话闲下来了、也过了冷却，就把下一句直接发进去。
+   *
+   * 为什么改成自己盯会话忙闲：
+   * 旧版靠宿主排队语义（followUp）+ 猜「有没有被接走」。而钩子给的会话编号
+   * 与球上给的常常不是同一套，一失手就两个后果——pending 永远清不掉（90 秒后被
+   * 误判成「没被接走」，面板弹假红字），以及轮末认不出这份话单（认不出就静默
+   * return，于是「排 2 轮只发 1 轮」）。
+   * 现在：ta 说完这轮（宿主不再 streaming、也没有待处理输入）就送下一句，
+   * 送完等 ta 回，回完再送；猜的那一环整个不要了。
+   */
+  async function pumpQueue(sessionId, { source = "" } = {}) {
+    const raw = String(sessionId || "").trim();
+    if (!raw) return null;
+    // 编号对不上时按唯一在跑兜底：钩子、事件、球桥三处编号不总是同一套。
+    const plan = queuePlans.resolve(raw);
+    if (!plan || plan.status !== "running") return null;
+    const id = plan.sessionId;
+    if (queueFiring.has(id)) return null;
     // 同一段对话上，「循环续接」和「排队话单」只留一样。
     if (loopRegistry.get(id)) return null;
-    if (!shouldJudgeLoop(queueDecidedAt.get(id) || 0, Date.now())) {
-      safeLog.debug(`排队话单判定去重（${source}）：同一轮已经判过`);
-      return null;
-    }
-    queueDecidedAt.set(id, Date.now());
-    const text = queuePlans.nextText(id);
+    // 冷却：刚送过一句就别连着送，让 ta 先开口。
+    if (plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_SEND_COOLDOWN_MS) return null;
+    // ta 还在回话就等下一次心跳；这一条取代了老版「排进宿主 + 猜有没有被接走」。
+    const activity = await readSessionActivity(id);
+    if (activity.busy) return null;
+    // 忙闲查不到（编号对不上、宿主 RPC 撞上限）时不能一直等，也不能太急：
+    // 至少隔一段足够长的时间再发，宁可多等也别扯断 ta 正在写的话。
+    if (!activity.known && plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_UNKNOWN_STATE_WAIT_MS) return null;
+    const text = queuePlans.peekText(id);
     if (!text) {
       safeLog.info("排队话单已发完");
       await pushQueueState(null, { message: "排的都发完了" });
@@ -1178,6 +1208,21 @@ activeFusionServiceDispose = disposeFusionService;
     return true;
   }
 
+  /**
+   * 轮末这条信号只管「本轮只判一次」，具体发不发交给 pumpQueue。
+   * assistantText 留着是为了以后可能用它判断「ta 真的说完了」，目前不参与判定。
+   */
+  async function fireQueuePlan(sessionId, assistantText, { source = "" } = {}) {
+    const id = String(sessionId || "").trim();
+    if (!id) return null;
+    if (!shouldJudgeLoop(queueDecidedAt.get(id) || 0, Date.now())) {
+      safeLog.debug(`排队话单判定去重（${source}）：同一轮已经判过`);
+      return null;
+    }
+    queueDecidedAt.set(id, Date.now());
+    return pumpQueue(id, { source });
+  }
+
   /** 明确没送出去时的重试：5 秒后自己再送一次，不等信号。 */
   function scheduleQueueRetry(sessionId) {
     const id = String(sessionId || "");
@@ -1186,8 +1231,8 @@ activeFusionServiceDispose = disposeFusionService;
     const timer = setTimeout(() => {
       queueRetryTimers.delete(id);
       const plan = queuePlans.get(id);
-      if (!plan || plan.status !== "running" || plan.pending) return;
-      void fireQueuePlan(id, "", { source: "retry" });
+      if (!plan || plan.status !== "running") return;
+      void pumpQueue(id, { source: "retry" });
     }, 5_000);
     timer.unref?.();
     queueRetryTimers.set(id, timer);
@@ -1757,6 +1802,8 @@ activeFusionServiceDispose = disposeFusionService;
       }
     }
     if (!sessionId) return { ok: false, error: "找不到要排进哪段对话" };
+    // 先把编号归一，后面建单、轮询、钩子认账才可能对得上。
+    sessionId = await normalizeQueueSessionId(sessionId);
     const built = buildQueueItems(request?.text, { rounds: normalizeQueueRounds(request?.rounds) });
     if (!built.ok) return { ok: false, error: built.error };
     // 同一段对话上只留一样：话单和「循环续接」不能一起往里塞话。
@@ -1779,51 +1826,29 @@ activeFusionServiceDispose = disposeFusionService;
       items: built.items,
     });
     if (!started.ok) return { ok: false, error: started.error };
-    const first = built.items[0]?.text || "";
-    const busy = await sessionIsBusy(sessionId);
-    // 先记成「这是我们发的话」，再发：发消息会立刻起一轮，宿主在那之前就可能跑
-    // before-start 钩子；钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户插话，
-    // 把刚建的话单停了。记在发送之后就晚了半拍。
-    queuePlans.markSending(sessionId, first);
-    try {
-      await sendToConversation(sdk, { text: first, mode: busy ? "followUp" : "steer", sessionId });
-    } catch (error) {
-      // 明确没送出去（限流、busy、没权限）可以安全重试一次；
-      // 超时是「说不准送到没有」，重试会变成重一句——那种不赌，如实报失败。
-      if (isAmbiguousSendError(error)) {
-        queuePlans.stop(sessionId, "第一句没发出去");
-        await pushQueueState(null, { ok: false, error: "第一句没发出去（发送超时，话单没排上）", message: "第一句没发出去，话单没排上" });
-        return { ok: false, error: friendlySendError(error) };
-      }
-      safeLog.warn(`排队话单第一句没送出去，重试一次：${String(error?.message || error).slice(0, 160)}`);
-      await new Promise((resolve) => { const timer = setTimeout(resolve, 2_000); timer.unref?.(); });
-      try {
-        await sendToConversation(sdk, { text: first, mode: busy ? "followUp" : "steer", sessionId });
-      } catch (retryError) {
-        queuePlans.stop(sessionId, "第一句没发出去");
-        await pushQueueState(null, { ok: false, error: "第一句没发出去，话单没排上", message: "第一句没发出去，话单没排上" });
-        return { ok: false, error: friendlySendError(retryError) };
-      }
-    }
-    const after = queuePlans.markFired(sessionId);
-    // 排队语义的那一句还在宿主那儿挂着：等它被接走再送下一句。
-    if (busy) queuePlans.markQueued(sessionId);
-    await sdk.logger.info(`排队话单已开始：共 ${after?.total ?? built.total} 轮，第一句${busy ? "已排进队列" : "已直接发出"}`);
-    const message = busy ? "已排进队列，等 ta 说完就发" : "已发出，ta 这轮说完就接下一句";
-    await pushQueueState(queuePlans.get(sessionId), { message });
+    // 第一句也交给 pumpQueue：会话闲着就立刻发，ta 还在回话就等它这轮说完。
+    // 旧版在这里直接发了（并用 followUp 排队语义），后面就得猜「被没被接走」，
+    // 猜错一次整份话单就卡死。
+    const sent = await pumpQueue(sessionId, { source: "start" });
+    const after = queuePlans.get(sessionId);
+    await sdk.logger.info(`排队话单已开始：共 ${after?.total ?? built.total} 轮${sent ? "，第一句已送出" : "，等 ta 这一轮说完"}`);
+    const message = sent ? "已发出，ta 这轮说完就接下一句" : "已排上，等 ta 说完这轮就发";
+    await pushQueueState(after, { message });
     return { ok: true, message, total: Number(after?.total || built.total), done: Number(after?.done || 0) };
   }
 
   const queueBridgeTimer = setInterval(async () => {
     if (!ball.state().running) return;
-    // 排进宿主却一直没被接走的，在这里收尾：会话被关/被中止时宿主会清掉排队输入。
-    const now = Date.now();
+    // 话单自己的心跳：ta 这轮说完了就把下一句送进去。
+    // 这是不依赖钩子的那条路——宿主对 App RPC 有并发上限，钩子会被整条丢掉，
+    // 只靠钩子的话「排 2 轮只发 1 轮」隔三差五就来一次。
     for (const state of queuePlans.list()) {
-      if (!state.pending || !state.pendingSince) continue;
-      if (now - state.pendingSince <= QUEUE_PENDING_TIMEOUT_MS) continue;
-      queuePlans.stop(state.sessionId, "排的那句一直没被接走");
-      await sdk.logger.warn("排队话单没被接走，话单已停", { sessionId: state.sessionId });
-      await pushQueueState(null, { message: "排的那句没发出去（那段对话可能已经关了）" });
+      if (state.status !== "running") continue;
+      try {
+        await pumpQueue(state.sessionId, { source: "timer" });
+      } catch (error) {
+        safeLog.debug("排队话单心跳出错", { error: String(error?.message || error).slice(0, 120) });
+      }
     }
     let state;
     try { state = await ball.bridgeRequest("/queue/state"); } catch { return; }
@@ -2347,23 +2372,7 @@ activeFusionServiceDispose = disposeFusionService;
     });
 
     app.get("/resume-config", async (c) => c.json({ ok: true, config: resumeConfig, text: RESUME_TEXT, frozen: resumeUiFrozen }));
-    app.post("/resume-freeze", async (c) => {
-      let body;
-      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "冻结参数读不出来。" }, 400); }
-      // 暗号只比哈希：源码里不落明文，猜到字符串也得先猜中。
-      // 期望哈希允许本机存储覆盖（只为自动化测试和本机自定暗号用），默认为代码里那个。
-      const expectedHash = String(await readConfig("resumeUnfreezeHash", "") || "") || RESUME_UNFREEZE_SHA256;
-      if (!phraseMatches(body?.phrase, expectedHash)) {
-        await sdk.logger.warn("断点续接解冻暗号不匹配，冻结状态没变");
-        return c.json({ ok: false, error: "暗号不对，冻结状态没变。" }, 403);
-      }
-      // 带 frozen 的是重新收回去，不带就是解冻。
-      resumeUiFrozen = body?.frozen === true;
-      await saveConfig(RESUME_FROZEN_KEY, resumeUiFrozen);
-      await sdk.logger.info(`断点续接界面已${resumeUiFrozen ? "重新冻结" : "解冻"}（引擎照常运行）`);
-      await syncResumeVisibility();
-      return c.json({ ok: true, frozen: resumeUiFrozen });
-    });
+    // 旧的 /resume-freeze（暗号解冻）随冻结层一起拆掉：少一个能改界面可见性的入口。
     app.put("/resume-config", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "续接设置读不出来。" }, 400); }

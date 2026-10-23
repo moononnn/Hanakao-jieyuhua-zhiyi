@@ -540,39 +540,11 @@ test("续接设置默认关自动续接，改了立即存", async () => {
   assert.equal(mock.stored("resumeConfig").maxConsecutive, 2);
 });
 
-test("断点续接界面默认冻结：错暗号不动，对暗号才解冻", async () => {
+test("断点续接不再有冻结层：配置恒为未冻结，设置页直接可见", async () => {
+  // 2026-10-23 用户拍板拆掉冻结与暗号：/resume-config 恒回 frozen=false。
   const mock = await boot();
-  const before = (await mock.route("GET", "/resume-config")(jsonRoute())).data;
-  assert.equal(before.frozen, true, "默认必须是冻结状态，界面上不出现这个功能");
-
-  const wrong = await mock.route("POST", "/resume-freeze")({
-    json: (payload, status) => ({ data: payload, status }),
-    req: { json: async () => ({ phrase: "随便猜一句" }) },
-  });
-  assert.equal(wrong.status, 403);
-  assert.equal(wrong.data.ok, false);
-  assert.equal((await mock.route("GET", "/resume-config")(jsonRoute())).data.frozen, true, "暗号不对不许解冻");
-
-  // 期望哈希可由本机存储覆盖，测试用自己那份，不把真暗号写进仓库。
-  const phrase = "测试用暗号";
-  const hash = createHash("sha256").update(phrase, "utf8").digest("hex");
-  const bootWithHash = await boot({ storageSeed: { resumeUnfreezeHash: hash } });
-  const opened = await bootWithHash.route("POST", "/resume-freeze")({
-    json: (payload, status) => ({ data: payload, status }),
-    req: { json: async () => ({ phrase }) },
-  });
-  assert.equal(opened.data.ok, true);
-  assert.equal(opened.data.frozen, false, "暗号对了才解冻");
-  assert.equal(bootWithHash.stored("resumeUiFrozen"), false);
-  assert.equal((await bootWithHash.route("GET", "/resume-config")(jsonRoute())).data.frozen, false);
-
-  // 再填一次同一句暗号就重新收回去，引擎不受影响。
-  const back = await bootWithHash.route("POST", "/resume-freeze")({
-    json: (payload, status) => ({ data: payload, status }),
-    req: { json: async () => ({ phrase, frozen: true }) },
-  });
-  assert.equal(back.data.frozen, true);
-  assert.equal(bootWithHash.stored("resumeUiFrozen"), true);
+  const view = (await mock.route("GET", "/resume-config")(jsonRoute())).data;
+  assert.equal(view.frozen, false, "拆掉冻结层之后必须恒为未冻结");
 });
 
 test("手动「继续哈」以用户身份发进指定对话，提交后等待恢复", async () => {

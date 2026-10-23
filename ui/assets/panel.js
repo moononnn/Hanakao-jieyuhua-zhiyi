@@ -208,87 +208,9 @@ summaryEnabled?.addEventListener('change', saveSummary);
 summaryRetry?.addEventListener('click', loadSummary);
 loadSummary();
 
-// ── 断点续接冻结（2026-10-19 与用户定下）──
-// 冻结的是界面，不是功能：App 侧引擎照跑、照记账、照写日志，只是不往页面和球上送。
-// 读不到冻结状态时按冻结处理——宁可先不给看，也不要在状态不明时把一整段甩给用户。
-let resumeFrozen = true;
-async function readResumeFrozen() {
-  try {
-    const response = await hana.api.fetch('/resume-config');
-    const payload = await response.json();
-    if (!response.ok || payload?.ok !== true) return true;
-    return payload.frozen !== false;
-  } catch {
-    return true;
-  }
-}
-function applyResumeFreezeUi(frozen) {
-  resumeFrozen = frozen === true;
-  const section = document.querySelector('#resume-section');
-  if (section) section.hidden = resumeFrozen;
-  // 解冻要把刷新按钮放回来：冻结期间它是禁用的，否则解冻后第一个要点就是死的。
-  const button = document.querySelector('#resume-refresh-status');
-  if (button) button.disabled = resumeFrozen;
-  // 按钮得说清点了会发生什么：冻结时是解除，没冻时是收回去。
-  const toggle = document.querySelector('#resume-freeze-toggle');
-  if (toggle) toggle.textContent = resumeFrozen ? '解除冻结' : '重新冻结';
-  if (!resumeFrozen) return;
-  // 冻结时顺手把已经渲染出来的旧状态擦掉，免得刷新页面后还留着一行“已关闭”。
-  const status = document.querySelector('#resume-status');
-  if (status) status.textContent = '';
-  const list = document.querySelector('#resume-results');
-  if (list) { list.replaceChildren(); list.hidden = true; }
-}
-
-// 解除入口：页面标题「知意」连点五次才露出暗号输入。普通用户不会去连点标题，
-// 就算连点了也要有暗号，而暗号的明文不存在代码里。
-(() => {
-  const title = document.querySelector('#page-title');
-  const gate = document.querySelector('#resume-freeze-gate');
-  const input = document.querySelector('#resume-freeze-phrase');
-  const button = document.querySelector('#resume-freeze-toggle');
-  const status = document.querySelector('#resume-freeze-status');
-  if (!title || !gate) return;
-  let clicks = [];
-  title.style.cursor = 'pointer';
-  title.title = '';
-  title.addEventListener('click', () => {
-    const now = Date.now();
-    clicks = [...clicks.filter((at) => now - at < 3000), now];
-    if (clicks.length < 5) return;
-    clicks = [];
-    gate.hidden = false;
-    input?.focus();
-  });
-  button?.addEventListener('click', async () => {
-    if (!input || !status) return;
-    status.textContent = '正在核对暗号…';
-    button.disabled = true;
-    try {
-      const response = await hana.api.fetch('/resume-freeze', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // 发的是想切到的状态，不是当前状态：发当前等于点一下什么也不会发生。
-        body: JSON.stringify({ phrase: input.value, frozen: !resumeFrozen }),
-      });
-      const payload = await response.json();
-      if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '暗号不对');
-      input.value = '';
-      applyResumeFreezeUi(payload.frozen === true);
-      if (!resumeFrozen) {
-        resumeSettings?.load();
-        void refreshResumeStatus();
-      }
-      status.textContent = resumeFrozen
-        ? '已重新冻结：后台照跑，界面上不再显示。'
-        : '已解除冻结，断点续接设置恢复显示。';
-    } catch (error) {
-      status.textContent = `${error?.message || '核对失败'}，冻结状态没变。`;
-    } finally {
-      button.disabled = false;
-    }
-  });
-})();
+// ── 断点续接：设置页直接可见（2026-10-23 用户拍板，拆掉冻结层）──
+// 以前这里把整块设置藏着，要连点标题五次、再输对暗号才露出来。
+// 现在不做这一层：开关与轮数就是普通设置，进来就能改。
 
 // ── 断点续接：独立总开关，正常聊天循环配置不在这里写入 ──
 const resumeSettings = (() => {
@@ -432,10 +354,8 @@ async function refreshResumeStatus() {
 }
 document.querySelector('#resume-refresh-status')?.addEventListener('click', refreshResumeStatus);
 
-// 冻结时整段不碰：不读设置、不读结果，省掉几次没必要的 RPC，也避免旧文案留在隐藏区里。
-void readResumeFrozen().then((frozen) => {
-  applyResumeFreezeUi(frozen);
-  if (resumeFrozen) return;
+// 断点续接设置页进来就读，不再有冻结那一层拦在前面。
+void Promise.resolve().then(() => {
   resumeSettings?.load();
   void refreshResumeStatus();
 });
