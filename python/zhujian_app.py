@@ -3446,11 +3446,17 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         polish_row.addWidget(self.btn_polish)
         root.addWidget(self.polish_tool)
 
-        # 排队发送：写一句或一串话，等 ta 说完这一轮再送进去（旧版「写一句」弹窗的形）
+        # 排队发送：写一句或几句，ta 说完再送进去（旧版「写一句」弹窗的形）
         self.queue_tool = QFrame()
         self.queue_tool.setObjectName("toolRow")
-        queue_row = QHBoxLayout(self.queue_tool)
-        queue_row.setContentsMargins(10, 8, 10, 8)
+        # 外层竖排：上面是标题与按钮，下面挂状态行。
+        # 状态属于这个功能，就长在同一个框里；框一收，提示也跟着收，
+        # 不会在框外飘一条让人认不出是哪个功能的字。
+        queue_root = QVBoxLayout(self.queue_tool)
+        queue_root.setContentsMargins(10, 8, 10, 8)
+        queue_root.setSpacing(6)
+        queue_row = QHBoxLayout()
+        queue_row.setContentsMargins(0, 0, 0, 0)
         queue_row.setSpacing(10)
         queue_copy = QVBoxLayout()
         queue_copy.setSpacing(2)
@@ -3468,12 +3474,12 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.btn_queue_open.setToolTip("打开排队发送：写一句或几句，ta 说完就送进去")
         self.btn_queue_open.clicked.connect(self._open_queue_panel)
         queue_row.addWidget(self.btn_queue_open)
-        root.addWidget(self.queue_tool)
+        queue_root.addLayout(queue_row)
 
         # 排队话单的状态行：跑着的时候亮，能看见排到第几轮，也能随手停。
         self.queue_status_widget = QWidget()
         queue_status_row = QHBoxLayout(self.queue_status_widget)
-        queue_status_row.setContentsMargins(0, 2, 0, 0)
+        queue_status_row.setContentsMargins(0, 0, 0, 0)
         queue_status_row.setSpacing(6)
         self.lbl_queue_state = QLabel("")
         self.lbl_queue_state.setObjectName("loopState")
@@ -3485,8 +3491,9 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.btn_queue_stop.setToolTip("不再往下送；已经送出去的那一句照常")
         self.btn_queue_stop.clicked.connect(self._queue_stop)
         queue_status_row.addWidget(self.btn_queue_stop)
+        queue_root.addWidget(self.queue_status_widget)
         self.queue_status_widget.hide()
-        root.addWidget(self.queue_status_widget)
+        root.addWidget(self.queue_tool)
 
         # 压缩档案：把这段对话被压缩后的摘要摊开看（只读，不发模型请求）
         self.compaction_tool = QFrame()
