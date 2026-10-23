@@ -2990,6 +2990,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._resume_sig = None           # 同一条提醒的指纹，避免重复重渲染
         self._resume_hidden_sig = None    # 用户点了「不用管」的那条指纹，同一条不打回
         self._resume_deferred_sig = None  # 用户只是收起了面板：不再自动弹，但自己点开仍要看得到
+        self._resume_ask_pending_sig = None  # 提问期间到的提醒：提问一让位就补上，不能跟着沉底
         self._resume_sending = False      # 「继续哈」发送中，防重复点击
         self._resume_auto = False         # 全局自动续接配置，App 推快照同步
         self._resume_enabled = False      # 旧桥缺省关闭；progress 本身绝不唤起面板
@@ -3739,6 +3740,10 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.lbl_resume_notice.setParent(self.main_view)
         details.addWidget(self.resume_settings)
         details.addStretch(1)
+        # 续接的设置项不在这摆：开关与「最多连续续接几轮」都在知意设置页，
+        # 球上只负责一件事——连续几轮都没接上时，把这事告诉你。
+        # （设置两处都放，改一边不知道另一边生效没，这才是真麻烦。）
+        self.resume_settings.hide()
         for label in (self.lbl_resume_from, self.lbl_resume_reason, self.lbl_resume_notice, self.lbl_loop_state):
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setMinimumWidth(0)
@@ -3761,9 +3766,8 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         if not self._resume_notice:
             self._render_resume_empty()
         screen = self.ball.screen() or QApplication.primaryScreen()
-        # 设置项不再折叠，内容一行摆完就得让面板有相应的高度，
-        # 否则滚动条常驻，而这页本来就不该需要滚动。
-        height = min(560, max(320, screen.availableGeometry().height() - 48))
+        # 设置区搬去设置页之后这页内容不多，固定到 560 会留一大片空：按内容给个紧凑高度。
+        height = min(420, max(260, screen.availableGeometry().height() - 48))
         self.setFixedHeight(height)
         self.setWindowOpacity(1.0)
         self._cancel_fade()
@@ -4145,6 +4149,15 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             ):
                 widget.hide()
             self.target_menu.hide()
+            # 提问是二级弹窗：主面板的其他区块（推荐、工具、排队发送、静候关机）全收起来，
+            # 只留问题本身。以前是逐个数着藏，后加的区块一忘就露在下半截（排队发送占着底、
+            # 再往下是静候关机）；面板内容一长还会多出一条外层长滚动条，看着像两个窗口粘在一起。
+            for name in ("queue_tool", "sleep_tool", "lbl_feedback"):
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    widget.hide()
+            # 外层（主面板那一层）不长滚动条：提问自己要不要滚，它自己那一层说了道。
+            self.main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.ask_scroll.show()
             self.ask_input.show()
             self.btn_ask_skip.show()
@@ -4157,8 +4170,11 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             if geo is not None:
                 max_height = min(max_height, max(280, int(geo.height() * 0.60)))
             self.setMaximumHeight(max_height)
-            self.ask_scroll.setMinimumHeight(min(180, max_height - 124))
-            self.ask_scroll.setMaximumHeight(max(120, max_height - 124))
+            # 滚动区不预先吃满整个可用高度：先给一个紧凑的初始值，
+            # 真正的高度等选项填完、布局稳定后由 _settle_ask_height 按内容算。
+            # （以前这里直接取 max_height-124，内容少时就是一大片空白配一条长滚动条。）
+            self.ask_scroll.setFixedHeight(160)
+            self.ask_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._set_ask_controls_enabled(not self._ask_responding and not self._ask_finished)
             self.app_idle_notice.hide()
             # QScrollArea 的 sizeHint 不反映内容高度，直接 adjustSize 会让窗口停在小高度，
@@ -4166,8 +4182,13 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             QTimer.singleShot(0, lambda: QTimer.singleShot(0, self._settle_ask_height))
         else:
             self._sync_resume_entry()
+            # 提问刚让位：把提问期间到的断点提醒补上。延后一拍，等收面板的收尾动作先跑完，
+            # 不然刚打开的续接专页会被同一个收尾动作顺手收掉。
+            QTimer.singleShot(250, self._flush_resume_after_ask)
             self.setMaximumHeight(16777215)
             self.setMinimumHeight(0)
+            # 退出提问，主面板那一层恢复成「装不下才滚」。
+            self.main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.lbl_head.setText("解语花")
             self.btn_ask_close.hide()
             if APP_ONLY_ASK:
@@ -4187,6 +4208,11 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             self.btn_ask_send.hide()
             self.btn_ask_send.setText("发送")
             self.lbl_ask_select_hint.hide()
+            # 提问期间收起来的工具行（排队发送、静候关机）回到台面。
+            for name in ("queue_tool", "sleep_tool", "lbl_feedback"):
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    widget.show()
             self._set_ask_controls_enabled(False)
             if APP_ONLY_ASK:
                 # 提问结束，之前让位的续接小条重新亮出来（若桥上有提醒）。
@@ -4194,8 +4220,8 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                     self.show_resume_strip(self._resume_notice)
 
     def _settle_ask_height(self):
-        """提问态布局稳定后，按内容真实高度调整面板高度：
-        内容少时面板紧凑（不小于 180 滚动区），内容多时封顶 max_height 内部滚动。"""
+        """提问态布局稳定后，按内容真实高度调整面板：
+        滚动区跟着内容长，内容少就贴合（不留一大片空白），超过上限才封顶并在里面滚。"""
         if not self.is_ask_open() or self._ask_responding or self._ask_finished:
             return
         max_height = self.maximumHeight()
@@ -4207,10 +4233,19 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         body_layout = body.layout()
         if body_layout is not None:
             body_layout.activate()
-        content_h = body.sizeHint().height()
+        content_h = max(1, body.sizeHint().height())
         fixed_h = 176  # 标题 + 输入框 + 按钮 + feedback + 边距 + 间距（近似）
-        # 下限 440：内容少时面板也要舒展（手帐风低信息密度），内容多再往上长
-        target = min(max_height, max(440, fixed_h + max(180, content_h)))
+        avail = max(120, max_height - fixed_h)
+        scroll_h = min(avail, max(120, content_h))
+        need_scroll = content_h > scroll_h
+        self.ask_scroll.setFixedHeight(scroll_h)
+        # 不需要滚的时候就把滚动条关掉：让它反复出现/消失，内容宽度会跟着变一次，
+        # 高度又再变一次，表现就是面板一直在抽。
+        self.ask_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded if need_scroll
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        target = min(max_height, max(300, fixed_h + scroll_h))
         if target <= 0 or target == self.height():
             return
         # 用 setFixedHeight 锁死：move_to_ball 里的 adjustSize 不会把高度压回
@@ -4494,10 +4529,18 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             )
         )
         text = reason
-        if isinstance(attempt, int):
+        if isinstance(attempt, int) and attempt > 0:
             maximum = notice.get("maxConsecutive") or self._resume_max_consecutive
-            text = f"{reason}\n本窗口连续续接：{attempt}/{maximum} 次。"
-        self.lbl_resume_reason.setText(f"提醒原因：{text}")
+            # 球上只说一件事：这个窗口连续几轮都没接上（设置在上限多少轮）。
+            text = f"这个窗口连续 {attempt} 轮都没接上，已经到设置的 {maximum} 轮上限。"
+            if reason and reason != "这一轮停在半路了，没往下说。":
+                text = f"{text}\n{reason}"
+        elif isinstance(attempt, int):
+            # 手动模式第一次发现就报，还没续过：说「连续 0 轮」就是胡说。
+            text = "这个窗口停在半路了，要接着往下说吗？"
+            if reason and reason != "这一轮停在半路了，没往下说。":
+                text = f"{text}\n{reason}"
+        self.lbl_resume_reason.setText(text)
         self.lbl_resume_status.setText("当前状态：等待你决定是否续接")
         self.btn_resume_continue.setEnabled(not self._resume_sending)
         self.btn_resume_continue.setText("继续哈")
@@ -4581,6 +4624,9 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._sync_resume_entry()
         if self.is_ask_open():
             # 提问优先：问题在台面上时小条让位（跟旧断联卡一个规矩），答完 _set_ask_mode(False) 再亮。
+            # 但提醒不能跟着提问一起沉底：提问期间新到的这一条先记下来，提问一结束就补上。
+            # （2026-10-23 实机：Ask 开着时窗口断点，提醒既没弹、入口也没露，问完就再也没人提起。）
+            self._resume_ask_pending_sig = sig
             return
         if is_new and sig != self._resume_deferred_sig:
             self.open_resume_view()
@@ -4589,6 +4635,40 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         # 提醒是强互动，别让它半透明待着：拉回全显、取消排期淡出。
         self.setWindowOpacity(1.0)
         self._cancel_fade()
+
+    def _raise_resume_panel(self):
+        """把球和面板一起带到眼前。
+
+        球不在视线里、或面板被球盖住时，用户眼里就是"什么都没有"，
+        容易误以为提醒没送到（2026-10-23 实机踩过这个误会）。"""
+        self.ball.show()
+        ensure = getattr(self.ball, "_ensure_visible", None)
+        if callable(ensure):
+            ensure()
+        self.move_to_ball()
+        self.show()
+        self.raise_()
+        self.ball.raise_()
+
+    def _flush_resume_after_ask(self):
+        """提问刚让位：把提问期间到的断点提醒补上。
+
+        提问优先是对的，但提醒不能跟着提问一起沉底——提问结束的那一刻，
+        这条提醒就得让用户看见：面板叫出来，续接专页打开。"""
+        sig = self._resume_ask_pending_sig
+        self._resume_ask_pending_sig = None
+        if not sig or not self._resume_notice:
+            return
+        if self.is_ask_open():
+            return  # 提问还在，别抢台面
+        if sig != self._resume_sig:
+            return  # 已经不是那一条了（多半已经被处理掉）
+        if sig == self._resume_hidden_sig:
+            return  # 用户点过「不用管」，同一条不再打回脸上
+        self._sync_resume_entry()
+        if not self._resume_view_active:
+            self.open_resume_view()
+        self._raise_resume_panel()
 
     def collapse_resume_strip(self):
         """notice 变回 null 且没有在途请求：收起小条，等下一次提醒。"""
@@ -4811,6 +4891,11 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                         "autoResume": data.get("autoResume") is True,
                         "maxConsecutive": data.get("maxConsecutive", 3),
                         "progress": data.get("progress") or [],
+                        # 话单状态搭这条车：桥上 /resume/state 带了 queue，但这里重建
+                        # payload 时漏了它，主面板就永远收不到「排队中 第 n/N 轮」，
+                        # 状态行只剩开始那一句「已排进队列」（2026-10-23 实机）。
+                        "queue": data.get("queue"),
+                        "queueSeq": int(data.get("queueSeq") or 0),
                     }
             except Exception:
                 pass  # 网络异常安静忽略，不弹错
@@ -4986,14 +5071,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                 # 先把球带出来、再把面板贴到球旁边。
                 # 实机缺过一种情况：面板自己出现在上次的位置，球却不在视线里（或被面板盖住），
                 # 看起来就是「只有一张窗口，找不到传音樱」。
-                self.ball.show()
-                ensure = getattr(self.ball, "_ensure_visible", None)
-                if callable(ensure):
-                    ensure()
-                self.move_to_ball()
-                self.show()
-                self.raise_()
-                self.ball.raise_()
+                self._raise_resume_panel()
         else:
             # notice 清空：没有在途请求时才收起小条（正在发「继续哈」就先留着）
             if self._resume_action_inflight == 0:

@@ -135,8 +135,9 @@ class ResumeDialogTests(unittest.TestCase):
             self.assertFalse(widget.isVisible())
         self.assertIn("测试伙伴", m.lbl_resume_from.text())
         self.assertIn(NOTICE["title"], m.lbl_resume_from.text())
-        self.assertIn("提醒原因", m.lbl_resume_reason.text())
-        self.assertTrue(m.resume_settings.isVisible())
+        # 2026-10-23 产品决定：球上只提醒「这个窗口连续几轮都没接上」，设置项全在设置页。
+        self.assertIn("连续 2 轮都没接上", m.lbl_resume_reason.text())
+        self.assertFalse(m.resume_settings.isVisible())
         self.assertTrue(m.btn_resume_continue.isVisible())
         self.assertTrue(m.btn_resume_dismiss.isVisible())
         self.assertLessEqual(m.height(), 560)
@@ -167,7 +168,8 @@ class ResumeDialogTests(unittest.TestCase):
         self.assertFalse(m._resume_auto)
         m._apply_loop_state({"config": {"enabled": True, "rounds": 12}})
         self.pump()
-        self.assertTrue(m.btn_resume_auto.isVisible())
+        # 设置项搬到知意设置页之后，球上不再露这些控件；但配置同步与步进逻辑得照旧。
+        self.assertFalse(m.btn_resume_auto.isVisible())
         self.assertTrue(m.chk_loop_after_resume.isChecked())
         self.assertEqual(m.lbl_loop_value.text(), "12")
         posts = []
@@ -510,6 +512,42 @@ class ResumeDialogTests(unittest.TestCase):
         self.open_notice(title="继续完善今天的计划，整理尚未完成的步骤与后续安排。" * 12)
         m._after_resume_continue(False, "连接暂时中断，请保留当前页面并重试。" * 14)
         capture("resume-long-failure.png")
+
+
+    def test_notice_arriving_during_ask_is_shown_after_ask_closes(self):
+        """提问期间到的断点提醒不能跟着提问一起沉底（2026-10-23 实机）。
+
+        提问开着时小条让位是规矩，但那条提醒当时已被记成"旧的"，提问一关就再也没人提起它。"""
+        m = self.menu
+        m._ask_entry = {"askId": "ask-1"}
+        m._ask_finished = False
+        self.open_notice()  # 提问期间到达
+        self.assertFalse(m._resume_view_active, "提问期间不该抢台面")
+        self.assertIsNotNone(m._resume_ask_pending_sig, "提问期间的提醒要记下来")
+        # 提问结束（作答、隐式跳过、过期都走这条路）
+        m._ask_entry = None
+        m._ask_finished = False
+        with patch.object(ui.ZhujianMenu, "_raise_resume_panel") as raise_panel:
+            m._flush_resume_after_ask()
+            self.pump()
+        self.assertTrue(m._resume_view_active, "提问一结束就该把提醒补上")
+        raise_panel.assert_called_once()
+        self.assertIsNone(m._resume_ask_pending_sig, "补完就清掉，不重复补")
+
+    def test_notice_dismissed_by_user_is_not_replayed_after_ask(self):
+        """用户点过「不用管」的那一条，提问结束后也不该再打回脸上。"""
+        m = self.menu
+        m._ask_entry = {"askId": "ask-2"}
+        m._ask_finished = False
+        self.open_notice()
+        m._resume_hidden_sig = m._resume_notice_sig(m._resume_notice)
+        m._ask_entry = None
+        m._ask_finished = False
+        with patch.object(ui.ZhujianMenu, "_raise_resume_panel") as raise_panel:
+            m._flush_resume_after_ask()
+            self.pump()
+        self.assertFalse(m._resume_view_active, "用户说不用管，就真不用管")
+        raise_panel.assert_not_called()
 
 
 if __name__ == "__main__":
