@@ -128,6 +128,10 @@ let queueRounds = 1;
 let queueBusy = false;
 let queuePollTimer = null;
 let queuePollSeq = 0;
+// 上一次真的排出去的那份文案：稿子改了就说明旧的那份已经不是你要的了，
+// 按钮要变成「重新排队」，否则改了字再按同一个按钮，人以为生效了其实没有。
+let queueLastSent = '';
+let queueActive = false;
 // 理顺这一页的状态：最初那版原话是安全锚点，上一版结果是「迭代」的依据。
 // 两者都只活在这一页里，换会话就清掉。
 let polishSource = '';
@@ -172,6 +176,9 @@ function syncPanelContext(context) {
     // 换了一段对话，排队草稿也得清掉（那句话是写给上一段 ta 的）；
     // 排队本身跟对话走，面板只负责把新会话的状态重新拉一遍。
     if (queueInput) queueInput.value = '';
+    queueLastSent = '';
+    queueActive = false;
+    renderQueueSendLabel();
     setQueueStatus('');
     if (queueStopButton) queueStopButton.hidden = true;
     // 换了一段对话，上一段的起名结果不能跟过来（那句话说的是别的窗口）。
@@ -750,21 +757,36 @@ function setQueueStatus(text, tone = '') {
   if (queueStatusRow) queueStatusRow.hidden = !text;
 }
 
+/** 稿子跟上次排出去的不一样，且现在还有一份在跑：这一下是「重排」，不是「再排一份」。 */
+function queueDraftChanged() {
+  const text = String(queueInput?.value || '').trim();
+  return Boolean(text) && text !== queueLastSent;
+}
+
+function renderQueueSendLabel() {
+  if (!queueSendButton) return;
+  queueSendButton.textContent = queueActive && queueDraftChanged() ? '重新排队' : '就这么发';
+}
+
 /** 把服务端的状态铺到界面上。排队真的在跑才亮「停」。 */
 function applyQueueState(state) {
   const active = state?.active === true;
+  queueActive = active;
   if (active) {
     setQueueStatus(String(state?.text || '正在排队'));
     if (queueStopButton) queueStopButton.hidden = false;
+    renderQueueSendLabel();
     return;
   }
   // 没在排：上一次发送的回执（tone=ok）先留着，别让 2 秒后的轮询把它抹了。
   if (queueStatus?.dataset.tone === 'ok') {
     if (queueStopButton) queueStopButton.hidden = true;
+    renderQueueSendLabel();
     return;
   }
   setQueueStatus('');
   if (queueStopButton) queueStopButton.hidden = true;
+  renderQueueSendLabel();
 }
 
 async function refreshQueueState() {
@@ -819,7 +841,10 @@ async function sendQueuePlan() {
     if (!response.ok || payload?.ok !== true) {
       throw new Error(payload?.error || '没排上，再试一次。');
     }
-    if (queueInput) queueInput.value = '';
+    // 稿子留着：排出去不等于说完了，用户还要在上面改字重排。
+    queueLastSent = text;
+    queueActive = true;
+    renderQueueSendLabel();
     setQueueStatus(String(payload.message || '排上了。'), 'ok');
     await refreshQueueState();
   } catch (error) {
@@ -930,6 +955,7 @@ queueSendButton?.addEventListener('click', () => void sendQueuePlan());
 queueStopButton?.addEventListener('click', () => void stopQueuePlan());
 queueRoundsDown?.addEventListener('click', () => stepQueueRounds(-1));
 queueRoundsUp?.addEventListener('click', () => stepQueueRounds(1));
+queueInput?.addEventListener('input', () => renderQueueSendLabel());
 refreshVoiceButton.addEventListener('click', () => void loadVoiceReplies({ force: true }));
 readerBackButton.addEventListener('click', () => {
   voiceReadSequence += 1;

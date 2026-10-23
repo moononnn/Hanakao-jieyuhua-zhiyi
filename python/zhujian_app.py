@@ -9323,6 +9323,10 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
         self._request_seq = 0
         self._target_seq = 0
         self._rounds = 1
+        # 稿子留到下一次用：发出去不清，改了字才能「重新排队」。
+        self._last_sent_text = ""     # 上一次真的排出去的那份文案
+        self._pending_text = ""        # 正在排的那份（回包回来才知道成不成）
+        self._queue_active = False     # 当前有没有一份在跑（App 推状态时同步）
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -9336,6 +9340,7 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
         self.queue_ready.connect(self._apply_queue_result)
         self.target_ready.connect(self._apply_target_state)
         self._build_ui()
+        self.input.textChanged.connect(self._render_send_label)
         self.apply_theme()
         self.setup_fade_on_leave()
 
@@ -9578,6 +9583,14 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
         self.btn_round_plus.setEnabled(self._rounds < 50)
 
     # ── 排进去 ──
+    def _render_send_label(self):
+        """稿子跟上次排出去的不一样，且现在还有一份在跑：这一下是重排，不是再排一份。"""
+        if not hasattr(self, "btn_send"):
+            return
+        text = self.input.toPlainText().strip() if hasattr(self, "input") else ""
+        relabel = self._queue_active and bool(self._last_sent_text) and text != self._last_sent_text
+        self.btn_send.setText("重新排队" if relabel else "就这么发")
+
     def _send(self):
         if self._sending:
             return
@@ -9589,6 +9602,7 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
             self._set_status("太长了，精简一点再排", ok=False)
             return
         self._sending = True
+        self._pending_text = text
         self.btn_send.setEnabled(False)
         self.btn_send.setText("排进去了…")
         self._set_status("正在排…", ok=True)
@@ -9627,6 +9641,10 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
         if ok is None and (payload.get("message") or payload.get("text")):
             ok = True
         if ok:
+            # 稿子留着：发出去不等于说完了，用户还要在上面改字重排。
+            self._last_sent_text = self._pending_text or self.input.toPlainText().strip()
+            self._queue_active = True
+            self._render_send_label()
             self._set_status(payload.get("message") or "已排进队列，等 ta 说完就发", ok=True)
             # 多轮时不自动关窗：留着能随时看到排到第几轮，也能随手停。
             if int(payload.get("total") or 1) > 1:
@@ -9667,13 +9685,16 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
             self._set_status(text, ok=True)
         elif message:
             self._set_status(message, ok=True)
+        # 有活动话单时，稿子改了就提示「重新排队」（改完不重排，旧的那份照旧跑）。
+        self._queue_active = bool(state.get("active"))
+        self._render_send_label()
         if state.get("active"):
             self.btn_stop.setVisible(True)
 
     def _close_and_clear(self):
         if self._closed:
             return
-        self.input.clear()
+        # 稿子不清：排出去的那句还留在框里，改一下就能重排。
         self.close()
 
     # ── 展示/定位 ──
@@ -9689,7 +9710,7 @@ class QueueInsertPanel(FadeOnLeaveMixin, QFrame):
         self.btn_stop.hide()
         self.btn_stop.setEnabled(True)
         self.btn_send.setEnabled(True)
-        self.btn_send.setText("就这么发")
+        self._render_send_label()
         self.apply_theme()
         self._update_target()
         self._sync_size()

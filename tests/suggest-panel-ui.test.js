@@ -180,3 +180,12 @@ test("小工具页的「排队发送」：跟球上那个弹窗同一套控件�
   // 排队那层要能自己关掉：display:flex 会把 hidden 属性盖掉，必须显式处理。
   assert.match(css, /\.queue-view\[hidden\]\s*\{\s*display:\s*none/);
 });
+
+test("排队发完不清稿，稿子改了按钮变「重新排队」", async () => {
+  const script = await read("ui/assets/suggest-panel.js");
+  // 实机（2026-10-23）：发完就把输入框抹了，想改一个字重排得从头再写。
+  assert.match(script, /queueLastSent/);
+  assert.match(script, /queueDraftChanged\(\) \? '重新排队' : '就这么发'/);
+  // 发送成功后不再清空输入框。
+  assert.doesNotMatch(script, /queueLastSent = text;[\s\S]{0,120}queueInput\.value = ''/);
+});
