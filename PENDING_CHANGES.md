@@ -1,5 +1,17 @@
 # 未发布改动
 
+- 2026-10-23 | 修复 | **选两轮却发了三次：同一句话被两个触发源同时抢到（并发没锁住）**
+
+  实机（会话 `sess_0mvl0gmr3_…`，日志 21:35:45）：`已送出第 2/2 轮` 后 27 毫秒又冒一条 `已送出第 0/0 轮`——第二句被连发了两次。
+
+  病根：`pumpQueue` 的锁加在 `await readSessionActivity()` **之后**。钩子、`turn_end`、2 秒心跳三个触发源会在这段 await 里同时进来，两个都通过了「没在发」的检查、都 `peekText` 到同一句，于是同一句发两遍；第二次 `markFired` 时话单已 finished，返回 null，日志就成了 0/0。
+
+  改法：锁提到所有 await 之前（`queueFiring.add(id)` 进函数体第一段，整段 try/finally 包住），忙闲查询、冷却判定、取句、发送全在锁内。
+
+  顺手改：提示条发完不再「一下子不见」（用户说还没看清就没了）——发完时先挂一句「排队已发完」，三秒后再收。
+
+  验证：`node --check index.js` 通过；`node --experimental-vm-modules --test tests/app-tool.test.js tests/queue-plan.test.js` 84 通过。已重载实机待看。
+
 - 2026-10-23 | 新功能 | **排队时在输入框上方挂一条提示：排到第几轮、排的是什么**
 
   用户想要的位置就是茶话会那条提醒所在的栏位（宿主 `ctx.inputBanner`）。

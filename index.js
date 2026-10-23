@@ -1183,7 +1183,7 @@ activeFusionServiceDispose = disposeFusionService;
    * 拿不到会话路径 → 收不掉 → 便签停在最后一次的样子（实机：一直显示 1/2）。
    * 现在反过来：先看哪些在跑，该挂的挂、该收的收。
    */
-  async function syncQueueBanner() {
+  async function syncQueueBanner({ finishing = false } = {}) {
     const running = queuePlans.list().filter((item) => item.status === "running");
     const wantIds = new Set();
     for (const plan of running) {
@@ -1204,6 +1204,19 @@ activeFusionServiceDispose = disposeFusionService;
     for (const [id, path] of [...queueBannerShown]) {
       if (wantIds.has(id)) continue;
       queueBannerShown.delete(id);
+      // 发完了不要一下子就不见（实机：用户还没看清就消失了）：
+      // 先挂一句「已发完」，三秒后再收。
+      if (finishing) {
+        try {
+          await sdk.inputBanner.set({ sessionPath: path, bannerId: QUEUE_BANNER_ID, text: "排队已发完" });
+        } catch (error) {
+          safeLog.debug("排队完成提示没挂上", { error: String(error?.message || error).slice(0, 120) });
+        }
+        setTimeout(() => {
+          void sdk.inputBanner.dismiss({ sessionPath: path, bannerId: QUEUE_BANNER_ID }).catch(() => {});
+        }, 3_000);
+        continue;
+      }
       try {
         await sdk.inputBanner.dismiss({ sessionPath: path, bannerId: QUEUE_BANNER_ID });
       } catch (error) {
@@ -1235,7 +1248,8 @@ activeFusionServiceDispose = disposeFusionService;
     const current = state || queuePlans.list().find((item) => item.status === "running") || null;
     const active = Boolean(current && current.status === "running");
     // 提示条先挂：它不依赖球是否开着。
-    void syncQueueBanner();
+    // 发完那一下不是直接收，先挂「已发完」再收（不然人还没看清就没了）。
+    void syncQueueBanner({ finishing: String(extra?.message || "") === "排的都发完了" });
     // 这一轮排队结束后才清「用户关过」的标记；跑着的时候不碰，否则关了又马上重挂。
     if (!active) queueBannerMuted.clear();
     if (!ball.state().running) return;
@@ -1330,20 +1344,23 @@ activeFusionServiceDispose = disposeFusionService;
     if (loopRegistry.get(id)) return null;
     // 冷却：刚送过一句就别连着送，让 ta 先开口。
     if (plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_SEND_COOLDOWN_MS) return null;
-    // ta 还在回话就等下一次心跳；这一条取代了老版「排进宿主 + 猜有没有被接走」。
-    const activity = await readSessionActivity(id);
-    if (activity.busy) return null;
-    // 忙闲查不到（编号对不上、宿主 RPC 撞上限）时不能一直等，也不能太急：
-    // 至少隔一段足够长的时间再发，宁可多等也别扯断 ta 正在写的话。
-    if (!activity.known && plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_UNKNOWN_STATE_WAIT_MS) return null;
-    const text = queuePlans.peekText(id);
-    if (!text) {
-      safeLog.info("排队话单已发完");
-      await pushQueueState(null, { message: "排的都发完了" });
-      return null;
-    }
+    // 先上锁再查忙闲：下面全是 await，钩子 / turn_end / 2 秒心跳会在这段时间挤进来。
+    // 两个调用都通过了「没在发」的检查、都拿到同一句，就会把同一句话连发两次
+    // （实机：选两轮却发了三次，第二轮连发两下）。
     queueFiring.add(id);
     try {
+      // ta 还在回话就等下一次心跳；这一条取代了老版「排进宿主 + 猜有没有被接走」。
+      const activity = await readSessionActivity(id);
+      if (activity.busy) return null;
+      // 忙闲查不到（编号对不上、宿主 RPC 撞上限）时不能一直等，也不能太急：
+      // 至少隔一段足够长的时间再发，宁可多等也别扯断 ta 正在写的话。
+      if (!activity.known && plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_UNKNOWN_STATE_WAIT_MS) return null;
+      const text = queuePlans.peekText(id);
+      if (!text) {
+        safeLog.info("排队话单已发完");
+        await pushQueueState(null, { message: "排的都发完了" });
+        return null;
+      }
       // 先记成「这是我们发的话」，再发。发消息会立刻起一轮，宿主在那之前就可能跑
       // before-start 钩子；钩子靠 sentTexts 认「这是我们自己的」——认错了就当成用户
       // 插话，把整份话单停了（排 2 轮只发 1 轮就是这么来的）。记在发送之后就晚了半拍。
