@@ -1169,10 +1169,9 @@ activeFusionServiceDispose = disposeFusionService;
       .join(" / ");
     const done = Number(plan?.done || 0);
     const total = Number(plan?.total || 0);
-    // 说「第几轮」而不是「已发几句」：用户关心的是现在等到第几轮了。
-    // done 是已发句数：刚排上（0）算第 1 轮在发，发完第 1 句就等第 1 轮回复。
-    const round = Math.min(Math.max(1, done), Math.max(1, total));
-    const head = total ? `排队中 第 ${round}/${total} 轮` : "排队中";
+    // 说「已发几句 / 共几轮」，不说「第几轮」：说第几轮时，发完第一句还是第 1 轮，
+    // 看着像一句都没发出去（实机反馈）。已发数每送一句就动一下，进度才看得见。
+    const head = total ? `排队中 已发 ${Math.min(done, total)}/${total} 轮` : "排队中";
     const body = preview.length > 80 ? `${preview.slice(0, 80)}…` : preview;
     return body ? `${head} · ${body}` : head;
   }
