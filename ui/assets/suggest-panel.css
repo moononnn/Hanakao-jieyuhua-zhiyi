@@ -938,8 +938,8 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 .queue-stop:disabled { cursor: default; opacity: .7; }
 
 .queue-actions { display: flex; align-items: stretch; gap: 8px; margin-top: 2px; }
-/* 主操作在左、实心；取消在右、轻一些。两个各占一半，跟球上那个弹窗一致。 */
-.queue-actions .polish-run { flex: 1; text-align: center; }
+/* 主操作在左、实心，并且比取消宽一截：一半一半看不出主次。 */
+.queue-actions .polish-run { flex: 1.5; text-align: center; }
 .queue-actions .polish-send { flex: 1; text-align: center; padding: 7px 16px; }
 
 @media (prefers-reduced-motion: reduce) {
