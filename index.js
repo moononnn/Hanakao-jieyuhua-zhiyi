@@ -999,6 +999,14 @@ activeFusionServiceDispose = disposeFusionService;
     // 不再推循环状态（一级面板会出现两行进度，写着不同的轮数）。
     const manualKey = resumeTracker.canonicalId(id);
     const manual = manualRounds.get(manualKey) || null;
+    // 失败轮（模型报错、被按停）：普通循环不该被它推进——宿主重试会连着来好几次，
+    // 每次都推进就等于连发好几句。手动「接几轮」是另一回事：用户就是要 N 句，
+    // 这一轮也确实走完了，所以放行；但几秒内不放行第二次（重试风暴会连着发）。
+    if (!assistantText) {
+      const last = manual?.lastAdvanceAt || 0;
+      if (!manual || manual.status !== "running" || Date.now() - last < 10_000) return null;
+      manual.lastAdvanceAt = Date.now();
+    }
     if (!shouldJudgeLoop(lastLoopDecidedAt, Date.now())) {
       await sdk.logger.debug?.(`循环续接判定去重（${source}）：同一轮已经判过`);
       return null;
@@ -1010,7 +1018,11 @@ activeFusionServiceDispose = disposeFusionService;
       try {
         await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId: id });
         const after = loopRegistry.markFired(id);
-        if (manual && manual.status === "running") manual.sent += 1;
+        if (manual && manual.status === "running") {
+          manual.sent += 1;
+          // 计划的几轮都发完了：这一行该写「已连着接 N/N」，不是还在等。
+          if (after?.exhausted) manual.status = "finished";
+        }
         await sdk.logger.info(`循环续接：已发出一条继续哈（第 ${after?.done ?? decision.state.done + 1}/${decision.state.total} 轮）`);
         if (manual) await pushResumeProgress();
         else await pushLoopState(loopRegistry.get(id));
@@ -1639,7 +1651,7 @@ activeFusionServiceDispose = disposeFusionService;
           const planned = plan.loopRounds + 1;
           const { target: _target, ...described } = await describeSession(sessionId, null);
           manualRounds.set(resumeTracker.canonicalId(sessionId), {
-            planned, sent: 1, status: "running", ...described,
+            planned, sent: 1, status: "running", lastAdvanceAt: Date.now(), ...described,
           });
           await sdk.logger.info(`手动续接：这次接 ${planned} 轮`);
           if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
@@ -2177,15 +2189,22 @@ activeFusionServiceDispose = disposeFusionService;
           const hasToolCall = parts.some((part) => part && (part.type === "tool-call" || part.type === "toolCall" || part.toolCall || part.tool_use));
           const stopReason = String(event.message?.stopReason || "");
           // 工具中间轮也会走 turn_end，那不是「说完了」。
-          if (hasToolCall || (stopReason && stopReason !== "stop")) return;
-          const text = assistantTextOf(event.message);
-          if (!text) return;
+          const aborted = event.aborted === true;
+          const stopReasonBad = Boolean(stopReason) && stopReason !== "stop";
+          // 没能正常收尾的轮（模型报错、被按停、stopReason 不是 stop）都算失败轮。
+          // 失败轮没有正文，但「这一轮走完了」这件事是真的。
+          const failedTurn = aborted || !assistantTextOf(event.message) || stopReasonBad;
+          if (!failedTurn && hasToolCall) return;
+          const text = failedTurn ? "" : assistantTextOf(event.message);
           const target = await resolveResumeTargetLite({ sessionId: String(event.sessionId || ""), sessionPath });
           const sid = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
           if (!sid || !loopRegistry.get(sid)) return;
-          await fireContinueLoop(sid, text, {
+          // 没有正文 = 这一轮没能正常说完（模型报错、被按停）。它不算恢复，
+          // 但手动「接几轮」要算它走完了一轮——不然模型挂着的时候，接几轮永远
+          // 只发得出第一句，循环还一直挂着，面板上永远停在 1/2。
+          await fireContinueLoop(sid, text || "", {
             agentId: String(target?.agentId || event.agentId || ""),
-            source: "turn_end",
+            source: text ? "turn_end" : "turn_end_failed",
           });
         } catch (error) {
           await sdk.logger.warn(`循环续接兜底判定出错：${String(error?.message || error).slice(0, 160)}`);
