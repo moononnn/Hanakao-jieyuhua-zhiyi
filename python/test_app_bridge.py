@@ -496,7 +496,7 @@ class AppBallBridgeTests(unittest.TestCase):
     def test_resume_disabled_preserves_normal_chat_loop_confirmation_and_actions(self):
         self.bridge._post("/resume/notice", {"sessionId": "normal", "source": "loop_confirm"})
         self.bridge._post("/resume/loop", {"active": True, "sessionId": "normal"})
-        for action in ("loop-start", "loop-stop", "loop-resume", "loop-finish", "loop-prefs"):
+        for action in ("loop-stop", "loop-resume", "loop-finish"):
             self.bridge._post("/resume/action", {"action": action, "sessionId": "normal"})
             self.bridge._post("/resume/progress", {"enabled": False})
             state = self.bridge._get("/resume/state", {})[1]

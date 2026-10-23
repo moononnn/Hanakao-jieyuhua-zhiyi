@@ -551,6 +551,31 @@ function makeResumeTracker(config) {
   });
 }
 
+// 「这一轮是不是我们自己发的『继续哈』」——光看文字不够。用户自己打这三个字时
+// 也会被当成 App 发的，那笔旧故障账就永远不清；而循环也靠它分辨「该不该让位给活人」。
+// 所以要求两头对上：文字里有它，且最近一小段时间内我们真的往这段对话发过。
+// 记在发送之前而不是之后：钩子可能在发送请求刚落地时就已经跑了，记晚了会漏。
+const RESUME_OWN_WINDOW_MS = 30_000;
+const lastResumeSentAt = new Map();
+function rememberOwnResume(sessionId) {
+  const id = String(sessionId || "");
+  if (!id) return;
+  lastResumeSentAt.set(id, Date.now());
+  if (lastResumeSentAt.size > 200) {
+    const oldest = lastResumeSentAt.keys().next();
+    if (!oldest.done) lastResumeSentAt.delete(oldest.value);
+  }
+}
+function forgetOwnResume(sessionId) {
+  lastResumeSentAt.delete(String(sessionId || ""));
+}
+function isOwnResumePrompt(sessionId, prompt) {
+  const text = String(prompt || "").trim();
+  if (!text.includes(RESUME_TEXT)) return false;
+  const at = lastResumeSentAt.get(String(sessionId || "")) || 0;
+  return at > 0 && Date.now() - at < RESUME_OWN_WINDOW_MS;
+}
+
 async function readResumeConfig(sdk) {
   return normalizeResumeConfig(await sdk.storage.global.get("resumeConfig", {}));
 }
@@ -626,7 +651,7 @@ export default defineApp(async (sdk) => {
     // 循环续接：用户自己开口就停（循环自己补发的那句要排除在外）。
     const loopSessionId = String(invocation?.session?.sessionId || "");
     const incomingPrompt = String(invocation?.prompt || "");
-    if (loopSessionId && loopRegistry.get(loopSessionId) && !incomingPrompt.includes(RESUME_TEXT)) {
+    if (loopSessionId && loopRegistry.get(loopSessionId) && !isOwnResumePrompt(loopSessionId, incomingPrompt)) {
       const stoppedLoop = loopRegistry.onUserMessage(loopSessionId);
       if (stoppedLoop) {
         await sdk.logger.info("用户接过话，循环续接已停");
@@ -659,7 +684,7 @@ export default defineApp(async (sdk) => {
     // 卡住兜底的时间起点：这一轮开始了。
     // 用户自己开口 = 旧故障作废，新开一轮。「继续哈」是 App 自己发的，
     // 不能当成用户说话去清自己的账，否则刚发出去的续接会被自己抹掉。
-    const isResumePrompt = incomingPrompt.includes(RESUME_TEXT);
+    const isResumePrompt = isOwnResumePrompt(loopSessionId, incomingPrompt);
     // 子代理会话不记账：事件侧的 sessionPath 有时是空的，钩子这层再挡一道。
     const resumeSessionPath = String(invocation?.session?.path || invocation?.session?.sessionPath || "");
     if (resumeConfig.enabled && invocation?.session?.sessionId && !isSubagentSessionPath(resumeSessionPath)) {
@@ -986,7 +1011,11 @@ activeFusionServiceDispose = disposeFusionService;
   // 一轮结束现在有两条路会来判定（钩子、turn_end），两者相隔毫秒级。
   // 谁先判完就记一笔，短时间内另一路不再重复判，不然会连发两声「继续哈」。
   // 窗口只用于分辨「同一轮的两个信号」，所以取小值；正常轮次间隔远大于它。
-  let lastLoopDecidedAt = 0;
+  //
+  // 按会话记：一段对话的一轮只有一两次判定机会，被别的对话挡掉就少接一句，
+  // 而且不会补。早先这里是一个全局时间戳，两段对话同时续接时互相吞判定。
+  const lastLoopDecidedAt = new Map();
+  const LOOP_JUDGE_MEMORY = 200;
 
   /**
    * 循环续接判定：这一轮说完了，要不要再推一句「继续哈」。
@@ -1007,14 +1036,19 @@ activeFusionServiceDispose = disposeFusionService;
       if (!manual || manual.status !== "running" || Date.now() - last < 10_000) return null;
       manual.lastAdvanceAt = Date.now();
     }
-    if (!shouldJudgeLoop(lastLoopDecidedAt, Date.now())) {
+    if (!shouldJudgeLoop(lastLoopDecidedAt.get(id) || 0, Date.now())) {
       await sdk.logger.debug?.(`循环续接判定去重（${source}）：同一轮已经判过`);
       return null;
     }
-    lastLoopDecidedAt = Date.now();
+    lastLoopDecidedAt.set(id, Date.now());
+    if (lastLoopDecidedAt.size > LOOP_JUDGE_MEMORY) {
+      const oldest = lastLoopDecidedAt.keys().next();
+      if (!oldest.done) lastLoopDecidedAt.delete(oldest.value);
+    }
     const decision = loopRegistry.decideAfterTurn(id, { assistantText });
     if (decision?.action === "continue") {
       loopFiring = true;
+      rememberOwnResume(id);
       try {
         await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId: id });
         const after = loopRegistry.markFired(id);
@@ -1027,6 +1061,7 @@ activeFusionServiceDispose = disposeFusionService;
         if (manual) await pushResumeProgress();
         else await pushLoopState(loopRegistry.get(id));
       } catch (error) {
+        forgetOwnResume(id);
         await sdk.logger.warn(`循环续接发送失败，循环停止：${String(error?.message || error).slice(0, 160)}`);
         loopRegistry.stop(id, "发送失败");
         if (manual) {
@@ -1426,8 +1461,6 @@ activeFusionServiceDispose = disposeFusionService;
             status: state.status || "",
           }
         : {}),
-      // 偏好一并带过去：球重启后不用等用户重新勾一次
-      config: { enabled: resumeConfig.loopEnabled === true, rounds: resumeConfig.loopRounds },
     };
     try {
       await ball.bridgeRequest("/resume/loop", { method: "POST", body });
@@ -1575,6 +1608,17 @@ activeFusionServiceDispose = disposeFusionService;
     if (!resumeConfig.enabled) {
       resumeTracker.clearAll();
       resumeSignals.clear();
+      // 手动「这次接几轮」起的循环是从这个开关里发起的：关掉总开关就不该再往对话里发
+      // 「继续哈」。以前只清断点那本账，循环照跑，等于开关只管住了半件事。
+      // 按状态机自己的键去停（两边编号未必一字不差，别拿账上的键去猜）。
+      for (const state of loopRegistry.list()) {
+        if (state.status === "running" || state.status === "awaiting") {
+          loopRegistry.stop(state.sessionId, "断点续接已关闭");
+        }
+      }
+      for (const key of lastLoopDecidedAt.keys()) lastLoopDecidedAt.delete(key);
+      manualRounds.clear();
+      stuckProbeAt.clear();
       if (!resumeNoticeSource || resumeNoticeSource === "break") void pushResumeNotice(null);
     }
     await pushResumeProgress();
@@ -1644,12 +1688,17 @@ activeFusionServiceDispose = disposeFusionService;
         }
         // 先起循环（往后那几轮归它管），再发第一句；
         // 第一句没送出去就把循环收掉，别让它空转着等一个不会来的回复。
-        const started = loopRegistry.start({ sessionId, rounds: plan.loopRounds });
+        const { target: _target, ...described } = await describeSession(sessionId, null);
+        const started = loopRegistry.start({
+          sessionId,
+          rounds: plan.loopRounds,
+          agentName: described.agentName,
+          title: described.title,
+        });
         if (!started.ok) {
           await sdk.logger.warn(`连着接 ${plan.loopRounds + 1} 轮没起步：${String(started.error || "").slice(0, 120)}`);
         } else if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
           const planned = plan.loopRounds + 1;
-          const { target: _target, ...described } = await describeSession(sessionId, null);
           manualRounds.set(resumeTracker.canonicalId(sessionId), {
             planned, sent: 1, status: "running", lastAdvanceAt: Date.now(), ...described,
           });
@@ -1664,28 +1713,6 @@ activeFusionServiceDispose = disposeFusionService;
         if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
       }
       await pushResumeProgress();
-    } else if (action.action === "loop-prefs") {
-      resumeConfig = normalizeResumeConfig({
-        ...resumeConfig,
-        loopEnabled: action.enabled === true,
-        loopRounds: Number(action.rounds) || resumeConfig.loopRounds,
-      });
-      await saveConfig("resumeConfig", resumeConfig);
-      await pushLoopState(loopRegistry.get(sessionId) || null);
-    } else if (action.action === "loop-start") {
-      // 同一段对话上只留一样：开始「循环续接」就把排队话单停掉。
-      if (queuePlans.get(sessionId)) {
-        queuePlans.stop(sessionId, "改用循环续接");
-        await pushQueueState(null, { message: "改用循环续接，排队话单停了" });
-      }
-      const started = loopRegistry.start({
-        sessionId,
-        rounds: Number(action.rounds) || resumeConfig.loopRounds,
-      });
-      if (started.ok) {
-        await sdk.logger.info(`循环续接已开始：最多 ${started.state.total} 轮`);
-        await pushLoopState(started.state);
-      }
     } else if (action.action === "loop-stop") {
       const stopped = loopRegistry.stop(sessionId, "用户按了停");
       if (stopped.ok) await sdk.logger.info("循环续接已被用户停止");
@@ -1693,14 +1720,31 @@ activeFusionServiceDispose = disposeFusionService;
     } else if (action.action === "loop-resume") {
       const resumed = loopRegistry.resumeAfterConfirm(sessionId);
       if (resumed) {
+        rememberOwnResume(sessionId);
         try {
           await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId });
-          loopRegistry.markFired(sessionId);
-          await pushLoopState(loopRegistry.get(sessionId));
+          const after = loopRegistry.markFired(sessionId);
+          // 手动「接几轮」被「ta 好像做完了」屏住过一次：用户点「接着来」之后
+          // 循环是真的在跑，但那笔账还停在 paused、句数也不动，面板永远显示暂停时的数字。
+          const manual = manualRounds.get(resumeTracker.canonicalId(sessionId));
+          if (manual && manual.status !== "finished") {
+            manual.status = after?.exhausted ? "finished" : "running";
+            manual.sent = (manual.sent || 0) + 1;
+            manual.lastAdvanceAt = Date.now();
+          }
+          if (manual) await pushResumeProgress();
+          else await pushLoopState(loopRegistry.get(sessionId));
         } catch (error) {
+          forgetOwnResume(sessionId);
           await sdk.logger.warn(`接着来没发出去：${String(error?.message || error).slice(0, 160)}`);
           loopRegistry.stop(sessionId, "发送失败");
-          await pushLoopState(null);
+          const manual = manualRounds.get(resumeTracker.canonicalId(sessionId));
+          if (manual) {
+            manual.status = "failed";
+            await pushResumeProgress();
+          } else {
+            await pushLoopState(null);
+          }
         }
       }
     } else if (action.action === "loop-finish") {
@@ -1709,9 +1753,11 @@ activeFusionServiceDispose = disposeFusionService;
       await pushResumeNotice(null);
     } else if (action.action === "dismiss") {
       if (!sessionId || !resumeConfig.enabled) return;
+      // 信号表是按规范编号存的，清的时候也得用同一个键，否则旧信号会一直留在表里。
+      const key = resumeTracker.canonicalId(sessionId);
       resumeTracker.forget(sessionId);
-      resumeSignals.delete(sessionId);
-      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      resumeSignals.delete(key);
+      if (resumeNoticeKey === key && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
       await pushResumeProgress();
     }
   }, 2_000);
@@ -2013,6 +2059,8 @@ activeFusionServiceDispose = disposeFusionService;
     // 代次对号：这是发起时那一轮的凭据。中途关过、或换了策略，这一发就不该出去。
     const alive = () => resumeConfig.enabled && (!token || resumeEpoch === token.epoch);
     if (!alive()) return false;
+    // 先记一笔「这句是我们发的」：宿主可能在我们拿到回包前就把钩子跑了。
+    rememberOwnResume(sessionId);
     try {
       await sendToConversation(sdk, {
         text: RESUME_TEXT,
@@ -2033,6 +2081,7 @@ activeFusionServiceDispose = disposeFusionService;
       return true;
     } catch (error) {
       // 没发出去就不能占用户的上限名额，也不能每 5 秒重试一次付费发送。
+      forgetOwnResume(sessionId);
       if (!alive()) return false;
       resumeTracker.rollbackResume(sessionId, agentId);
       resumeTracker.failAwaiting(sessionId, agentId, String(error?.message || error));
@@ -2175,7 +2224,8 @@ activeFusionServiceDispose = disposeFusionService;
     // 这回事。2026-10-19 实机：一轮里派了四个子代理，四段会话各弹了一张续接卡。
     if (isSubagentSessionPath(sessionPath)) return;
     // 循环续接的兜底判定必须走在断点续接总开关的早退之前：
-    // 它跟断点续接是两套开关（loopEnabled 与 enabled），总开关关了循环也该能跑。
+    // 手动「这次接几轮」起的循环跟断点总开关是两笔账（开关只管断点那一半），
+    // 而且已经发出去的那几句仍需要轮末判定才能往下接。
     //
     // 为什么要兜底：循环判定以前只挂在 messages/post-assistant 钩子上，而那是一次性判定——
     // 一轮只触发一次，撞上宿主的 App RPC 并发限制（日志里一天十几次
@@ -2314,8 +2364,10 @@ activeFusionServiceDispose = disposeFusionService;
       if (stale()) return;
       const sessionId = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
       if (!sessionId) return;
+      // 信号表按规范编号存（onAbnormal 那边登记的），这里清也得用同一个键。
+      const canonicalKey = resumeTracker.canonicalId(sessionId);
       resumeTracker.markRecovered(sessionId, target?.agentId || event.agentId || "");
-      resumeSignals.delete(sessionId);
+      resumeSignals.delete(canonicalKey);
       // 会话自己好了，就把桥上那条提醒收掉。但别把别的窗口那条也收了——
       // 以前这里无条件清，两个窗口同时出状况时先好的那个会把另一个的提醒弄丢。
       // handleResumeEvent 是事件钩子，这里不 await，只发起不等。
@@ -2500,9 +2552,10 @@ activeFusionServiceDispose = disposeFusionService;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
       const sessionId = String(body?.sessionId || "").trim();
       if (!sessionId) return c.json({ ok: false, error: "缺少对话编号。" }, 400);
+      const key = resumeTracker.canonicalId(sessionId);
       resumeTracker.forget(sessionId);
-      resumeSignals.delete(sessionId);
-      if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+      resumeSignals.delete(key);
+      if (resumeNoticeKey === key && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
       await pushResumeProgress();
       return c.json({ ok: true });
     });

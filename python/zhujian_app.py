@@ -2998,8 +2998,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._resume_max_consecutive = 3
         self._resume_progress = []
         self._resume_config_sending = False
-        self._loop_enabled = False         # 「继续后自动循环」勾选（偏好，存 App 侧）
-        self._loop_rounds = 5              # 「最多续接 N 轮」
         self._loop_state = None            # App 推来的循环状态
         self._queue_state = None           # App 推来的排队话单状态
         self._resume_notice_timer = None
@@ -3302,44 +3300,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         resume_actions.addWidget(self.btn_resume_auto, 0, Qt.AlignmentFlag.AlignRight)
         resume_layout.addLayout(resume_actions)
 
-        # 循环续接（旧版「继续后自动循环」）：勾上后每轮说完自动接上。
-        self.chk_loop_after_resume = QCheckBox("继续后自动循环")
-        self.chk_loop_after_resume.setObjectName("loopAfterResume")
-        self.chk_loop_after_resume.setToolTip("先发这句「继续哈」，之后每轮说完自动接着发，达到轮数后停。")
-        self.chk_loop_after_resume.toggled.connect(self._save_loop_prefs)
-        resume_layout.addWidget(self.chk_loop_after_resume)
-        loop_row = QHBoxLayout()
-        loop_row.setContentsMargins(0, 0, 0, 0)
-        loop_row.setSpacing(6)
-        self.lbl_loop_rounds = QLabel("最多续接")
-        self.lbl_loop_rounds.setObjectName("loopRoundsLabel")
-        loop_row.addWidget(self.lbl_loop_rounds)
-        self.btn_loop_minus = QPushButton("−")
-        self.btn_loop_minus.setObjectName("loopStep")
-        self.btn_loop_minus.setFixedWidth(24)
-        self.btn_loop_minus.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_loop_minus.setToolTip("少一轮（按住可连续减）")
-        self.btn_loop_minus.setAutoRepeat(True)
-        self.btn_loop_minus.clicked.connect(lambda: self._step_loop_rounds(-1))
-        loop_row.addWidget(self.btn_loop_minus)
-        self.lbl_loop_value = QLabel("5")
-        self.lbl_loop_value.setObjectName("loopValue")
-        self.lbl_loop_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_loop_value.setFixedWidth(34)
-        loop_row.addWidget(self.lbl_loop_value)
-        self.btn_loop_plus = QPushButton("+")
-        self.btn_loop_plus.setObjectName("loopStep")
-        self.btn_loop_plus.setFixedWidth(24)
-        self.btn_loop_plus.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_loop_plus.setToolTip("多一轮（按住可连续加）")
-        self.btn_loop_plus.setAutoRepeat(True)
-        self.btn_loop_plus.clicked.connect(lambda: self._step_loop_rounds(1))
-        loop_row.addWidget(self.btn_loop_plus)
-        self.lbl_loop_unit = QLabel("轮")
-        self.lbl_loop_unit.setObjectName("loopRoundsLabel")
-        loop_row.addWidget(self.lbl_loop_unit)
-        loop_row.addStretch(1)
-        resume_layout.addLayout(loop_row)
         self.resume_body.hide()
         root.addWidget(self.resume_body)
 
@@ -3757,17 +3717,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         limit_row.addWidget(self.lbl_resume_max, 1)
         limit_row.addWidget(self.btn_resume_max_plus)
         settings.addLayout(limit_row)
-        # 勾选与轮数设置属于「等 ta 说完再发」，先建在一个游离的隐藏容器里，
-        # 弹窗打开时被搬走（控件还是建在这儿，保存偏好、步进那套逻辑不用重写）。
-        # 容器故意不给父：一旦 setParent 成面板子控件，它会以默认的 640x480 整个盖在面板上。
-        self.loop_controls = QFrame()
-        self.loop_controls.hide()
-        self.loop_controls.setObjectName("toolRow")
-        loop_layout = QVBoxLayout(self.loop_controls)
-        loop_layout.setContentsMargins(12, 10, 12, 10)
-        body_layout.removeWidget(self.chk_loop_after_resume)
-        loop_layout.addWidget(self.chk_loop_after_resume)
-        loop_layout.addLayout(body_layout.takeAt(body_layout.count() - 1).layout())
         # 循环真的跑起来时，一级面板只多出这一行状态与停止；平时不占地方。
         main_layout.addWidget(self.loop_status_widget)
         self.loop_status_widget.hide()
@@ -3827,9 +3776,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.btn_resume_dismiss.show()
         self._render_resume_rounds()
         self.btn_loop_finish.hide()
-        for widget in (self.chk_loop_after_resume, self.lbl_loop_rounds, self.btn_loop_minus,
-                       self.lbl_loop_value, self.btn_loop_plus, self.lbl_loop_unit):
-            widget.show()
 
     def apply_theme(self):
         c = THEME_COLORS[self.ball.theme_mode]
@@ -3994,7 +3940,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                 color: {c['sub']}; background: {c['surface_alt']}; border-color: {c['border']};
             }}
             QLabel#resumeNotice {{ color: {c['pink']}; font-size: 11px; font-weight: 600; padding: 2px 2px 0; }}
-            QCheckBox#loopAfterResume {{ color: {c['sub_deep']}; font-size: 11px; spacing: 6px; }}
             QLabel#loopRoundsLabel {{ color: {c['sub']}; font-size: 11px; }}
             QPushButton#loopStep {{
                 color: {c['accent_deep']}; background: {c['surface']};
@@ -4860,21 +4805,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._render_resume_auto()
         self.lbl_resume_status.setText("设置已提交，等待同步" if ok else f"自动续接没保存上，可重试\n{error}")
 
-    # ── 循环续接 ──
-    def _save_loop_prefs(self, *_):
-        """勾选或改轮数都存一份偏好，下次打开还是这个设置。"""
-        self._loop_enabled = bool(self.chk_loop_after_resume.isChecked())
-        self._post_resume_action({
-            "action": "loop-prefs",
-            "enabled": self._loop_enabled,
-            "rounds": int(self._loop_rounds),
-        })
-
-    def _step_loop_rounds(self, delta):
-        self._loop_rounds = max(1, min(50, int(self._loop_rounds) + int(delta)))
-        self.lbl_loop_value.setText(str(self._loop_rounds))
-        self._save_loop_prefs()
-
+    # ── 循环续接（只剩「ta 说做完了 → 问你还要不要接着来」这条确认，不再有常驻勾选）──
     def _loop_stop(self):
         state = self._loop_state or {}
         session_id = str(state.get("sessionId") or "")
@@ -4892,19 +4823,6 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._submit_resume_dismiss("loop-finish", session_id, notice)
 
     def _apply_loop_state(self, loop):
-        if isinstance(loop, dict):
-            cfg = loop.get("config")
-            if isinstance(cfg, dict):
-                # 偏好从 App 同步回来：球重启后不用用户重新勾一次。
-                self._loop_enabled = bool(cfg.get("enabled"))
-                try:
-                    self._loop_rounds = max(1, min(50, int(cfg.get("rounds") or 5)))
-                except Exception:
-                    self._loop_rounds = 5
-                self.chk_loop_after_resume.blockSignals(True)
-                self.chk_loop_after_resume.setChecked(self._loop_enabled)
-                self.chk_loop_after_resume.blockSignals(False)
-                self.lbl_loop_value.setText(str(self._loop_rounds))
         self._loop_state = loop if isinstance(loop, dict) and loop.get("active") else None
         self._render_loop_state()
 

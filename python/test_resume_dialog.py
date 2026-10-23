@@ -164,18 +164,15 @@ class ResumeDialogTests(unittest.TestCase):
     def test_settings_keep_defaults_and_sync_existing_configuration(self):
         self.open_notice()
         m = self.menu
-        self.assertEqual(m._loop_rounds, 5)
         self.assertFalse(m._resume_auto)
-        m._apply_loop_state({"config": {"enabled": True, "rounds": 12}})
+        # 「继续后自动循环」那套勾选与轮数步进已删（2026-10-23）：不留看不见的死控件。
+        self.assertFalse(hasattr(m, "chk_loop_after_resume"))
+        self.assertFalse(hasattr(m, "lbl_loop_value"))
+        self.assertFalse(hasattr(m, "loop_controls"))
+        m._apply_loop_state({"active": True, "sessionId": "sess-1", "text": "正在续 第 1/3 轮"})
         self.pump()
-        # 设置项搬到知意设置页之后，球上不再露这些控件；但配置同步与步进逻辑得照旧。
+        # 设置项搬到知意设置页之后，球上不再露这些控件。
         self.assertFalse(m.btn_resume_auto.isVisible())
-        self.assertTrue(m.chk_loop_after_resume.isChecked())
-        self.assertEqual(m.lbl_loop_value.text(), "12")
-        posts = []
-        m._post_resume_action = lambda payload, on_done=None: posts.append(payload)
-        m.btn_loop_plus.click()
-        self.assertEqual(posts[-1], {"action": "loop-prefs", "enabled": True, "rounds": 13})
 
     def test_long_source_error_does_not_move_actions(self):
         self.open_notice()
@@ -343,27 +340,24 @@ class ResumeDialogTests(unittest.TestCase):
         m.close_menu(user_dismissed=False)
         self.assertTrue(m._resume_view_active)
 
-    def test_empty_after_loop_confirmation_keeps_loop_settings_intact(self):
-        # 循环控件现在住在隐藏容器里、等弹窗接手，不再由专页决定可见性；
-        # 这里要盯的是「收起后设置没被弄丢、也没漏回专页里」。
+    def test_empty_after_loop_confirmation_keeps_resume_view_state(self):
+        # 「继续后自动循环」那套勾选与轮数步进已删（2026-10-23）：不留看不见的死控件。
         self.open_notice(source="loop_confirm")
         m = self.menu
         m.collapse_resume_strip()
         self.pump()
-        self.assertEqual(m._loop_rounds, 5)
-        self.assertFalse(m.resume_view.isAncestorOf(m.chk_loop_after_resume))
-        self.assertTrue(m.loop_controls.isAncestorOf(m.chk_loop_after_resume))
-        self.assertTrue(m.loop_controls.isHidden())
+        self.assertFalse(hasattr(m, "chk_loop_after_resume"))
+        self.assertFalse(hasattr(m, "loop_controls"))
+        self.assertFalse(hasattr(m, "lbl_loop_value"))
 
     def test_poll_worker_preserves_loop_snapshot_and_emits_signal(self):
         m = self.menu
         snapshot = {"ok": True, "enabled": True, "notice": NOTICE,
-                    "loop": {"config": {"enabled": True, "rounds": 8}}}
+                    "loop": {"active": True, "sessionId": "sess-1", "text": "正在续 第 1/3 轮"}}
         with patch.object(ui, "api_get", return_value=snapshot), patch.object(ui.threading, "Thread") as thread:
             thread.return_value.start.side_effect = lambda: thread.call_args.kwargs["target"]()
             m._poll_resume_async()
-        self.assertEqual(m._loop_rounds, 8)
-        self.assertTrue(m.chk_loop_after_resume.isChecked())
+        self.assertEqual((m._loop_state or {}).get("text"), "正在续 第 1/3 轮")
         self.assertTrue(m._resume_view_active)
 
     def test_progress_does_not_open_panel_and_keeps_multiple_sources_compact(self):
@@ -425,7 +419,7 @@ class ResumeDialogTests(unittest.TestCase):
         self.assertEqual(m.btn_resume_continue.text(), "接着来")
         self.assertFalse(m.btn_resume_auto.isEnabled())
 
-    def test_global_auto_action_and_max_config_preserve_loop_preferences(self):
+    def test_global_auto_action_and_max_config_preserve_resume_settings(self):
         self.open_notice()
         m = self.menu
         calls = []
@@ -438,8 +432,6 @@ class ResumeDialogTests(unittest.TestCase):
         self.assertEqual(calls[-1][0], {"action": "config", "config": {"maxConsecutive": 4}})
         calls[-1][1](False, "测试失败")
         self.assertEqual(m._resume_max_consecutive, 3)
-        self.assertEqual(m._loop_rounds, 5)
-        self.assertFalse(m._loop_enabled)
         self.assertIn("测试失败", m.lbl_resume_status.text())
         m._resume_max_consecutive = 10
         m._render_resume_auto()

@@ -1,5 +1,46 @@
 # 未发布改动
 
+- 2026-10-23 | 修复 | **断点续接排查出的三处真断点（循环那一半不听总开关 / 多窗口互吞判定 / 「接着来」后进度冻住）**
+
+  起因：整体排查断点续接，从引擎（`lib/resume-watch.js`）、接线（`index.js` 的钩子、事件、桥轮询、路由）、球侧专页到设置页通读一遍。主干是通的，问题集中在「循环续接」这一半。
+
+  ① **关掉总开关，手动「这次接几轮」起的循环还在跑。** `applyResumeConfig` 关总开关时只清了断点那本账（tracker + 信号），`loopRegistry` 与 `manualRounds` 一个字没动，而 `fireContinueLoop` 也不看 `resumeConfig.enabled`。结果：用户关掉开关，对话里照样每隔一轮冒一句「继续哈」。现在关总开关时把循环状态机里 running/awaiting 的一并停掉，连同 manualRounds、stuckProbeAt、去重记号一起清。
+
+  ② **两段对话同时续接会互相吞掉判定。** 「一轮只判一次」的记号以前是一个全局时间戳 `lastLoopDecidedAt`，A 对话判完 3 秒内 B 对话的判定直接跳过；而一轮只有一两次判定机会，跳过就少接一句，且不会补。改成按会话记（`Map`，上限 200 条，超了从最早的删）。排队话单那边本来就按会话记，两边口径现在一致。
+
+  ③ **手动「接几轮」被「ta 好像做完了」屏住后点「接着来」，进度数字冻住。** 循环真的恢复了（`resumeAfterConfirm` 把状态设回 running），但 `manualRounds` 那笔账还停在 `paused`、`sent` 没加，面板永远显示暂停时的「已发 1/2」，跑满也不写完成。现在 `loop-resume` 分支同步更新那笔账（`running` → 跑满 `finished`，`sent+1` 防抖时间刷新），发送失败时记 `failed` 并推进度，不再推一条空的循环状态把界面清掉。
+
+  另清掉 `ui/panel.html` 里 2026-10-19 冻结层留下的注释（写着「连点五次输暗号」，实际早就不存在了）。
+
+  验证：`node --check index.js` 通过；`node --test tests/resume-watch.test.js tests/continue-loop.test.js tests/queue-plan.test.js tests/send.test.js` 70 通过；`node --experimental-vm-modules --test tests/app-tool.test.js tests/voice-routes.test.js` 97 通过。**未做实机验收**：要重载后验三件事——① 开着「接 3 轮」中途关掉总开关，对话里不该再冒第四句；② 两段对话同时手动续接，各自都接得上；③ 接几轮中途 ta 说做完了，点「接着来」后那行数字继续往上走。manifest 版本、简介、README 未动。
+
+- 2026-10-23 | 移除 | **「继续后自动循环」那套勾选彻底删掉：用户看不懂，也不该留一个按不响的门铃**
+
+  前一条排查记下的结论：控件被藏进从不显示的容器，而且没有任何代码拿它去启动循环（球从不发 `loop-start`，`loopEnabled` 只存盘没人读）。用户拍板删掉，只留续接专页的「这次接几轮」。
+
+  删的范围：
+  ① 球上：`chk_loop_after_resume`（勾选）、`lbl_loop_rounds`/`btn_loop_minus`/`lbl_loop_value`/`btn_loop_plus`/`lbl_loop_unit`（最多续接 N 轮整行）、装它们的 `loop_controls` 游离容器、`_save_loop_prefs` / `_step_loop_rounds`、`_loop_enabled` / `_loop_rounds` 两个字段、`QCheckBox#loopAfterResume` 样式。
+  ② App 侧：`loop-prefs` 与 `loop-start` 两个桥分支、`pushLoopState` 里推给球的 `config`（loopEnabled/loopRounds）、`resumeConfig` 的 `loopEnabled` / `loopRounds` 两个字段与默认值/归一化。
+  ③ 桥白名单：`/resume/action` 不再接受 `loop-start` / `loop-prefs`（旧球发这两个会拿到 400，两边同步更新即可）。
+
+  留下的（故意的）：循环引擎本体（`ContinueLoopRegistry`）与轮末判定——「这次接几轮」靠它发后续那几句；`loop_confirm` 的「收工 / 接着来」两个按钮；一级面板的循环状态行与停止按钮（现在没有入口能让它亮，但无害，将来若要给循环做一个真入口能直接复用）。
+
+- 2026-10-23 | 修复 | **断点续接的三处小毛病：清信号用错键、「继续哈」认错人、循环启动没带名字**
+
+  ① `resumeSignals` 是按规范编号（`canonicalId`）存的，但三处清理（`/resume/dismiss` 路由、桥的 dismiss 分支、`turn_end` 恢复段）拿原始编号去 `delete`。编号一旦不等（事件侧给文件名/UUID），信号就永远留在表里，后续抬头与文案拿到的是旧快照。三处统一先算 canonical 再清，提醒键的比较也跟着用同一个键。
+
+  ② 「这一轮是不是我们自己发的『继续哈』」以前只看文字里有没有这三个字：用户自己打「继续哈」会被当成 App 发的，旧故障账就永远不清；循环也不会让位给活人。现在要求两头对上——文字里有它，且最近 30 秒内我们真的往这段对话发过（`rememberOwnResume` / `forgetOwnResume`，发送前记、失败删；记在发送前是因为钩子可能在拿到回包前就跑了）。
+
+  ③ 手动「这次接几轮」起循环时 `loopRegistry.start` 没带伙伴名与窗口名，状态里这两项一直是空。现在先把 `describeSession` 的结果拿到再起步，名字一并存进循环状态。
+
+  没改的一处：`pumpResume` 里卡住复核那一段（`const review = ...` 到 `resumeSignals.set(...)`）缩进比同级少两格，读代码容易误判作用域。逻辑没错，重排要动四十多行纯空白，先留着，下次真正改那段时顺手理。
+
+  验证：`node --check index.js` 通过；`node --test tests/resume-watch.test.js tests/continue-loop.test.js tests/queue-plan.test.js tests/send.test.js` 70 通过；`node --experimental-vm-modules --test tests/app-tool.test.js tests/voice-routes.test.js` 97 通过；Python `unittest`（app_bridge / queue_bridge / queue_panel / queue_receipt / resume_dialog / ask_dialog）122 通过 / 1 跳过。三条旧测试改成新形态（不再断言已删的勾选控件，改断言「这些控件不存在」）。**实机验收未做**：重载后先看续接专页里只剩「这次接几轮」，再手动接 3 轮验证后续那两句仍然接得上。manifest 版本、简介、README 未动。
+
+- 2026-10-23 | 记录 | **排查时误触：用 .NET 写文件时路径解析到了工作台根目录（零内容损失）**
+
+  用 `[System.IO.File]::ReadAllLines("index.js")` 想给一段代码加缩进，而 PowerShell 的 `cd` 只改 PowerShell 自己的位置，不改 .NET 进程的当前目录（当时是 `L:\哈娜的工作台`），于是读写都落到了工作台根目录那个 `index.js` 上。它原本就是 0 字节的空文件，读出来是空数组、循环里取到 null 报错、回写后仍是 0 字节——**没有丢失任何内容**（若有内容，回写不会变成 0 字节）。项目里的 `index.js` 未受影响（行数与 diff 都对得上）。教训：用 .NET 文件 API 一律传绝对路径；改代码用 read/edit，不用 shell 回写。
+
 - 2026-10-23 | 修复 | **手动「接 N 轮」只发得出第一句：失败轮不算「这一轮走完了」，循环永远等不到下一句**
 
   实机：手动选「接 2 轮」，第一句「继续哈」发出去了，第二句没有，面板停在 1/2，循环还一直挂着。

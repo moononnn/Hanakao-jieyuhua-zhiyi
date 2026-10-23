@@ -657,7 +657,7 @@ class AppBallBridge:
             if path == "/resume/action":
                 # 球 → App：用户点了「继续哈 / 不用管 / 自动续接开关 / 循环相关」。
                 action = str(body.get("action") or "").strip()
-                if action not in ("continue", "dismiss", "auto", "config", "loop-start", "loop-stop", "loop-resume", "loop-finish", "loop-prefs"):
+                if action not in ("continue", "dismiss", "auto", "config", "loop-stop", "loop-resume", "loop-finish"):
                     return 400, {"ok": False, "error": "操作类型无效"}
                 config = body.get("config")
                 if action == "config" and (not isinstance(config, dict) or not config
