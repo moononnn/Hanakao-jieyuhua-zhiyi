@@ -24,6 +24,19 @@ const toolsPage = document.getElementById('tools-page');
 const toolsGrid = document.getElementById('tools-grid');
 const openVoiceButton = document.getElementById('open-voice');
 const voiceBackButton = document.getElementById('voice-back');
+const openQueueButton = document.getElementById('open-queue');
+const queueBackButton = document.getElementById('queue-back');
+const queueView = document.getElementById('queue-view');
+const queueTarget = document.getElementById('queue-target');
+const queueInput = document.getElementById('queue-input');
+const queueRoundsDown = document.getElementById('queue-rounds-down');
+const queueRoundsUp = document.getElementById('queue-rounds-up');
+const queueRoundsValue = document.getElementById('queue-rounds');
+const queueStatusRow = document.getElementById('queue-status-row');
+const queueStatus = document.getElementById('queue-status');
+const queueStopButton = document.getElementById('queue-stop');
+const queueCancelButton = document.getElementById('queue-cancel');
+const queueSendButton = document.getElementById('queue-send');
 const polishPage = document.getElementById('polish-page');
 const polishInput = document.getElementById('polish-input');
 const polishRequire = document.getElementById('polish-require');
@@ -98,6 +111,8 @@ const VOICE_LIST_PANEL_HEIGHT = 460;
 const VOICE_READER_PANEL_HEIGHT = 560;
 const POLISH_PANEL_HEIGHT = 420;
 const TOOLS_PANEL_HEIGHT = 240;
+// 排队那层比格子高：输入框、轮数行、提示、状态、按钮都要摆下。
+const QUEUE_PANEL_HEIGHT = 420;
 const MAX_PANEL_HEIGHT = 560;
 // 面板现在有三页：推荐回复、小工具、帮我理顺。页签与页面一一对应，切页时一起换。
 const PANEL_PAGES = [
@@ -105,8 +120,14 @@ const PANEL_PAGES = [
   { key: 'tools', tab: toolsTab, page: toolsPage },
   { key: 'polish', tab: polishTab, page: polishPage },
 ];
-// 小工具那页有两层：入口格子，和从格子里进去的朗读。记住停在哪一层。
+// 小工具那页现在有三层：入口格子、朗读、排队发送。记住停在哪一层。
 let toolsSubView = 'grid';
+
+// 排队发送：跟球上那个弹窗共用同一份话单，这里只是另一个入口。
+let queueRounds = 1;
+let queueBusy = false;
+let queuePollTimer = null;
+let queuePollSeq = 0;
 // 理顺这一页的状态：最初那版原话是安全锚点，上一版结果是「迭代」的依据。
 // 两者都只活在这一页里，换会话就清掉。
 let polishSource = '';
@@ -148,6 +169,11 @@ function syncPanelContext(context) {
     if (polishQueueButton) polishQueueButton.hidden = true;
     if (polishSendButton) polishSendButton.hidden = true;
     setPolishStatus('');
+    // 换了一段对话，排队草稿也得清掉（那句话是写给上一段 ta 的）；
+    // 排队本身跟对话走，面板只负责把新会话的状态重新拉一遍。
+    if (queueInput) queueInput.value = '';
+    setQueueStatus('');
+    if (queueStopButton) queueStopButton.hidden = true;
     // 换了一段对话，上一段的起名结果不能跟过来（那句话说的是别的窗口）。
     renaming = false;
     renameButton.disabled = false;
@@ -155,6 +181,8 @@ function syncPanelContext(context) {
     setSlugNote('');
     if (activePage === 'tools' && toolsSubView === 'voice') {
       void loadVoiceReplies({ force: true });
+    } else if (activePage === 'tools' && toolsSubView === 'queue') {
+      void refreshQueueState();
     } else {
       refreshVoiceButton.disabled = false;
       refreshVoiceButton.textContent = '刷新';
@@ -698,21 +726,156 @@ async function speakCurrent() {
   }
 }
 
-// 小工具那页的两层：格子（grid）和朗读（voice）。
-// 切页签一律回到格子那层；朗读里的播放器自己管退路（返回列表 → 返回小工具）。
+// ── 排队发送（面板这一侧）──
+// 跟球上那个弹窗是同一套东西：一行一句、每句排 N 轮、能看进度能停。
+// 两边共用 App 里的同一份话单，所以这里排的跟球上排的是同一件事。
+function renderQueueRounds() {
+  if (queueRoundsValue) queueRoundsValue.textContent = String(queueRounds);
+  if (queueRoundsDown) queueRoundsDown.disabled = queueRounds <= 1;
+  if (queueRoundsUp) queueRoundsUp.disabled = queueRounds >= 50;
+}
+
+function stepQueueRounds(delta) {
+  const next = Math.max(1, Math.min(50, queueRounds + Number(delta || 0)));
+  if (next === queueRounds) return;
+  queueRounds = next;
+  renderQueueRounds();
+}
+
+function setQueueStatus(text, tone = '') {
+  if (queueStatus) {
+    queueStatus.textContent = String(text || '');
+    queueStatus.dataset.tone = tone;
+  }
+  if (queueStatusRow) queueStatusRow.hidden = !text;
+}
+
+/** 把服务端的状态铺到界面上。排队真的在跑才亮「停」。 */
+function applyQueueState(state) {
+  const active = state?.active === true;
+  if (active) {
+    setQueueStatus(String(state?.text || '正在排队'));
+    if (queueStopButton) queueStopButton.hidden = false;
+    return;
+  }
+  // 没在排：上一次发送的回执（tone=ok）先留着，别让 2 秒后的轮询把它抹了。
+  if (queueStatus?.dataset.tone === 'ok') {
+    if (queueStopButton) queueStopButton.hidden = true;
+    return;
+  }
+  setQueueStatus('');
+  if (queueStopButton) queueStopButton.hidden = true;
+}
+
+async function refreshQueueState() {
+  const sessionId = panelSessionId();
+  if (!sessionId || toolsSubView !== 'queue') return;
+  const seq = ++queuePollSeq;
+  try {
+    const response = await hana.api.fetch(`/queue-plan/state?sessionId=${encodeURIComponent(sessionId)}`);
+    const payload = await response.json();
+    if (seq !== queuePollSeq || toolsSubView !== 'queue') return;
+    if (payload?.ok !== true) return;
+    applyQueueState(payload);
+  } catch {
+    // 轮询失败安静忽略：下一轮再试，不往界面上喷错。
+  }
+}
+
+function startQueuePolling() {
+  stopQueuePolling();
+  queuePollTimer = setInterval(() => void refreshQueueState(), 2000);
+}
+
+function stopQueuePolling() {
+  if (queuePollTimer) {
+    clearInterval(queuePollTimer);
+    queuePollTimer = null;
+  }
+  queuePollSeq += 1;
+}
+
+async function sendQueuePlan() {
+  const sessionId = panelSessionId();
+  const text = String(queueInput?.value || '').trim();
+  if (!sessionId) {
+    setQueueStatus('没认出这是哪段对话。', 'warn');
+    return;
+  }
+  if (!text) {
+    setQueueStatus('先写一句要发的话。', 'warn');
+    return;
+  }
+  if (queueBusy) return;
+  queueBusy = true;
+  if (queueSendButton) queueSendButton.disabled = true;
+  try {
+    const response = await hana.api.fetch('/queue-plan/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, text, rounds: queueRounds }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(payload?.error || '没排上，再试一次。');
+    }
+    if (queueInput) queueInput.value = '';
+    setQueueStatus(String(payload.message || '排上了。'), 'ok');
+    await refreshQueueState();
+  } catch (error) {
+    setQueueStatus(String(error?.message || '没排上，再试一次。').slice(0, 200), 'warn');
+  } finally {
+    queueBusy = false;
+    if (queueSendButton) queueSendButton.disabled = false;
+  }
+}
+
+async function stopQueuePlan() {
+  const sessionId = panelSessionId();
+  if (queueStopButton) queueStopButton.disabled = true;
+  try {
+    const response = await hana.api.fetch('/queue-plan/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '停不下来。');
+    setQueueStatus(payload.stopped === true ? '停了，不再往下发了' : '本来就没在排', 'ok');
+    if (queueStopButton) queueStopButton.hidden = true;
+  } catch (error) {
+    setQueueStatus(String(error?.message || '停不下来，再试一次。').slice(0, 200), 'warn');
+  } finally {
+    if (queueStopButton) queueStopButton.disabled = false;
+  }
+}
+
+// 小工具那页的三层：格子（grid）、朗读（voice）、排队发送（queue）。
+// 切页签一律回到格子那层；里面各自管自己的退路（返回小工具）。
 async function showToolsView(sub = 'grid') {
-  toolsSubView = sub === 'voice' ? 'voice' : 'grid';
-  const inVoice = toolsSubView === 'voice';
-  if (toolsGrid) toolsGrid.hidden = inVoice;
+  const next = sub === 'voice' ? 'voice' : sub === 'queue' ? 'queue' : 'grid';
+  toolsSubView = next;
+  const inVoice = next === 'voice';
+  const inQueue = next === 'queue';
+  if (toolsGrid) toolsGrid.hidden = inVoice || inQueue;
   voiceListView.hidden = !inVoice;
+  if (queueView) queueView.hidden = !inQueue;
   if (!inVoice) {
-    // 回到格子：朗读器收起来，别把上一段稿子留在那儿。
+    // 离开朗读：朗读器收起来，别把上一段稿子留在那儿。
     voiceReaderView.hidden = true;
     readerNote.textContent = '';
     retryVoiceButton.hidden = true;
   }
-  if (!inVoice) {
+  if (!inQueue) stopQueuePolling();
+  if (next === 'grid') {
     await setPanelHeight(TOOLS_PANEL_HEIGHT);
+    return;
+  }
+  if (inQueue) {
+    renderQueueRounds();
+    await setPanelHeight(QUEUE_PANEL_HEIGHT);
+    await refreshQueueState();
+    startQueuePolling();
     return;
   }
   const reading = !voiceReaderView.hidden;
@@ -737,7 +900,9 @@ async function showPage(page) {
     await showToolsView('grid');
     return;
   }
-  // 离开小工具：音频停掉，朗读的稿子也收起来（跟以前切走朗读页一样）。
+  // 离开小工具：轮询停掉、排队层收起来，音频停掉，朗读的稿子也收起来。
+  stopQueuePolling();
+  if (queueView) queueView.hidden = true;
   if (!replyAudio.paused) replyAudio.pause();
   if (!voiceReaderView.hidden && !replyAudio.src) {
     voiceReadSequence += 1;
@@ -755,9 +920,16 @@ async function showPage(page) {
 recommendTab.addEventListener('click', () => void showPage('recommend'));
 toolsTab.addEventListener('click', () => void showPage('tools'));
 polishTab.addEventListener('click', () => void showPage('polish'));
-// 小工具里的两格：重新命名标题（就地跑）、朗读（进子视图）。
+// 小工具里的三格：重新命名标题（就地跑）、朗读（进子视图）、排队发送（进子视图）。
 openVoiceButton?.addEventListener('click', () => void showToolsView('voice'));
 voiceBackButton?.addEventListener('click', () => void showToolsView('grid'));
+openQueueButton?.addEventListener('click', () => void showToolsView('queue'));
+queueBackButton?.addEventListener('click', () => void showToolsView('grid'));
+queueCancelButton?.addEventListener('click', () => void showToolsView('grid'));
+queueSendButton?.addEventListener('click', () => void sendQueuePlan());
+queueStopButton?.addEventListener('click', () => void stopQueuePlan());
+queueRoundsDown?.addEventListener('click', () => stepQueueRounds(-1));
+queueRoundsUp?.addEventListener('click', () => stepQueueRounds(1));
 refreshVoiceButton.addEventListener('click', () => void loadVoiceReplies({ force: true }));
 readerBackButton.addEventListener('click', () => {
   voiceReadSequence += 1;

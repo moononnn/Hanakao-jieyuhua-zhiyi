@@ -3359,6 +3359,65 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
 
+    // 面板里的「排队发送」：跟球上那个弹窗共用同一份话单，两边看到的是同一个状态。
+    // 面板是 App 自己的页面，能自己带输入框，所以不受「宿主不告诉 App 输入框草稿」的限制。
+    app.get("/queue-plan/state", async (c) => {
+      const sessionId = String(c.req?.query?.("sessionId") || "").trim();
+      let plan = sessionId ? queuePlans.get(sessionId) : null;
+      // 面板可能挂在另一段对话上：只有一份在跑时按它显示，跟球那边同一套认法。
+      if (!plan) {
+        const running = queuePlans.list().filter((item) => item.status === "running");
+        if (running.length === 1) plan = running[0];
+      }
+      return c.json({
+        ok: true,
+        active: Boolean(plan && plan.status === "running"),
+        status: plan?.status || "",
+        text: plan ? describeQueuePlan(plan) : "",
+        done: Number(plan?.done || 0),
+        total: Number(plan?.total || 0),
+        sessionId: plan?.sessionId || "",
+      });
+    });
+    app.post("/queue-plan/start", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!sessionId) return c.json({ ok: false, error: "没认出这是哪段对话。" }, 400);
+      try {
+        const result = await startQueuePlan({
+          sessionId,
+          text: String(body?.text || ""),
+          rounds: body?.rounds,
+        });
+        if (result?.ok === false) return c.json({ ok: false, error: String(result.error || "没排上。") }, 400);
+        return c.json({
+          ok: true,
+          message: String(result?.message || ""),
+          total: Number(result?.total || 0),
+          done: Number(result?.done || 0),
+        });
+      } catch (error) {
+        await sdk.logger.warn("面板排队话单失败", { code: error?.code || "QUEUE_ERROR" });
+        return c.json({ ok: false, error: String(error?.message || "没排上，再试一次。").slice(0, 200) }, 500);
+      }
+    });
+    app.post("/queue-plan/stop", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      // 按面板给的会话找；找不到就停当前唯一在跑的那份（跟球上同一个意思：
+      // 用户按「停」是「别再往下发了」，不一定精确指认了哪一段）。
+      let targetId = String(body?.sessionId || "").trim();
+      if (!queuePlans.get(targetId)) {
+        const running = queuePlans.list().filter((item) => item.status === "running");
+        if (running.length === 1) targetId = running[0].sessionId;
+      }
+      const stopped = queuePlans.stop(targetId, "用户按了停");
+      if (stopped.ok) await sdk.logger.info("排队话单已被面板停止");
+      await pushQueueState(null, { message: stopped.ok ? "停了，不再往下发了" : "本来就没在排" });
+      return c.json({ ok: true, stopped: stopped.ok === true });
+    });
+
     // 面板里直接改常用回复：增、删、改都落到同一份设置里（设置页那边刷新也看得到）。
     app.post("/suggest-panel/quick-replies", async (c) => {
       let body;

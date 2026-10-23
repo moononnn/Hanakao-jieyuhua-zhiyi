@@ -851,6 +851,96 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 .polish-status[data-tone="ok"] { color: var(--primary-deep); }
 .polish-status[data-tone="warn"] { color: var(--pink); }
 
+/* ── 排队发送（小工具里的一层）── */
+.queue-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* display:flex 会盖掉 hidden 属性，这行不能省。 */
+.queue-view[hidden] { display: none; }
+
+.queue-input {
+  min-height: 92px;
+  max-height: 170px;
+  resize: none;
+}
+
+.queue-rounds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.queue-step {
+  width: 26px;
+  height: 24px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--primary-deep);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.queue-step:hover:not(:disabled) { border-color: var(--primary); }
+.queue-step:disabled { cursor: default; opacity: .45; }
+
+.queue-rounds-value {
+  min-width: 26px;
+  text-align: center;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.queue-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.queue-status-row { display: flex; align-items: center; gap: 8px; }
+.queue-status-row[hidden] { display: none; }
+
+.queue-status {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.queue-status[data-tone="ok"] { color: var(--primary-deep); }
+.queue-status[data-tone="warn"] { color: var(--pink); }
+
+.queue-stop {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--pink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 3px 10px;
+  cursor: pointer;
+  flex: none;
+}
+
+.queue-stop:hover:not(:disabled) { border-color: var(--pink); }
+.queue-stop:disabled { cursor: default; opacity: .7; }
+
+.queue-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.queue-actions .polish-run { flex: none; }
+.queue-actions .polish-send { flex: 1; text-align: center; }
+
 @media (prefers-reduced-motion: reduce) {
   .reader-back, .reader-mark, .player-toggle, .volume-toggle, .speed-button { transition: none; }
 }

@@ -159,3 +159,24 @@ test("输入框面板提供逐词朗读页与自定义播放器", async () => {
   assert.match(quickButtonRule, /overflow-wrap:\s*anywhere/);
   assert.doesNotMatch(quickButtonRule, /text-overflow:\s*ellipsis/);
 });
+
+test("小工具页的「排队发送」：跟球上那个弹窗同一套控件，共用 /queue-plan 三条路由", async () => {
+  const html = await read("ui/suggest-panel.html");
+  const script = await read("ui/assets/suggest-panel.js");
+  const css = await read("ui/assets/suggest-panel.css");
+  // 格子入口 + 子视图的控件：输入框、每句排几轮、停、就这么发。
+  assert.match(html, /id="open-queue"[^>]*class="tool-tile"/);
+  assert.match(html, /id="queue-input"/);
+  assert.match(html, /id="queue-rounds-down"/);
+  assert.match(html, /id="queue-rounds-up"/);
+  assert.match(html, /id="queue-stop"/);
+  assert.match(html, /id="queue-send"[^>]*>就这么发/);
+  // 三条路由都要接上，不然面板排不了、也看不到进度。
+  assert.match(script, /\/queue-plan\/state/);
+  assert.match(script, /\/queue-plan\/start/);
+  assert.match(script, /\/queue-plan\/stop/);
+  // 轮数跟球上一致：1..50。
+  assert.match(script, /Math\.max\(1, Math\.min\(50,/);
+  // 排队那层要能自己关掉：display:flex 会把 hidden 属性盖掉，必须显式处理。
+  assert.match(css, /\.queue-view\[hidden\]\s*\{\s*display:\s*none/);
+});

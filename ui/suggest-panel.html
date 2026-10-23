@@ -78,6 +78,16 @@
             <span class="tool-tile-hint">听听 ta 刚说了什么</span>
           </span>
         </button>
+
+        <button id="open-queue" class="tool-tile" type="button">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M4 6h12M4 10h8M4 14h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path><path d="M14.5 12.5v4m0 0 1.8-1.8m-1.8 1.8-1.8-1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label">排队发送</span>
+            <span class="tool-tile-hint">等 ta 说完这一轮再送进去</span>
+          </span>
+        </button>
       </div>
 
       <p id="slug-note" class="slug-note" role="status" aria-live="polite"></p>
@@ -160,6 +170,42 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 排队发送：跟球上那个弹窗同一套东西（一行一句、每句排 N 轮、能看进度能停），
+           两处共用同一份话单，所以这里只是另一个入口。 -->
+      <div id="queue-view" class="queue-view" hidden>
+        <div class="voice-head">
+          <div>
+            <button id="queue-back" class="reader-back" type="button" aria-label="返回小工具">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <span>小工具</span>
+            </button>
+            <strong id="queue-target">当前对话</strong>
+          </div>
+        </div>
+
+        <textarea id="queue-input" class="polish-input queue-input" rows="4" spellcheck="false" placeholder="一行一句。写一句排一句，写几句就一轮一句往下推。"></textarea>
+
+        <div class="queue-rounds">
+          <span class="queue-rounds-label">每句排</span>
+          <button id="queue-rounds-down" class="queue-step" type="button" aria-label="少排一轮">−</button>
+          <output id="queue-rounds" class="queue-rounds-value" aria-live="polite">1</output>
+          <span class="queue-rounds-unit">轮</span>
+          <button id="queue-rounds-up" class="queue-step" type="button" aria-label="多排一轮">＋</button>
+        </div>
+
+        <p class="queue-hint">等 ta 说完这一轮再发；你自己开口它就停；最多 50 轮。</p>
+
+        <div id="queue-status-row" class="queue-status-row" hidden>
+          <p id="queue-status" class="queue-status" role="status" aria-live="polite"></p>
+          <button id="queue-stop" class="queue-stop" type="button">停</button>
+        </div>
+
+        <div class="queue-actions">
+          <button id="queue-cancel" class="polish-run" type="button">取消</button>
+          <button id="queue-send" class="polish-send" type="button">就这么发</button>
         </div>
       </div>
     </section>

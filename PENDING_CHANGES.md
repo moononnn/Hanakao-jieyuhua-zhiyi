@@ -1,5 +1,21 @@
 # 未发布改动
 
+- 2026-10-23 | 新功能 | **输入栏面板的小工具页新增「排队发送」：不开传音樱也能排队**
+
+  用户的理由：不是所有人都愿意一直开着传音樱，所以做了输入栏上方的快捷面板，把能挪进来的功能都挪进来。
+
+  为什么能挪：那个面板是 App 自己的页面，可以自己带输入框，所以不受「宿主只告诉 App 哪段对话、不告诉它输入框草稿」的限制（这条限制只管输入栏下方那排按钮，inputStatus）。
+
+  改法：
+  ① `index.js` 新增三条前端路由：`GET /queue-plan/state`、`POST /queue-plan/start`、`POST /queue-plan/stop`，直接复用现有排队引擎（`queuePlans` / `startQueuePlan` / `pumpQueue`），不另写一套。两边排的是同一份话单，所以状态天然互通。
+  ② `suggest-panel.html`：小工具页的格子从两格变三格（起名、朗读、排队发送）；新增排队子视图，控件与球上那个弹窗一致：一行一句的输入框、「每句排 N 轮」步进（1～50）、提示行、状态行 + 停、取消 / 就这么发。
+  ③ `suggest-panel.js`：小工具层从两层变三层（grid / voice / queue）；排队层打开时每 2 秒拉一次状态，离开就停轮询；换会话时清掉草稿（那句话是写给上一段 ta 的）；面板高度 420。
+  ④ `suggest-panel.css`：新增 `.queue-*` 一套，沿用现有颜色变量；`.queue-view[hidden]` 显式 `display:none`（display:flex 会把 hidden 属性盖掉）。
+
+  没动的：「帮我理顺」页一个字未改（包括它那个「排队发给 ta」按钮），按用户意思两件事不硬融合。球上那个排队入口保留。
+
+  验证：`node --check index.js` 通过；`suggest-panel.js` 以 .mjs 副本过 `node --check` 通过；`node --experimental-vm-modules --test tests/app-tool.test.js tests/voice-routes.test.js tests/suggest-panel-ui.test.js tests/suggest-panel.test.js tests/queue-plan.test.js` 132 通过（新增 2 条：路由边界与 UI 结构）；`node --test tests/suggest-panel-ui.test.js` 8 通过。**实机验收未做**：重载后在输入栏点 🌸 → 小工具 → 排队发送，写两行、每句排 1 轮，点「就这么发」，应在对话里看到第一句发出、ta 回完后第二句接上；同时开球看两处进度是否一致。manifest 版本、简介、README 未动。
+
 - 2026-10-23 | 修复 | **断点续接排查出的三处真断点（循环那一半不听总开关 / 多窗口互吞判定 / 「接着来」后进度冻住）**
 
   起因：整体排查断点续接，从引擎（`lib/resume-watch.js`）、接线（`index.js` 的钩子、事件、桥轮询、路由）、球侧专页到设置页通读一遍。主干是通的，问题集中在「循环续接」这一半。

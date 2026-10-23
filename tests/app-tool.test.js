@@ -1046,6 +1046,37 @@ test("面板「起名」只改面板所在那段对话，不用「最近活跃�
   assert.equal(guardMock.modelCalls.length, 0, "不知道改哪段就不该先花一次模型钱");
 });
 
+test("面板里的排队发送：没会话、没内容都不往下走；状态查询不炸", async () => {
+  const mock = createContext({ sessionList: [] });
+  await registeredTool(mock);
+  const jsonOf = (data, status) => ({ data, status });
+
+  const noSession = await mock.route("POST", "/queue-plan/start")({
+    req: { json: async () => ({ text: "在吗" }) },
+    json: jsonOf,
+  });
+  assert.equal(noSession.data.ok, false);
+  assert.match(noSession.data.error, /哪段对话/);
+
+  const empty = await mock.route("POST", "/queue-plan/start")({
+    req: { json: async () => ({ sessionId: "sess_this", text: "   " }) },
+    json: jsonOf,
+  });
+  assert.equal(empty.data.ok, false);
+  assert.match(empty.data.error, /先写一句/);
+
+  const state = await mock.route("GET", "/queue-plan/state")({ json: jsonOf });
+  assert.equal(state.data.ok, true);
+  assert.equal(state.data.active, false);
+
+  const stop = await mock.route("POST", "/queue-plan/stop")({
+    req: { json: async () => ({ sessionId: "sess_this" }) },
+    json: jsonOf,
+  });
+  assert.equal(stop.data.ok, true);
+  assert.equal(stop.data.stopped, false, "本来就没在排，不该假装停成功");
+});
+
 test("queued send goes through session:send with followUp, no local queue state", async () => {
   const mock = createContext({
     sessionList: [
