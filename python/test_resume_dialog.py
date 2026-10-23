@@ -550,6 +550,41 @@ class ResumeDialogTests(unittest.TestCase):
         raise_panel.assert_not_called()
 
 
+    def test_resume_rounds_stepper_bounds_and_button_text(self):
+        """「这次接几轮」：1~10 之间，步进到头就停，按钮上直接写出这次要接几轮。"""
+        m = self.menu
+        self.open_notice()
+        self.assertEqual(m._resume_rounds, 1)
+        self.assertEqual(m.btn_resume_continue.text(), "继续哈")
+        m._step_resume_rounds(1)
+        m._step_resume_rounds(1)
+        self.assertEqual(m._resume_rounds, 3)
+        self.assertEqual(m.btn_resume_continue.text(), "接 3 轮")
+        for _ in range(20):
+            m._step_resume_rounds(1)
+        self.assertEqual(m._resume_rounds, 10, "上限 10")
+        for _ in range(20):
+            m._step_resume_rounds(-1)
+        self.assertEqual(m._resume_rounds, 1, "下限 1")
+        self.assertEqual(m.btn_resume_continue.text(), "继续哈")
+
+    def test_continue_action_carries_rounds(self):
+        """点「继续哈」要把这次接几轮一起发回去，App 才知道要不要接着往下接。"""
+        m = self.menu
+        self.open_notice()
+        m._step_resume_rounds(1)
+        captured = {}
+
+        def fake_post(payload, on_done=None):
+            captured.update(payload)
+
+        with patch.object(ui.ZhujianMenu, "_post_resume_action", side_effect=fake_post):
+            m._resume_send_continue()
+        self.assertEqual(captured.get("action"), "continue")
+        self.assertEqual(captured.get("rounds"), 2)
+        self.assertTrue(captured.get("sessionId"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -15,7 +15,7 @@ import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeSleepGuard, 
 // 发布前连同 lib/idle-probe.js 与下面的工具注册一起删掉（见 PENDING_CHANGES），不影响守门功能。
 import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from "./lib/idle-probe.js";
 import { sampleIdleSnapshot, summarizeSnapshot } from "./lib/idle-watch.js";
-import { ContinueLoopRegistry, describeLoop, shouldJudgeLoop } from "./lib/continue-loop.js";
+import { ContinueLoopRegistry, describeLoop, planManualResume, shouldJudgeLoop } from "./lib/continue-loop.js";
 // 排队话单：球上写一句或一串话，等 ta 这一轮说完就送进去；一串话一轮一条往下推。
 import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRounds } from "./lib/queue-plan.js";
 import {
@@ -1576,7 +1576,28 @@ activeFusionServiceDispose = disposeFusionService;
     } else if (action.action === "continue") {
       // 手动发送也受总开关和逐次请求守卫约束，提交成功仍须等待真实恢复。
       if (!sessionId || !resumeConfig.enabled) return;
-      if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
+      // 「这次接几轮」：1 轮 = 只发一句「继续哈」（原行为）；
+      // N 轮 = 第一句发完，之后每轮说完自动接上，ta 说收工就停下来问用户。
+      const plan = planManualResume(action.rounds);
+      if (plan.mode === "loop") {
+        // 同一段对话上只留一样：连着接几轮与排队话单互斥。
+        if (queuePlans.get(sessionId)) {
+          queuePlans.stop(sessionId, "改用连着接几轮");
+          await pushQueueState(null, { message: "改用连着接几轮，排队话单停了" });
+        }
+        // 先起循环（往后那几轮归它管），再发第一句；
+        // 第一句没送出去就把循环收掉，别让它空转着等一个不会来的回复。
+        const started = loopRegistry.start({ sessionId, rounds: plan.loopRounds });
+        if (!started.ok) {
+          await sdk.logger.warn(`连着接 ${plan.loopRounds + 1} 轮没起步：${String(started.error || "").slice(0, 120)}`);
+        } else if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
+          await sdk.logger.info(`手动续接：这次接 ${plan.loopRounds + 1} 轮`);
+          if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
+          await pushLoopState(started.state);
+        } else {
+          loopRegistry.stop(sessionId, "第一句没发出去");
+        }
+      } else if (await sendResumeContinue(sessionId, "", { epoch: resumeEpoch })) {
         if (resumeNoticeKey === sessionId && resumeNoticeSource !== "loop_confirm") await pushResumeNotice(null);
       }
       await pushResumeProgress();

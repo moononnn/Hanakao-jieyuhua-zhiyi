@@ -9,8 +9,32 @@ import {
   LOOP_MIN_GAP_MS,
   looksLikeFinished,
   normalizeLoopRounds,
+  planManualResume,
   shouldJudgeLoop,
 } from "../lib/continue-loop.js";
+
+test("「这次接几轮」：1 轮只发一句，N 轮留给循环的是 N-1", () => {
+  assert.deepEqual(planManualResume(1), { mode: "single", loopRounds: 0 });
+  assert.deepEqual(planManualResume(undefined), { mode: "single", loopRounds: 0 });
+  assert.deepEqual(planManualResume(0), { mode: "single", loopRounds: 0 });
+  assert.deepEqual(planManualResume(3), { mode: "loop", loopRounds: 2 });
+  assert.deepEqual(planManualResume("5"), { mode: "loop", loopRounds: 4 });
+  assert.deepEqual(planManualResume(99), { mode: "loop", loopRounds: 9 });
+});
+
+test("接 N 轮：第一句发出去后，循环自己还会接着发 N-1 句", () => {
+  const plan = planManualResume(3);
+  const loop = new ContinueLoopRegistry({ now: () => 0 });
+  loop.start({ sessionId: "s", rounds: plan.loopRounds });
+  let fired = 0;
+  for (let i = 0; i < 6; i += 1) {
+    const decision = loop.decideAfterTurn("s", { assistantText: "还在往下做", now: 0 });
+    if (decision?.action !== "continue") break;
+    fired += 1;
+    loop.markFired("s", 0);
+  }
+  assert.equal(fired, plan.loopRounds, "循环该发的句数 = N-1（第一句已经单独发出去了）");
+});
 
 test("轮数收敛到 1~50，非法值回到默认", () => {
   assert.equal(normalizeLoopRounds(1), 1);

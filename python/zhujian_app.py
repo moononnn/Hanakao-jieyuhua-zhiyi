@@ -2991,6 +2991,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._resume_hidden_sig = None    # 用户点了「不用管」的那条指纹，同一条不打回
         self._resume_deferred_sig = None  # 用户只是收起了面板：不再自动弹，但自己点开仍要看得到
         self._resume_ask_pending_sig = None  # 提问期间到的提醒：提问一让位就补上，不能跟着沉底
+        self._resume_rounds = 1  # 「这次接几轮」：一次性动作参数，不是全局设置
         self._resume_sending = False      # 「继续哈」发送中，防重复点击
         self._resume_auto = False         # 全局自动续接配置，App 推快照同步
         self._resume_enabled = False      # 旧桥缺省关闭；progress 本身绝不唤起面板
@@ -3673,6 +3674,40 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         details.setContentsMargins(0, 0, 0, 0)
         details.setSpacing(12)
         details.addWidget(self.resume_body)
+        # 「这次接几轮」：一次性动作参数，不是设置（全局上限在知意设置页）。
+        # 1 轮 = 现在的行为（只发一句「继续哈」）；N 轮 = 第一句发完，之后每轮说完自动接上，
+        # ta 说收工就停下来问用户。
+        self.resume_rounds_row = QFrame()
+        self.resume_rounds_row.setObjectName("resumeRounds")
+        rounds_layout = QVBoxLayout(self.resume_rounds_row)
+        rounds_layout.setContentsMargins(12, 10, 12, 10)
+        rounds_layout.setSpacing(6)
+        rounds_title = QLabel("这次接几轮")
+        rounds_title.setObjectName("toolTitle")
+        rounds_layout.addWidget(rounds_title)
+        rounds_row = QHBoxLayout()
+        rounds_row.setSpacing(6)
+        self.btn_resume_rounds_minus = QPushButton("−")
+        self.lbl_resume_rounds = QLabel("1")
+        self.btn_resume_rounds_plus = QPushButton("＋")
+        for button, delta in ((self.btn_resume_rounds_minus, -1), (self.btn_resume_rounds_plus, 1)):
+            button.setObjectName("loopStep")
+            button.setFixedSize(30, 28)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip("少一轮" if delta < 0 else "多一轮")
+            button.clicked.connect(lambda _checked=False, step=delta: self._step_resume_rounds(step))
+        self.lbl_resume_rounds.setObjectName("loopValue")
+        self.lbl_resume_rounds.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_resume_rounds.setFixedWidth(34)
+        rounds_row.addWidget(self.btn_resume_rounds_minus)
+        rounds_row.addWidget(self.lbl_resume_rounds)
+        rounds_row.addWidget(self.btn_resume_rounds_plus)
+        self.lbl_resume_rounds_hint = QLabel("这次最多连着接这么几轮；ta 说做完了就停。")
+        self.lbl_resume_rounds_hint.setObjectName("loopRoundsLabel")
+        self.lbl_resume_rounds_hint.setWordWrap(True)
+        rounds_row.addWidget(self.lbl_resume_rounds_hint, 1)
+        rounds_layout.addLayout(rounds_row)
+        details.addWidget(self.resume_rounds_row)
         # 现有按钮/配置原位搬迁，信号与端点不变。动作条独立于滚动内容。
         body_layout = self.resume_body.layout()
         actions = body_layout.takeAt(2).layout()
@@ -3767,7 +3802,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             self._render_resume_empty()
         screen = self.ball.screen() or QApplication.primaryScreen()
         # 设置区搬去设置页之后这页内容不多，固定到 560 会留一大片空：按内容给个紧凑高度。
-        height = min(420, max(260, screen.availableGeometry().height() - 48))
+        height = min(360, max(300, screen.availableGeometry().height() - 48))
         self.setFixedHeight(height)
         self.setWindowOpacity(1.0)
         self._cancel_fade()
@@ -3790,6 +3825,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.btn_resume_continue.setText("继续哈")
         self.btn_resume_dismiss.setEnabled(False)
         self.btn_resume_dismiss.show()
+        self._render_resume_rounds()
         self.btn_loop_finish.hide()
         for widget in (self.chk_loop_after_resume, self.lbl_loop_rounds, self.btn_loop_minus,
                        self.lbl_loop_value, self.btn_loop_plus, self.lbl_loop_unit):
@@ -3910,6 +3946,9 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             }}
             QFrame#resumeCard {{
                 background: {c['surface_alt']}; border: 1px solid {c['border']}; border-radius: 12px;
+            }}
+            QFrame#resumeRounds {{
+                background: transparent; border: 1px solid {c['border']}; border-radius: 12px;
             }}
             QLabel#resumeFrom {{
                 color: {c['accent_deep']}; font-size: 13px; font-weight: 700;
@@ -4543,15 +4582,35 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.lbl_resume_reason.setText(text)
         self.lbl_resume_status.setText("当前状态：等待你决定是否续接")
         self.btn_resume_continue.setEnabled(not self._resume_sending)
-        self.btn_resume_continue.setText("继续哈")
         self.btn_resume_dismiss.setEnabled(True)
         # 循环跑到收工话时，这张卡问的是“还接着吗”，得换成「接着来 / 就到这吧」，
         # 并把循环设置藏起来（这时不该让人再去调轮数）。
         is_loop_confirm = str(notice.get("source") or "") == "loop_confirm"
-        self.btn_resume_continue.setText("接着来" if is_loop_confirm else "继续哈")
         self.btn_loop_finish.setVisible(is_loop_confirm)
         self.btn_resume_dismiss.setVisible(not is_loop_confirm)
+        self._render_resume_rounds()
         self._render_resume_auto()
+
+    def _render_resume_rounds(self):
+        """「这次接几轮」那一行。按钮上直接写出这次要接几轮，别让人自己对两处。"""
+        has_notice = bool(self._resume_notice)
+        self.lbl_resume_rounds.setText(str(self._resume_rounds))
+        self.btn_resume_rounds_minus.setEnabled(has_notice and self._resume_rounds > 1)
+        self.btn_resume_rounds_plus.setEnabled(has_notice and self._resume_rounds < 10)
+        is_loop_confirm = str((self._resume_notice or {}).get("source") or "") == "loop_confirm"
+        if is_loop_confirm:
+            self.btn_resume_continue.setText("接着来")
+        elif self._resume_rounds > 1:
+            self.btn_resume_continue.setText(f"接 {self._resume_rounds} 轮")
+        else:
+            self.btn_resume_continue.setText("继续哈")
+
+    def _step_resume_rounds(self, delta):
+        value = max(1, min(10, self._resume_rounds + int(delta)))
+        if value == self._resume_rounds:
+            return
+        self._resume_rounds = value
+        self._render_resume_rounds()
 
     def _render_resume_auto(self):
         self.btn_resume_auto.setChecked(self._resume_auto)
@@ -4724,16 +4783,19 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self.lbl_resume_status.setText("当前状态：正在提交续接请求…")
         # 循环确认卡上的「接着来」不是普通续接，得告诉 App“继续这个循环”。
         action = "loop-resume" if str(notice.get("source") or "") == "loop_confirm" else "continue"
+        payload = {"action": action, "sessionId": session_id}
+        if action == "continue":
+            # 「这次接几轮」：N>1 时 App 会在第一句之后接着往下接。
+            payload["rounds"] = self._resume_rounds
         self._post_resume_action(
-            {"action": action, "sessionId": session_id},
+            payload,
             on_done=self._after_resume_continue,
         )
 
     def _after_resume_continue(self, ok, error):
         self._resume_sending = False
         self.btn_resume_continue.setEnabled(True)
-        is_loop = str((self._resume_notice or {}).get("source") or "") == "loop_confirm"
-        self.btn_resume_continue.setText("接着来" if is_loop else "继续哈")
+        self._render_resume_rounds()
         if ok:
             self.lbl_resume_status.setText("当前状态：已提交续接请求，等待确认")
         else:
