@@ -20,6 +20,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   const sendCalls = [];
   const sessionListCalls = [];
   const inputStatusCalls = [];
+  const inputBannerCalls = [];
   const panelShows = [];
   const panelDismisses = [];
   const logs = { info: [], warn: [], debug: [] };
@@ -92,6 +93,10 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
       },
     },
     inputStatus: { set: async (input) => { inputStatusCalls.push({ ...input }); } },
+    inputBanner: {
+      set: async (input) => { inputBannerCalls.push({ kind: "set", ...input }); },
+      dismiss: async (input) => { inputBannerCalls.push({ kind: "dismiss", ...input }); },
+    },
     resources: {
       stage: async (input) => {
         stagedFiles.push({ ...input, content: await readFile(input.path, "utf8") });
@@ -145,6 +150,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     sendCalls,
     sessionListCalls,
     inputStatusCalls,
+    inputBannerCalls,
     panelShows,
     panelDismisses,
     logs,
@@ -1075,6 +1081,27 @@ test("面板里的排队发送：没会话、没内容都不往下走；状态�
   });
   assert.equal(stop.data.ok, true);
   assert.equal(stop.data.stopped, false, "本来就没在排，不该假装停成功");
+});
+
+test("排队一开始就在输入框上方挂提示条，写清轮次与文案", async () => {
+  const mock = createContext({
+    sessionList: [
+      { path: "D:/hana/agents/hanako/sessions/a.jsonl", sessionId: "sess_this", agentId: "hanako", modified: 10 },
+    ],
+  });
+  await registeredTool(mock);
+  const started = await mock.route("POST", "/queue-plan/start")({
+    req: { json: async () => ({ sessionId: "sess_this", text: "在吗\n等一下", rounds: 1 }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(started.data.ok, true, started.data.error);
+  // 提示条是异步挂的（不阻塞排队本身），等一个回合。
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const banner = mock.inputBannerCalls.filter((item) => item.kind === "set").pop();
+  assert.ok(banner, "排队跑起来就该挂一条提示");
+  assert.equal(banner.bannerId, "zhiyi-queue");
+  assert.match(banner.text, /排队中 第 1\/2 轮/);
+  assert.match(banner.text, /在吗/);
 });
 
 test("queued send goes through session:send with followUp, no local queue state", async () => {

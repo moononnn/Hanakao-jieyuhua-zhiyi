@@ -1135,11 +1135,93 @@ activeFusionServiceDispose = disposeFusionService;
     return /timeout|超时|ETIMEDOUT/i.test(`${error?.code || ""} ${error?.message || ""}`);
   }
 
+  /**
+   * 输入框上方那条排队提示：排队在跑的时候挂上，写清楚排的是什么、排到第几轮。
+   * 跟球开没开无关——不开传音樱的人也该看得见自己在排队。
+   * 用户自己把这条关掉后，这一轮排队内不再重挂（不跟人抢）。
+   */
+  const QUEUE_BANNER_ID = "zhiyi-queue";
+  const queueBannerPaths = new Map();   // sessionId → sessionPath（挂提示条要路径）
+  const queueBannerMuted = new Set();   // 用户手动关过的会话
+
+  async function resolveQueueBannerPath(sessionId) {
+    const id = String(sessionId || "");
+    if (!id) return "";
+    const cached = queueBannerPaths.get(id);
+    if (cached) return cached;
+    try {
+      const target = await resolveResumeTarget({ sessionId: id });
+      const path = String(target?.path || "");
+      if (path) queueBannerPaths.set(id, path);
+      return path;
+    } catch {
+      return "";
+    }
+  }
+
+  /** 一条提示只讲两件事：排到第几轮、排的是什么。 */
+  function describeQueueBanner(plan) {
+    const items = Array.isArray(plan?.items) ? plan.items : [];
+    const preview = items
+      .map((item) => String(item?.text || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .join(" / ");
+    const done = Number(plan?.done || 0);
+    const total = Number(plan?.total || 0);
+    // 说「第几轮」而不是「已发几句」：用户关心的是现在等到第几轮了。
+    // done 是已发句数：刚排上（0）算第 1 轮在发，发完第 1 句就等第 1 轮回复。
+    const round = Math.min(Math.max(1, done), Math.max(1, total));
+    const head = total ? `排队中 第 ${round}/${total} 轮` : "排队中";
+    const body = preview.length > 80 ? `${preview.slice(0, 80)}…` : preview;
+    return body ? `${head} · ${body}` : head;
+  }
+
+  async function syncQueueBanner(plan) {
+    const sessionId = String(plan?.sessionId || "");
+    const sessionPath = sessionId ? await resolveQueueBannerPath(sessionId) : "";
+    try {
+      if (!plan || !sessionPath || queueBannerMuted.has(sessionId)) {
+        if (sessionPath) await sdk.inputBanner.dismiss({ sessionPath, bannerId: QUEUE_BANNER_ID });
+        return;
+      }
+      await sdk.inputBanner.set({
+        sessionPath,
+        bannerId: QUEUE_BANNER_ID,
+        text: describeQueueBanner(plan),
+      });
+    } catch (error) {
+      // 挂不上就算了：这只是提示，不能因为一条提示条把排队本身带坏。
+      safeLog.debug("排队提示条没挂上", { error: String(error?.message || error).slice(0, 120) });
+    }
+  }
+
+  /** 用户把提示条关掉了：这一轮排队内不再重挂。 */
+  function noteQueueBannerDismissed(event, sessionPath) {
+    const kind = String(event?.kind || "");
+    if (kind !== "dismissed") return false;
+    const id = String(event?.sessionId || "");
+    if (id) {
+      queueBannerMuted.add(id);
+      return true;
+    }
+    for (const [sid, path] of queueBannerPaths) {
+      if (path && path === String(sessionPath || "")) {
+        queueBannerMuted.add(sid);
+        return true;
+      }
+    }
+    return true;
+  }
+
   /** 把话单状态推给球：主面板靠它显示「排队中 第 n/N 轮」和停止按钮。 */
   async function pushQueueState(state, extra = {}) {
-    if (!ball.state().running) return;
     const current = state || queuePlans.list().find((item) => item.status === "running") || null;
     const active = Boolean(current && current.status === "running");
+    // 提示条先挂：它不依赖球是否开着。
+    void syncQueueBanner(active ? current : null);
+    // 这一轮排队结束后才清「用户关过」的标记；跑着的时候不碰，否则关了又马上重挂。
+    if (!active) queueBannerMuted.clear();
+    if (!ball.state().running) return;
     const body = {
       // ok 必须带上：球那边拿到回包先看 ok，少了这个字段就一直当成「没排上」——
       // 明明排上了，弹窗里也会报一句「知意那边没回话」。
@@ -2389,6 +2471,8 @@ activeFusionServiceDispose = disposeFusionService;
             .catch(() => {});
           return;
         }
+        // 输入框上方那条排队提示：用户手动关掉时记一笔，这一轮排队内不再重挂。
+        if (String(event?.type || "").includes(":banner") && noteQueueBannerDismissed(event, sessionPath)) return;
         void handleResumeEvent(event, sessionPath);
       }, {});
       resumeEventsAvailable = true;
