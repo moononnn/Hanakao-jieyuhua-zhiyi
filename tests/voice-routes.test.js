@@ -59,6 +59,8 @@ function createContext({
     tools: { register: async (spec) => { registered.set(spec.name, spec); return { ready: Promise.resolve() }; } },
     routes: { register: async (registrar) => {
       registrar({
+        // 宿主自带 app.use 中间件链；测试只断言处理器结果，这里当空操作。
+        use: () => {},
         get: (routePath, handler) => routes.set(`GET ${routePath}`, handler),
         post: (routePath, handler) => routes.set(`POST ${routePath}`, handler),
         put: (routePath, handler) => routes.set(`PUT ${routePath}`, handler),

@@ -1,0 +1,808 @@
+/* panel-layout.css — 知意设置页的骨架：单栏内容。
+   切换页面的事交给宿主的左侧栏（permission-panel.html），这里不再放第二套导航。
+   配色/字体/卡片外观继续用 panel.css 里的变量和 .settings-section。
+   命名一律带 zy- 前缀，避免跟旧样式撞车。
+   注意：这个文件里只能用注释符号包起来写注释，双斜杠会把后面第一条规则整条吞掉。 */
+
+/* ── 骨架 ── */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.workspace {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 38px 46px 80px;
+}
+.workspace-inner { max-width: 900px; margin: 0 auto; }
+
+.view { display: none; }
+.view.on { display: block; animation: zy-fade .22s ease; }
+@keyframes zy-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 页头：一条横线把"这是哪一页"和下面的设置分开，
+   让内容看着是一页，而不是一大片连着的表单。 */
+.view-head {
+  margin: 0 0 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.view-head h1 {
+  margin: 0 0 6px;
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: .01em;
+}
+.view-head p {
+  margin: 0;
+  max-width: 620px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 新结构里卡片之间靠 gap，不靠 section 自带的 margin-top */
+.view .settings-section { margin-top: 0; margin-bottom: 12px; }
+.view .settings-section:last-child { margin-bottom: 0; }
+
+/* ── 概览 ── */
+.zy-ov-card {
+  padding: 8px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 5px 18px rgba(66, 86, 65, .05);
+  margin-bottom: 12px;
+}
+/* 警示块只有上外边距，紧接的下一块会贴死；这里把下半边的呼吸补上，
+   只补相邻的那一个，不去动摇其他位置的间距。 */
+.permission-note + .zy-ov-card { margin-top: 14px; }
+.permission-note + .ball-status { margin-top: 12px; }
+.zy-ov {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 2px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.zy-ov + .zy-ov { border-top: 1px dashed var(--line); }
+.zy-ov:hover { background: rgba(71, 122, 102, .05); }
+.zy-ov-mark {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--mint);
+  color: var(--mint-deep);
+  font-size: 13px;
+}
+.zy-ov.is-off .zy-ov-mark { background: rgba(128, 138, 130, .12); color: var(--muted); }
+.zy-ov-copy { flex: 1 1 auto; min-width: 0; }
+.zy-ov-title { margin: 0; font-size: 13.6px; font-weight: 600; }
+.zy-ov-desc { margin: 2px 0 0; color: var(--muted); font-size: 12.2px; line-height: 1.65; }
+/* 关机那一行的警告：得让它在灰描述里自己跳出来，但不要变成一整个红块。 */
+.zy-ov-alert {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: #fdf0f1;
+  color: #9c5a62;
+  font-weight: 600;
+  line-height: 1.6;
+}
+html[data-appearance="dark"] .zy-ov-alert { background: rgba(217, 138, 148, .16); color: #efbfc6; }
+.zy-ov.is-off .zy-ov-title { color: var(--muted); }
+.zy-ov-go { flex: 0 0 auto; color: var(--muted); font-size: 11.5px; }
+
+/* 概览行里的实按钮：关机那一行要能直接上手，不只是“去看看”。 */
+.zy-ov-btn {
+  flex: 0 0 auto;
+  padding: 5px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--mint-deep);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.zy-ov-btn:hover { background: var(--mint); border-color: #cfe2d7; }
+.zy-ov-btn:focus-visible { outline: 2px solid #5dae8e; outline-offset: 1px; }
+.zy-ov-btn:disabled { opacity: .6; cursor: default; }
+.zy-ov-btn[data-armed="1"] {
+  border-color: #eccdd5;
+  background: #fbf1f3;
+  color: #a4576a;
+}
+.zy-ov-btn[data-armed="1"]:hover { background: #f7e6ea; }
+html[data-appearance="dark"] .zy-ov-btn[data-armed="1"] {
+  border-color: #6a4650;
+  background: #3a2a30;
+  color: #f0bcc8;
+}
+
+/* 拨杆：只给概览用，点了走去改真实控件的状态。
+   比原来小一号、绿降一档——概览是用来"看状态"的，不该抢在导航前面。 */
+.zy-tg {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 20px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: rgba(128, 138, 130, .16);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease;
+}
+.zy-tg i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(53, 73, 62, .18);
+  transition: transform .2s ease;
+}
+.zy-tg.on { background: #7cbb9f; border-color: #74b195; }
+.zy-tg.on i { transform: translateX(14px); }
+html[data-appearance="dark"] .zy-tg.on { background: #6aa98d; border-color: #6aa98d; }
+
+/* 传音樱那个原生胶囊开关留着给 panel.js 管状态，但概览里用拨杆作主入口 */
+.zy-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 概览里的子设置 */
+.zy-ov-sub {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 2px 14px 46px;
+  padding: 11px 13px;
+  border-left: 2px solid var(--mint);
+  border-radius: 0 10px 10px 0;
+  background: rgba(71, 122, 102, .05);
+}
+.zy-ov-sub .zy-ov-title { font-size: 12.9px; }
+.zy-ov-sub .zy-ov-desc { font-size: 12px; }
+
+/* 子项的分组标题：下面这两条开关都属于传音樱，父卡片挪到页头后得自己报个名 */
+.zy-ov-group-title {
+  margin: 2px 2px 8px 46px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+
+/* 不可点的说明行：右侧只报状态，开关在页头 */
+.zy-ov.is-static:hover { background: transparent; }
+.zy-ov-state {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.zy-ov-state.is-on { color: var(--mint-deep); font-weight: 600; }
+.zy-tg.sm { width: 30px; height: 18px; }
+.zy-tg.sm i { width: 12px; height: 12px; }
+.zy-tg.sm.on i { transform: translateX(12px); }
+
+/* 概览卡片底部的状态脚注：两行并成一行，别在页尾站成两垛灰字 */
+.zy-ov-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  padding: 10px 2px 4px;
+  border-top: 1px dashed var(--line);
+}
+.zy-ov-foot .ball-status {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  opacity: .9;
+}
+
+/* ── 跟知意说说：小窗 ── */
+.zy-chat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(28, 38, 33, .34);
+}
+.zy-chat-overlay[hidden] { display: none; }
+
+.zy-chat-box {
+  width: min(560px, 100%);
+  max-height: min(78vh, 680px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 18px 50px rgba(38, 54, 45, .26);
+}
+
+.zy-chat-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.zy-chat-kicker {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  color: var(--muted);
+  opacity: .8;
+}
+#refine-chat-title { margin: 2px 0 0; font-size: 17px; font-weight: 600; }
+.zy-chat-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.zy-chat-close:hover { background: rgba(71, 122, 102, .1); color: var(--ink); }
+
+.zy-chat-log {
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: 38vh;
+  margin: 14px 0 0;
+  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+.zy-chat-row { display: flex; }
+.zy-chat-row.user { justify-content: flex-end; }
+.zy-chat-bubble {
+  margin: 0;
+  max-width: 84%;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.zy-chat-row.assistant .zy-chat-bubble {
+  background: var(--mint);
+  color: var(--ink);
+  border-bottom-left-radius: 5px;
+}
+.zy-chat-row.user .zy-chat-bubble {
+  background: var(--mint-deep);
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+html[data-appearance="dark"] .zy-chat-row.user .zy-chat-bubble { color: #16221b; }
+
+/* 建议区：确认之前只是看一眼，不落盘 */
+.zy-chat-suggest {
+  margin: 12px 0 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(71, 122, 102, .05);
+}
+.zy-chat-suggest[hidden] { display: none; }
+.zy-chat-suggest-title {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mint-deep);
+}
+.zy-chat-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 26vh;
+  overflow-y: auto;
+}
+.zy-chat-plan-item {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.zy-chat-plan-head { display: flex; align-items: center; gap: 7px; }
+.zy-chat-plan-head strong { font-size: 13px; font-weight: 600; }
+.zy-chat-plan-tag {
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(128, 138, 130, .14);
+  color: var(--muted);
+  font-size: 10px;
+}
+.zy-chat-plan-item.is-add .zy-chat-plan-tag { background: #e7f1e9; color: #3f7d64; }
+.zy-chat-plan-item.is-update .zy-chat-plan-tag { background: #f7e8eb; color: #a4576a; }
+.zy-chat-plan-intent { margin: 3px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink); }
+.zy-chat-plan-before {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.zy-chat-plan-actions { display: flex; gap: 8px; margin-top: 11px; }
+
+.zy-chat-form { margin: 12px 0 0; }
+#refine-chat-input {
+  width: 100%;
+  min-height: 54px;
+  max-height: 120px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+#refine-chat-input:focus { outline: 2px solid #5dae8e; outline-offset: 1px; }
+.zy-chat-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 9px; }
+.zy-chat-send, .zy-chat-apply {
+  padding: 7px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--mint-deep);
+  color: #fff;
+  font: inherit;
+  font-size: 12.8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+html[data-appearance="dark"] .zy-chat-send,
+html[data-appearance="dark"] .zy-chat-apply { color: #16221b; }
+.zy-chat-send:disabled, .zy-chat-apply:disabled { opacity: .6; cursor: default; }
+.zy-chat-ghost {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.zy-chat-ghost:hover { background: rgba(71, 122, 102, .08); }
+.zy-chat-ghost:disabled { opacity: .6; cursor: default; }
+
+/* ── 小屏 ── */
+@media (max-width: 760px) {
+  .app-shell { height: auto; min-height: 100vh; overflow: visible; }
+  .workspace { padding: 18px 15px 40px; }
+  .view-head h1 { font-size: 21px; }
+  .zy-ov-sub { margin-left: 12px; }
+  .zy-ov-group-title { margin-left: 12px; }
+}
+
+/* ── 反馈：右上角入口 + 弹窗 ── */
+.zy-head-with-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.zy-head-copy { min-width: 0; }
+
+/* 页头右侧：传音樱胶囊 + 反馈，并排一行 */
+.zy-head-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.zy-head-actions .zy-fb-fab { margin-top: 0; }
+
+.zy-fb-fab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 8px 14px 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--mint-deep);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(66, 86, 65, .07);
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+.zy-fb-fab:hover { border-color: var(--mint-deep); background: var(--mint); }
+.zy-fb-fab:active { transform: translateY(1px); }
+.zy-fb-fab svg { opacity: .85; }
+
+.zy-fb-overlay { align-items: center; justify-content: center; }
+.zy-fb-box {
+  width: min(480px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(30, 45, 36, .26);
+  overflow: hidden;
+}
+.zy-fb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.zy-fb-kicker {
+  margin: 0 0 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  color: var(--muted);
+  opacity: .8;
+}
+.zy-fb-head h2 { margin: 0; font-size: 16.5px; font-weight: 600; }
+.zy-fb-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.zy-fb-close:hover { background: rgba(71, 122, 102, .1); color: var(--ink); }
+
+.zy-fb-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 30vh;
+  margin: 16px 0 0;
+  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow-y: auto;
+}
+.zy-fb-row { display: flex; }
+.zy-fb-row.user { justify-content: flex-end; }
+.zy-fb-bubble {
+  margin: 0;
+  max-width: 86%;
+  padding: 10px 13px;
+  border-radius: 15px;
+  font-size: 12.8px;
+  line-height: 1.68;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.zy-fb-row.assistant .zy-fb-bubble { background: var(--mint); color: var(--ink); border-bottom-left-radius: 6px; }
+.zy-fb-row.user .zy-fb-bubble { background: var(--mint-deep); color: #fff; border-bottom-right-radius: 6px; }
+html[data-appearance="dark"] .zy-fb-row.user .zy-fb-bubble { color: #16221b; }
+
+/* 等回复：三个点自己呼吸。亮的时候轻抬 1px，节奏不均（0 / .16 / .40），
+   像手在键盘上零星敲，不像机器在转圈。暗号取自茶话会那套。 */
+.zy-typing { display: inline-flex; align-items: center; gap: 4px; }
+.zy-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: zy-typing-blink 1.5s ease-in-out infinite;
+}
+.zy-typing i:nth-child(2) { width: 5.4px; height: 5.4px; animation-delay: .16s; }
+.zy-typing i:nth-child(3) { width: 6.2px; height: 6.2px; animation-delay: .40s; }
+@keyframes zy-typing-blink {
+  0%, 72%, 100% { opacity: .35; transform: translateY(0); }
+  28% { opacity: .95; transform: translateY(-1px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zy-typing i { animation: none; opacity: .6; }
+}
+.zy-fb-row.is-waiting .zy-fb-bubble {
+  color: var(--mint-deep);
+  padding: 12px 14px;
+}
+.zy-chat-row.is-waiting .zy-chat-bubble { color: var(--mint-deep); }
+
+.zy-fb-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.zy-fb-thumbs[hidden] { display: none; }
+.zy-fb-thumb {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(66, 86, 65, .08);
+}
+.zy-fb-thumb img { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: cover; display: block; }
+.zy-fb-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 17px;
+  height: 17px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(20, 28, 24, .6);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zy-fb-result {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid rgba(71, 122, 102, .18);
+  border-radius: 15px;
+  background: rgba(71, 122, 102, .055);
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.zy-fb-result[hidden] { display: none; }
+.zy-fb-field { display: block; margin-bottom: 10px; }
+.zy-fb-field > span {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: var(--mint-deep);
+}
+.zy-fb-field input,
+.zy-fb-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.zy-fb-field input:focus,
+.zy-fb-field textarea:focus { outline: none; border-color: var(--mint-deep); }
+.zy-fb-field textarea { resize: vertical; }
+.zy-fb-exits { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.zy-fb-primary {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--mint-deep);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.zy-fb-primary:hover { filter: brightness(1.06); }
+.zy-fb-ghost {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.zy-fb-ghost:hover { border-color: var(--mint-deep); color: var(--mint-deep); }
+.zy-fb-hint { margin: 9px 0 0; font-size: 10.5px; color: var(--muted); line-height: 1.6; }
+
+.zy-fb-compose { margin-top: 14px; }
+.zy-fb-inputwrap {
+  padding: 10px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--paper, #f7faf6);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.zy-fb-inputwrap:focus-within {
+  border-color: var(--mint-deep);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(71, 122, 102, .1);
+}
+#feedback-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 2px 3px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.8px;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+}
+#feedback-input::placeholder { color: var(--muted); opacity: .75; }
+.zy-fb-actions { display: flex; align-items: center; gap: 8px; }
+.zy-fb-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.zy-fb-tool:hover { background: rgba(71, 122, 102, .1); color: var(--mint-deep); }
+.zy-fb-note {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  opacity: .8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zy-fb-send {
+  flex: 0 0 auto;
+  padding: 7px 17px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--mint-deep);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.zy-fb-send:disabled { opacity: .5; cursor: default; }
+.zy-fb-send:hover:not(:disabled) { filter: brightness(1.06); }
+
+.zy-fb-head-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* 发出去的消息带图：气泡下面一排小图，点一下看大图 */
+.zy-fb-row.user.is-rich { flex-direction: column; align-items: flex-end; gap: 6px; }
+.zy-fb-sent { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.zy-fb-sent-thumb {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--paper, #f7faf6);
+  cursor: zoom-in;
+  transition: border-color .15s ease;
+}
+.zy-fb-sent-thumb:hover { border-color: var(--mint-deep); }
+.zy-fb-sent-thumb img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.zy-fb-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(14, 20, 17, .86);
+}
+.zy-fb-lightbox[hidden] { display: none; }
+.zy-fb-lightbox-image {
+  max-width: min(1100px, 94vw);
+  max-height: 88vh;
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .38);
+}
+.zy-fb-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.zy-fb-lightbox-close:hover { background: rgba(255, 255, 255, .24); }
+.zy-fb-error {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: #faedf0;
+  color: #8f4e57;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.zy-fb-error[hidden] { display: none; }
+html[data-appearance="dark"] .zy-fb-error { background: rgba(217, 138, 148, .16); color: #e8b3bb; }
+
+.zy-fb-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.zy-fb-choices[hidden] { display: none; }
+.zy-fb-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper, #f7faf6);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.zy-fb-choice:hover { border-color: var(--mint-deep); background: var(--mint); }
+.zy-fb-choice-title { font-size: 13px; font-weight: 600; }
+.zy-fb-choice-sub { font-size: 11.5px; color: var(--muted); }
+.zy-fb-choice-note { margin: 2px 2px 0; font-size: 10.5px; color: var(--muted); line-height: 1.6; }
+
+.zy-fb-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.zy-fb-body[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .zy-head-with-action { gap: 12px; }
+  .zy-fb-fab { padding: 7px 12px; font-size: 12px; }
+  .zy-fb-box { padding: 16px 15px 13px; border-radius: 18px; }
+  .zy-fb-thumb { width: 52px; height: 52px; }
+  .zy-fb-note { white-space: normal; font-size: 10px; text-align: right; }
+}
+

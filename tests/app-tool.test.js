@@ -75,6 +75,8 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     },
     routes: { register: async (registrar) => {
       registrar({
+        // 宿主自带 app.use 中间件链；测试只断言处理器结果，这里当空操作。
+        use: () => {},
         get: (path, handler) => routes.set(`GET ${path}`, handler),
         post: (path, handler) => routes.set(`POST ${path}`, handler),
         put: (path, handler) => routes.set(`PUT ${path}`, handler),
@@ -312,6 +314,10 @@ test("panel full-module resume initialization and DOM interactions", { skip: !vm
     if (specifier === "./permission-status.js") return new vm.SyntheticModule(["initPermissionStatus"], function () {
       this.setExport("initPermissionStatus", () => {});
     }, { context });
+    // 主题跟随是纯展示副作用（读本地主题文件改 class），DOM 测试里不需要真的跟。
+    if (specifier === "./theme-report.js") return new vm.SyntheticModule(["followHostTheme"], function () {
+      this.setExport("followHostTheme", () => {});
+    }, { context });
     throw new Error(`unexpected import ${specifier}`);
   });
   await module.evaluate();
@@ -478,17 +484,20 @@ test("permission labels show scope accurately and unknown states fail closed", (
 });
 
 test("permission state appears in settings and the host function panel", async () => {
-  const [html, functionPanel, manifest] = await Promise.all([
+  const [html, navPanel, manifest] = await Promise.all([
     readFile(new URL("../ui/panel.html", import.meta.url), "utf8"),
     readFile(new URL("../ui/permission-panel.html", import.meta.url), "utf8"),
     readFile(new URL("../manifest.json", import.meta.url), "utf8").then(JSON.parse),
   ]);
+  // 权限清单只在设置页的「权限与诊断」那一页里展示，只读。
+  assert.match(html, /id="view-perm"/);
   assert.match(html, /permission-status-list/);
-  assert.match(functionPanel, /permission-status-list/);
-  assert.match(functionPanel, /只读取状态/);
+  // 宿主功能面板现在是左侧栏导航（2026-10-24 改版），要能进到权限那一页，并且必须报到。
+  assert.match(navPanel, /data-view="perm"/);
+  assert.match(navPanel, /hana\.ready\(\)/);
   assert.equal(manifest.contributes.cards[0].fpFullPanel, true);
   assert.deepEqual(manifest.contributes.cards[0].functionPanel, {
-    id: "permissions", label: "权限状态", route: "/permission-panel.html",
+    id: "permissions", label: "知意", route: "/permission-panel.html",
   });
 });
 
@@ -502,8 +511,8 @@ test("summary settings use an accessible stepper and model picker without changi
   assert.match(html, /<output id="summary-min-chars"/);
   assert.match(html, /id="summary-retry"[^>]*hidden/);
   assert.doesNotMatch(html, /<select\b|type="number"/);
-  assert.match(html, /原文不会删改/);
-  assert.match(html, /保留当前数值/);
+  assert.match(html, /原文一个字都不动/);
+  assert.match(panel, /已保留原设置/);
   assert.match(panel, /let summaryLoaded = false;/);
   assert.match(panel, /if \(!summaryLoaded \|\| summarySaving \|\| !summarySettingsDirty\(\)\) return;/);
   assert.match(panel, /读取失败，设置已锁定/);
@@ -576,42 +585,38 @@ test("model settings expose a connection test and clear save feedback", async ()
   assert.match(panel, /content-model/);
 });
 
-test("settings page keeps common switches and moves the rest into one dialog", async () => {
-  const [html, panel] = await Promise.all([
+test("settings pages keep common switches on the overview and split the rest into views", async () => {
+  const [html, navPanel, layout] = await Promise.all([
     readFile(new URL("../ui/panel.html", import.meta.url), "utf8"),
-    readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8"),
+    readFile(new URL("../ui/permission-panel.html", import.meta.url), "utf8"),
+    readFile(new URL("../ui/assets/panel-layout.js", import.meta.url), "utf8"),
   ]);
-  // 常用开关留在主页面
+  // 常用开关留在概览页
   for (const id of ["ask-display", "rec-display", "rec-count", "summary-enabled", "ball-toggle"]) {
-    assert.ok(html.includes(`id="${id}"`), `主页面缺少 ${id}`);
+    assert.ok(html.includes(`id="${id}"`), `概览页缺少 ${id}`);
   }
-  // 传音樱不再占一张卡片：开关做成页头按钮，状态行紧跟页头
-  assert.match(html, /class="head-actions"/);
+  // 传音樱不再占一张卡片：开关做成页头按钮，状态行跟着页头
+  assert.match(html, /class="zy-head-actions"/);
   assert.match(html, /id="ball-toggle"[^>]*aria-pressed="false"/);
   assert.match(html, /id="ball-toggle-label"/);
-  assert.match(html, /id="ball-status"[^>]*page-ball-status/);
+  assert.match(html, /id="ball-status"/);
   assert.doesNotMatch(html, /id="ball-start"/);
   assert.doesNotMatch(html, /id="ball-stop"/);
-  assert.doesNotMatch(panel, /#ball-start|#ball-stop/);
-  // 首次使用提醒提到页面开头（在第一个 settings-section 之前）
-  assert.ok(html.indexOf("第一次使用") < html.indexOf('id="ask-display"'));
-  // 不常用的一律进弹窗，弹窗本体有 head / body / foot 三段，关闭键常驻
-  assert.match(html, /id="open-settings"/);
-  assert.match(html, /id="settings-modal"[^>]*hidden/);
-  assert.match(html, /class="modal-head"/);
-  assert.match(html, /class="modal-body"/);
-  assert.match(html, /class="modal-foot"/);
-  assert.match(html, /role="dialog" aria-modal="true"/);
-  for (const id of ["content-model-trigger", "custom-baseurl", "voice-section", "resume-section", "permission-status-list", "ball-modal-state"]) {
-    assert.ok(html.includes(`id="${id}"`), `弹窗缺少 ${id}`);
+  // 2026-10-24 改版：不再有设置弹窗，一页一件事，靠宿主左侧栏的导航切
+  assert.doesNotMatch(html, /id="settings-modal"/);
+  for (const view of ["view-overview", "view-chat", "view-summary", "view-voice", "view-auto", "view-resume", "view-models", "view-perm"]) {
+    assert.ok(html.includes(`id="${view}"`), `缺少分页 ${view}`);
   }
+  for (const view of ["overview", "chat", "summary", "voice", "auto", "resume", "models", "perm"]) {
+    assert.ok(navPanel.includes(`data-view="${view}"`), `导航缺少 ${view}`);
+  }
+  assert.match(layout, /function showView\(/);
   // 起标题 / 捋一捋 / 排队 / 试听这些功能不再占设置页，代码也一并收干净
+  const panel = await readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8");
   for (const gone of ["polish-input", "title-run", "send-input", "voice-replies", "voice-speak"]) {
     assert.doesNotMatch(html, new RegExp(`id="${gone}"`));
     assert.doesNotMatch(panel, new RegExp(`#${gone}`));
   }
-  assert.match(panel, /function openSettings\(\)/);
-  assert.match(panel, /if \(event\.target === settingsModal\) closeSettings\(\);/);
 });
 
 test("registers a model-facing Ask tool and scoped card handoff tools", async () => {

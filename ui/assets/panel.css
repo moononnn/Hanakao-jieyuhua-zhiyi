@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  --paper: var(--bg, #f7f4eb);
+  --paper: var(--bg, #f5f8f3);
   --surface: #fffdf8;
   --ink: var(--text, #35493e);
   --muted: var(--text-muted, #718077);
@@ -275,12 +275,12 @@ body.modal-open { overflow: hidden; }
 html[data-appearance="dark"] {
   color-scheme: dark;
   --paper: var(--bg, #202923);
-  --surface: #28342d;
+  --surface: #2f3c36;
   --ink: var(--text, #ecf2eb);
   --muted: var(--text-muted, #b1bcb3);
   --mint: #34483b;
   --mint-deep: #a5d0b5;
-  --line: #3c493f;
+  --line: #47564c;
 }
 html[data-appearance="dark"] .flower-mark { color: #edb4c0; background: #48343b; }
 html[data-appearance="dark"] .permission-note { border-color: #5b4244; background: #362b2c; }

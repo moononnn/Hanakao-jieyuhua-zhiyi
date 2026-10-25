@@ -31,10 +31,10 @@ html[data-appearance="dark"] {
   --primary-soft-2: #263a31;
   --pink: #d98a9f;
   --bg: #1b1f1d;
-  --card: #222725;
+  --card: #2a3230;
   --ink: #e6e9e3;
   --muted: #949c93;
-  --line: #333a35;
+  --line: #3f4a44;
   --shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
 
@@ -371,6 +371,25 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 }
 
 .tool-tile:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* 关机那张横跨两列：它比其它格都重，占一整行反而看着是故意的，不是落单。
+   横过来之后就把提示推到右边，像一条状态栏，免得右边空一大块。 */
+.tool-tile-wide { grid-column: 1 / -1; }
+
+.tool-tile-wide .tool-tile-body {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tool-tile-wide .tool-tile-hint { margin-left: auto; }
+
+/* 关机开着的时候，这张卡就一直是高亮的那一格 */
+.tool-tile[data-armed="1"]:not(:disabled) {
   border-color: var(--primary);
   background: var(--primary-soft);
 }
@@ -752,7 +771,9 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 .polish-input {
   display: block;
   width: 100%;
-  min-height: 128px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 96px;
   max-height: 240px;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -768,6 +789,49 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 }
 
 .polish-input:focus { border-color: var(--primary); background: var(--primary-soft); }
+
+/* 上下两块：上面是原稿，下面是理顺后的。原稿压得淡，结果用主色碰一下，
+   一眼看得出哪块是新写的，也不至于把页面弄花。 */
+.polish-block {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+/* 原稿压得淡一点、不起影子，让它看着像草稿；结果那块用白底 + 主色碰一下。 */
+.polish-block > .polish-input {
+  background: var(--bg);
+  box-shadow: none;
+}
+
+.polish-block + .polish-block { margin-top: 10px; }
+
+.polish-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.polish-tag {
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+
+.polish-tag-result { color: var(--primary-deep); }
+
+.polish-block-hint { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+
+.polish-block-result .polish-output {
+  border-color: var(--primary);
+  background: var(--card);
+  box-shadow: inset 3px 0 0 var(--primary);
+  padding-left: 13px;
+  min-height: 110px;
+}
+
+.polish-block-result .polish-output:focus { background: var(--primary-soft); }
 
 .polish-require {
   width: 100%;

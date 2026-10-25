@@ -239,6 +239,10 @@ class ResumeDialogTests(unittest.TestCase):
         self.assertEqual(m.lbl_feedback.toolTip(), '已改为：' + title)
         self.assertIn('…', m.lbl_target_info.text())
         self.assertIn('…', m.lbl_feedback.text())
+        # 工具行默认在折叠的「对话工具」里，展开后才能量真实宽度。
+        m.tools_body.setVisible(True)
+        m.tools_expanded = True
+        self.pump()
         for tool in (m.say_tool, m.rename_tool, m.polish_tool):
             self.assertLessEqual(tool.geometry().right(), m.main_scroll.viewport().width())
 
@@ -378,7 +382,8 @@ class ResumeDialogTests(unittest.TestCase):
         m.show()
         self.pump()
         self.assertTrue(m.resume_progress_scroll.isVisible())
-        self.assertTrue(m.btn_say.isVisible())
+        # 朗读入口已搬到每条回复的操作行，球里这一排收起来了。
+        self.assertFalse(m.say_tool.isVisible())
         self.assertFalse(m.btn_resume_entry.isVisible())
         m._apply_resume_state({"ok": True, "enabled": True, "progress": []})
         self.assertFalse(m.resume_progress_scroll.isVisible())

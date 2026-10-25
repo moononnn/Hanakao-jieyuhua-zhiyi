@@ -10,6 +10,8 @@ const PERMISSIONS = [
   { capability: 'app/agents.read', title: '读取伙伴名单', detail: '朗读前确定该叫哪个伙伴；未授权时会退回用会话名单冒充。' },
   { capability: 'app/session.start-turn', title: '在会话里发起对话回合', detail: '把传音樱上的答案送回来源对话并唤起伙伴回复；也用于明确点击的发送和续接。' },
   { capability: 'app/process.spawn', title: '运行桌面传音樱', detail: '还需要本机具备 Python 与 PyQt6。' },
+  { capability: 'app/ui.open-external', title: '打开外部链接', detail: '反馈里的「去提 issue」和邮件按钮靠它；没开就点不动。' },
+  { capability: 'app/ui.clipboard-write', title: '写剪贴板', detail: '把整理好的反馈正文复制给你；没开只能自己选中复制。' },
 ];
 
 const STATUS_LABELS = new Map([

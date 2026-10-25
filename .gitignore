@@ -5,6 +5,7 @@ dist/
 node_modules/
 *.log
 *.bak
+*.bak-*
 *.zip
 *.pyc
 __pycache__/

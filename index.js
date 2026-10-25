@@ -42,6 +42,7 @@ import { chatModelOptions, normalizeModelRef, reviewAskNeed, testAskModelConnect
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
+import { inputZoomStatus, installInputZoom, uninstallInputZoom } from "./lib/input-zoom.js";
 import { encryptionAvailable, encryptionStatus, protectKey } from "./lib/crypto.js";
 import {
   MAX_REPLY_CHARS,
@@ -70,8 +71,10 @@ import {
   restoreDefaultStyles,
   validatePlanStyles,
   refineStyles,
+  refineChat,
 } from "./lib/style-refine.js";
 import { buildShowStyleCardInput, buildShowStyleCardInstruction, buildStyleRefineCardDocument } from "./lib/style-card.js";
+import { chatFeedback, FEEDBACK_LIMITS } from "./lib/feedback-chat.js";
 import {
   maskCustomModelConfig,
   mergeCustomModelConfig,
@@ -1228,6 +1231,10 @@ activeFusionServiceDispose = disposeFusionService;
   function noteQueueBannerDismissed(event, sessionPath) {
     const kind = String(event?.kind || "");
     if (kind !== "dismissed") return false;
+    // 别把关机那条的关闭事件当成排队那条：两条并存时它们会互相误伤。
+    const payload = event?.payload ?? event?.data ?? event ?? {};
+    const bannerId = String(payload?.bannerId ?? event?.bannerId ?? "");
+    if (bannerId && bannerId !== QUEUE_BANNER_ID) return false;
     const id = String(event?.sessionId || "");
     if (id) {
       queueBannerMuted.add(id);
@@ -1238,6 +1245,159 @@ activeFusionServiceDispose = disposeFusionService;
         queueBannerMuted.add(sid);
         return true;
       }
+    }
+    return true;
+  }
+
+  /* ── 关机提示条 ──
+   * 挂在会话上的输入栏提示。要的是“切到哪个窗口都看得见”，
+   * 所以不只挂一条跟着人走，而是给最近用过的几段对话各挂一条。
+   * 她关掉哪一条，那一段就不再冒；关机取消时全部收掉。
+   */
+  const SHUTDOWN_BANNER_ID = "zhiyi-shutdown";
+  const SHUTDOWN_BANNER_MAX = 4;
+  /** 已经挂过的会话：path → 最后挂上去的文本 */
+  const shutdownBannerTexts = new Map();
+  /** 她手动关掉的会话（这次开机内不再重挂） */
+  const shutdownMutedPaths = new Set();
+  let shutdownBannerLoggedAt = 0;
+
+  function describeShutdownBanner() {
+    const described = describeSleepGuard();
+    if (described.armed !== true) return "";
+    const state = described.state || {};
+    if (state.status === "countdown") {
+      const left = Math.max(0, Math.round((described.countdownLeftMs || 0) / 1000));
+      return `${left} 秒后关机`;
+    }
+    const idleMin = Math.max(1, Math.round((state.idleMs || 0) / 60_000));
+    // 尾巴上那个时间不只是给她看的：内容每次都在变，宿主不会因为“一模一样”跳过重画。
+    const totalSec = Math.max(0, Math.round((described.sinceArmedMs || 0) / 1000));
+    const mm = Math.floor(totalSec / 60);
+    const ss = String(totalSec % 60).padStart(2, "0");
+    return `会自动关机：没动静满 ${idleMin} 分钟就开始倒数 · 已开 ${mm}:${ss}`;
+  }
+
+  /** 最近用过的几段对话：先查索引，查不到就直接问宿主要名单。 */
+  async function pickRecentSessionPaths(limit = SHUTDOWN_BANNER_MAX) {
+    const out = [];
+    try {
+      const snapshot = await readResumeSessionIndex();
+      const rows = [...(snapshot?.index?.byId?.values?.() || [])]
+        .filter((info) => info?.path && info.kind !== "subagent_child")
+        .sort((a, b) => Number(b.modified || 0) - Number(a.modified || 0));
+      for (const row of rows) {
+        if (out.length >= limit) break;
+        out.push(String(row.path));
+      }
+    } catch {
+      // 索引拿不到就走下面那条
+    }
+    if (out.length) return out;
+    try {
+      const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "active" }, { timeoutMs: 6_000 });
+      const rows = Array.isArray(listed) ? listed : listed?.sessions || [];
+      for (const row of rows) {
+        if (out.length >= limit) break;
+        const path = String(row?.path || row?.sessionPath || "");
+        if (path) out.push(path);
+      }
+    } catch {
+      // 拿不到就算了，下一轮再试
+    }
+    return out;
+  }
+
+  async function dismissShutdownBanner(path) {
+    shutdownBannerTexts.delete(path);
+    await sdk.inputBanner.dismiss({ sessionPath: path, bannerId: SHUTDOWN_BANNER_ID }).catch(() => {});
+  }
+
+  async function syncShutdownBanner() {
+    const text = describeShutdownBanner();
+    if (!text) {
+      for (const path of [...shutdownBannerTexts.keys()]) await dismissShutdownBanner(path);
+      return;
+    }
+    const paths = await pickRecentSessionPaths();
+    if (!paths.length) {
+      safeLog.debug("关机提示条没有会话可挂", {});
+      return;
+    }
+    let changed = false;
+    for (const path of paths) {
+      if (shutdownMutedPaths.has(path)) continue;
+      try {
+        await sdk.inputBanner.set({
+          sessionPath: path,
+          bannerId: SHUTDOWN_BANNER_ID,
+          text,
+          // 按了就当场取消这次关机；点 × 只是收起这条提示，两件事分开。
+          buttons: [{ id: "cancel", title: "取消关机", action: { kind: "notify-plugin" } }],
+        });
+        if (shutdownBannerTexts.get(path) !== text) {
+          shutdownBannerTexts.set(path, text);
+          changed = true;
+        }
+      } catch (error) {
+        safeLog.warn("关机提示条没挂上", { error: String(error?.message || error).slice(0, 120) });
+      }
+    }
+    // 掉出“最近”名单的那些收掉，别让它们在冷会话里长住。
+    for (const path of [...shutdownBannerTexts.keys()]) {
+      if (paths.includes(path)) continue;
+      await dismissShutdownBanner(path);
+    }
+    // 文本每秒都在变，日志每 5 分钟留一条就够，否则会把日志刷满。
+    if (changed && Date.now() - shutdownBannerLoggedAt > 5 * 60_000) {
+      shutdownBannerLoggedAt = Date.now();
+      safeLog.info(`关机提示条挂到 ${paths.length} 段对话：${text}`);
+    }
+  }
+
+  /** 她换窗口说话了：确保那一段也在名单里。 */
+  function noteShutdownActiveSession(sessionPath) {
+    const path = String(sessionPath || "");
+    if (!path || shutdownBannerTexts.has(path)) return;
+    void syncShutdownBanner();
+  }
+
+  /** 用户把关机条关掉了：只关这一条，别的窗口里那条还在。 */
+  function noteShutdownBannerEvent(event, sessionPath) {
+    const payload = event?.payload ?? event?.data ?? event ?? {};
+    const kind = String(payload?.kind ?? event?.kind ?? "");
+    if (kind !== "dismissed" && kind !== "button") return false;
+    const bannerId = String(payload?.bannerId ?? event?.bannerId ?? "");
+    if (bannerId && bannerId !== SHUTDOWN_BANNER_ID) return false;
+    if (!shutdownBannerTexts.size) return false;
+
+    // 按了「取消关机」：真的把这次计划取消。宿主只管通知，条子要我们自己摘。
+    if (kind === "button") {
+      safeLog.info("提示条上点了取消关机，开始取消");
+      void (async () => {
+        try {
+          await cancelSleepGuard(sdk, "在提示条上点了取消");
+          safeLog.info("关机已取消（来自提示条）");
+        } catch (error) {
+          safeLog.warn("从提示条取消失败", { error: String(error?.message || error).slice(0, 120) });
+        }
+        await syncShutdownBanner();
+      })();
+      return true;
+    }
+
+    // 点 ×：只是收起这条提示，关机还在。
+    const path = String(payload?.sessionPath || event?.sessionPath || sessionPath || "");
+    safeLog.info(`关机提示条被收起（${path ? String(path).split(/[\\/]/).pop() : "未知会话"}）`);
+    if (path && shutdownBannerTexts.has(path)) {
+      shutdownMutedPaths.add(path);
+      void dismissShutdownBanner(path);
+      return true;
+    }
+    // 认不出是哪一段：保守一点，全线收掉，不再自己冒。
+    for (const known of [...shutdownBannerTexts.keys()]) {
+      shutdownMutedPaths.add(known);
+      void dismissShutdownBanner(known);
     }
     return true;
   }
@@ -2026,6 +2186,31 @@ activeFusionServiceDispose = disposeFusionService;
   }, 2_000);
   titleBridgeTimer.unref?.();
 
+  // 球上右键菜单翻的开关：它先写桥，这里读到后存盘并回推，两边保持一致。
+  let lastSettingsToggleSeq = 0;
+  let settingsToggleBaseline = false;
+  const settingsBridgeTimer = setInterval(async () => {
+    if (!ball.state().running) return;
+    let state;
+    try { state = await ball.bridgeRequest("/settings/state"); } catch { return; }
+    const toggle = state?.toggle || null;
+    const seq = Number(toggle?.seq) || 0;
+    if (!settingsToggleBaseline) {
+      settingsToggleBaseline = true;
+      lastSettingsToggleSeq = seq;
+      return;
+    }
+    if (seq < lastSettingsToggleSeq) lastSettingsToggleSeq = 0;
+    if (!toggle || seq <= lastSettingsToggleSeq) return;
+    lastSettingsToggleSeq = seq;
+    if (toggle.key === "popupOnTop") {
+      const enabled = toggle.value === true;
+      await sdk.storage.global.set("popupOnTopDuringFullscreen", enabled);
+      await pushPopupOnTop(enabled);
+      safeLog.info(`开关从传音樱改过来了：全屏时弹窗${enabled ? "浮上来" : "让到后面"}`);
+    }
+  }, 1_500);
+  settingsBridgeTimer.unref?.();
   // ── 排队话单：球上写一句/一串话 → 排进对话；话单状态再推回球上显示 ──
   let lastQueueRequestSeq = 0;
   let queueBaselineAdopted = false;
@@ -2504,8 +2689,16 @@ activeFusionServiceDispose = disposeFusionService;
             .catch(() => {});
           return;
         }
-        // 输入框上方那条排队提示：用户手动关掉时记一笔，这一轮排队内不再重挂。
-        if (String(event?.type || "").includes(":banner") && noteQueueBannerDismissed(event, sessionPath)) return;
+        // 关机提示条跟着人走：她换个窗口说话，条子就挪到那段对话上。
+        if (String(event?.type || "") === "turn_start" && sessionPath) {
+          noteShutdownActiveSession(sessionPath);
+          return;
+        }
+        // 输入框上方那两条提示：用户手动关掉时记一笔，不再重挂。
+        if (String(event?.type || "").includes(":banner")) {
+          if (noteShutdownBannerEvent(event, sessionPath)) return;
+          if (noteQueueBannerDismissed(event, sessionPath)) return;
+        }
         void handleResumeEvent(event, sessionPath);
       }, {});
       resumeEventsAvailable = true;
@@ -2513,6 +2706,9 @@ activeFusionServiceDispose = disposeFusionService;
   } catch (error) {
     await sdk.logger.warn(`宿主不支持事件订阅，断联续接只剩卡住兜底：${String(error?.code || error?.message || error).slice(0, 120)}`);
   }
+  // 关机条上写着倒计时，隔一会儿对一次；没开的时候它自己什么都不做。
+  const shutdownBannerTimer = setInterval(() => { void syncShutdownBanner(); }, 12_000);
+  shutdownBannerTimer.unref?.();
   const resumeTimer = setInterval(() => { void pumpResume(); }, 5_000);
   resumeTimer.unref?.();
   const cardAsks = createCardAskRegistry();
@@ -2520,6 +2716,44 @@ activeFusionServiceDispose = disposeFusionService;
   installBallShutdownHooks();
 
   await sdk.routes.register((app) => {
+    // 任何路由抛出都换成 JSON + 一行日志。
+    // 不对劲的地方：宿主对未捕获异常只回纯文本 "Internal Server Error"，
+    // 前端 response.json() 就抛一句英文 SyntaxError，用户看到的是乱码般的报错。
+    app.use("*", async (c, next) => {
+      try {
+        await next();
+      } catch (error) {
+        try {
+          await sdk.logger.error(`路由出错 ${c.req.path}：${String(error?.message || error).slice(0, 200)}`, {
+            path: c.req.path,
+            stack: String(error?.stack || "").slice(0, 800),
+          });
+        } catch { /* 日志失败不能盖住原始错误 */ }
+        return c.json({ ok: false, error: "后台这次没成，再点一次试试。" }, 500);
+      }
+    });
+
+    app.get("/input-zoom", async (c) => {
+      try {
+        return c.json(await inputZoomStatus());
+      } catch (error) {
+        return c.json({ ok: false, code: "FAILED", error: String(error?.message || error).slice(0, 160) }, 503);
+      }
+    });
+    app.post("/input-zoom/install", async (c) => {
+      try {
+        return c.json(await installInputZoom());
+      } catch (error) {
+        return c.json({ ok: false, code: "FAILED", error: String(error?.message || error).slice(0, 160) }, 500);
+      }
+    });
+    app.post("/input-zoom/uninstall", async (c) => {
+      try {
+        return c.json(await uninstallInputZoom());
+      } catch (error) {
+        return c.json({ ok: false, code: "FAILED", error: String(error?.message || error).slice(0, 160) }, 500);
+      }
+    });
     app.get("/permission-status", async (c) => {
       try {
         const result = await sdk.capabilities.get({});
@@ -2717,9 +2951,89 @@ activeFusionServiceDispose = disposeFusionService;
       return c.json({ ok: true, realEnabled });
     });
     app.post("/sleep-guard/cancel", async (c) => {
-      const result = await cancelSleepGuard(sdk, "在知意面板上手动撤掉");
+      const result = await cancelSleepGuard(sdk, "在知意面板上手动取消");
+      void syncShutdownBanner();
       return c.json({ ok: true, ...result });
     });
+    // 面板上的启动入口：以前只有传音樱和模型工具能挂，面板只能取不能开。
+    // 这个功能就是关机，没有演练档：挂上之前先把真关机打开。
+    app.post("/sleep-guard/arm", async (c) => {
+      if (describeSleepGuard().armed) {
+        void syncShutdownBanner();
+        return c.json({ ok: true, already: true });
+      }
+      await setRealEnabled(sdk, true);
+      // 新开一次：之前被她关掉的会话也重新算。
+      shutdownMutedPaths.clear();
+      shutdownBannerTexts.clear();
+      await armSleepGuard(sdk, { armedBy: "panel", note: "知意面板", graceMs: 60_000 });
+      await sdk.logger.info("面板上开启关机");
+      void syncShutdownBanner();
+      return c.json({ ok: true, armed: true });
+    });
+
+    // 「打开知意页面时自动开球」：只存一个意向，真正开球由页面加载时去调 /ball/start。
+    // 默认关，跟 ballDesired 一样不代替人做决定。
+    app.get("/ball-auto-open", async (c) => {
+      const enabled = await sdk.storage.global.get("ballAutoOpenOnPage", false);
+      return c.json({ enabled: enabled === true });
+    });
+    app.post("/ball-auto-open", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const enabled = body?.enabled === true;
+      await sdk.storage.global.set("ballAutoOpenOnPage", enabled);
+      return c.json({ ok: true, enabled });
+    });
+
+    // 「全屏时弹窗也浮上来」：关着就跟球一个级别，全屏时先让到后面。
+    // 设置存在 App 这边，通过桥上那条 /settings/push 送给球。
+    app.get("/popup-on-top", async (c) => {
+      const enabled = await sdk.storage.global.get("popupOnTopDuringFullscreen", false);
+      return c.json({ enabled: enabled === true });
+    });
+    app.post("/popup-on-top", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const enabled = body?.enabled === true;
+      await sdk.storage.global.set("popupOnTopDuringFullscreen", enabled);
+      await pushPopupOnTop(enabled);
+      return c.json({ ok: true, enabled });
+    });
+
+    // 主题深浅：界面上检测到就报上来，由这里转给球。
+    // 球是独立进程，读不到宿主主题（它只能看 Windows 系统配色，跟 Hana 自己的主题不是一回事）。
+    app.post("/ui-theme", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
+      const mode = body?.appearance === "dark" ? "dark" : body?.appearance === "light" ? "light" : "";
+      const source = String(body?.source || "unknown");
+      const background = String(body?.background || "");
+      safeLog.info(`主题深浅：${mode || "拿不到"}（来源 ${source}${background ? `，底色 ${background}` : ""}）`);
+      if (!mode) return c.json({ ok: false, error: "深浅只认 dark / light。" }, 400);
+      const previous = await sdk.storage.global.get("uiAppearance", "");
+      if (previous !== mode) {
+        await sdk.storage.global.set("uiAppearance", mode);
+        await pushUiAppearance(mode);
+      }
+      return c.json({ ok: true, appearance: mode });
+    });
+
+    async function pushUiAppearance(mode) {
+      try {
+        await ball.bridgeRequest("/settings/push", { method: "POST", body: { themeMode: mode === "dark" ? "dark" : "light" } });
+      } catch (error) {
+        safeLog.warn(`主题深浅没送到球上：${String(error?.message || error).slice(0, 120)}`);
+      }
+    }
+
+    async function pushPopupOnTop(enabled) {
+      try {
+        await ball.bridgeRequest("/settings/push", { method: "POST", body: { popupOnTop: enabled === true } });
+      } catch (error) {
+        safeLog.warn(`全屏弹窗设置没送到球上：${String(error?.message || error).slice(0, 120)}`);
+      }
+    }
 
     app.get("/ball/status", (c) => c.json(ball.state()));
     app.post("/ball/start", async (c) => {
@@ -2730,6 +3044,13 @@ activeFusionServiceDispose = disposeFusionService;
         rememberCurrentHost();
       }
       if (result?.running) scheduleVoiceBridgeTick(sdk, ball);
+      if (result?.running) {
+        // 球刚起来：把当前的全屏弹窗设置补推一次，别让它按旧默认走。
+        const onTop = await sdk.storage.global.get("popupOnTopDuringFullscreen", false);
+        void pushPopupOnTop(onTop === true);
+        const appearance = await sdk.storage.global.get("uiAppearance", "");
+        if (appearance === "dark" || appearance === "light") void pushUiAppearance(appearance);
+      }
       if (result?.running) scheduleBallBridgeTick(sdk, ball);
       if (result?.running) startSleepBallPush(sdk, ball);
       if (result?.running) void adoptPendingBallAsks().catch(() => {});
@@ -3007,9 +3328,89 @@ activeFusionServiceDispose = disposeFusionService;
         limits: { maxStyles: 6, nameChars: 20, intentChars: 60 },
       });
     });
+    // 反馈小窗：把大白话和截图整理成一条 issue。模型只整理，不发送。
+    app.post("/feedback/chat", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没读懂这句。" }, 400); }
+      try {
+        const result = await chatFeedback(sdk, { messages: body?.messages });
+        return c.json({ ok: true, ...result });
+      } catch (error) {
+        const raw = String(error?.message || "");
+        void sdk.logger.warn(`反馈小窗失败：${raw || error?.code || "unknown"}`);
+        return c.json({ ok: false, error: raw || "没整理成，再说一次。" });
+      }
+    });
+    // 宿主没给「打开外部链接」授权时，反馈里的跳转走这里：交给系统默认程序，不经能力台账。
+    app.post("/open-url", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没读到地址。" }, 400); }
+      const target = String(body?.url || "").trim();
+      if (!/^(https?:|mailto:)/i.test(target)) return c.json({ ok: false, error: "只支持 http、https 和 mailto。" }, 400);
+      try {
+        const { spawn } = await import("node:child_process");
+        const command = process.platform === "win32" ? "rundll32.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", target] : [target];
+        await new Promise((resolve, reject) => {
+          const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+          child.once("error", reject);
+          child.once("spawn", () => { child.unref(); resolve(); });
+        });
+        return c.json({ ok: true });
+      } catch (error) {
+        return c.json({ ok: false, error: String(error?.message || error || "系统没接住这个地址。") }, 500);
+      }
+    });
+    // 同样的道理：宿主不给写剪贴板，就让后端写（clip.exe / pbcopy / xclip）。
+    app.post("/copy-text", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没读到内容。" }, 400); }
+      const text = String(body?.text || "");
+      if (!text) return c.json({ ok: false, error: "内容为空。" }, 400);
+      try {
+        const { spawn } = await import("node:child_process");
+        const command = process.platform === "win32" ? "clip.exe" : process.platform === "darwin" ? "pbcopy" : "xclip";
+        const args = process.platform === "win32" || process.platform === "darwin" ? [] : ["-selection", "clipboard"];
+        await new Promise((resolve, reject) => {
+          const child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
+          child.once("error", reject);
+          child.once("close", (code) => (code === 0 ? resolve() : reject(new Error(`复制返回 ${code}`))));
+          child.stdin.end(text, "utf8");
+        });
+        return c.json({ ok: true });
+      } catch (error) {
+        return c.json({ ok: false, error: String(error?.message || error || "写不进剪贴板。") }, 500);
+      }
+    });
     app.post("/recommendation-config/refine-request", async (c) => {
       await saveConfig("styleRefineRequested", true);
       return c.json({ ok: true, hint: "下一轮对话里知意会问你，想好怎么改再回它。" });
+    });
+    // 设置页那个小窗：在里面说人话，聊够了才回一份可应用的清单。
+    app.post("/recommendation-config/refine-chat", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没读懂这句。" }, 400); }
+      try {
+        const result = await refineChat(sdk, { messages: body?.messages, force: body?.force === true });
+        return c.json({ ok: true, ...result });
+      } catch (error) {
+        const raw = String(error?.message || "");
+        // 底层接口的报错是英文原文，不能原样端到用户面前；原文只进日志。
+        const readable = /[\u4e00-\u9fa5]/.test(raw) ? raw : "知意这边接口出了点岔子，等一下再试。";
+        void sdk.logger.warn(`推荐方向小窗失败：${raw || error?.code || "unknown"}`);
+        return c.json({ ok: false, error: readable });
+      }
+    });
+    // 小窗里点了「就这样改」才走到这儿；写盘前再校一次，别让半截清单落地。
+    app.post("/recommendation-config/refine-apply", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没收到要改的内容。" }, 400); }
+      const checked = validatePlanStyles(body?.styles);
+      if (!checked.ok) return c.json({ ok: false, error: checked.error }, 400);
+      const config = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+      const next = reselectStyles(config, checked.styles);
+      await sdk.storage.global.set("recommendationConfig", next);
+      return c.json({ ok: true, ...next });
     });
     app.post("/recommendation-config/restore", async (c) => {
       const config = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));

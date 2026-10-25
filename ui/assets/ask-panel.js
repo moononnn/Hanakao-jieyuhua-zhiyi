@@ -1,4 +1,8 @@
 import { hana } from './sdk.js';
+import { followHostTheme } from './theme-report.js';
+
+// 深浅跟着宿主走，顺手报给 App（它再转给传音樱）。
+followHostTheme();
 
 const $ = (id) => document.getElementById(id);
 const optionsBox = $('ask-options');

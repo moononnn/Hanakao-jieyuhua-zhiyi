@@ -129,6 +129,10 @@ class AppBallBridge:
             "actionSeq": 0,
             "bootId": int(time.time() * 1000),
         }
+        # 行为开关（全屏时弹窗要不要也浮上来）：设置页改一下，球下一轮就拿到。
+        self._settings = {"popupOnTop": False, "themeMode": ""}
+        # 球上右键菜单也能翻这个开关：它写进来，App 轮询读到后存盘并回推。
+        self._settingsToggle = {"seq": 0, "key": "", "value": None}
         # 润色弹窗在球上，App 的 /polish 路由球够不着；走同款请求/结果对。
         self._polish = {
             "request": None,        # {kind: polish|send, text, level, sessionId, seq}
@@ -248,6 +252,8 @@ class AppBallBridge:
                 return 200, {"ok": True, "running": True}
             if path == "/config":
                 return 200, {"ok": True, "config": {"action": "copy", "askFlower": {"enabled": False}}}
+            if path == "/settings/state":
+                return 200, {"ok": True, "settings": dict(self._settings), "toggle": dict(self._settingsToggle)}
             if path == "/ask/pending":
                 pending = [
                     item["entry"]
@@ -675,6 +681,29 @@ class AppBallBridge:
                 }
                 self._voice["actionSeq"] = int(self._voice["actionSeq"]) + 1
                 return 200, {"ok": True, "actionSeq": self._voice["actionSeq"]}
+            if path == "/settings/toggle":
+                # 球 → 桥：右键菜单里翻了开关。本地先认下来（球立刻生效），
+                # 同时记一笔序号，App 轮询到之后存盘并回推，两边不会打架。
+                body = body if isinstance(body, dict) else {}
+                key = str(body.get("key") or "")
+                if key not in ("popupOnTop",):
+                    return 400, {"ok": False, "error": "不认识的开关"}
+                value = body.get("value") is True
+                self._settings[key] = value
+                self._settingsToggle = {
+                    "seq": int(self._settingsToggle["seq"]) + 1,
+                    "key": key,
+                    "value": value,
+                }
+                return 200, {"ok": True, "seq": self._settingsToggle["seq"]}
+            if path == "/settings/push":
+                # App → 桥：设置页改了行为开关，存下来给球下一轮轮询拿。
+                body = body if isinstance(body, dict) else {}
+                if "popupOnTop" in body:
+                    self._settings["popupOnTop"] = body.get("popupOnTop") is True
+                if body.get("themeMode") in ("dark", "light"):
+                    self._settings["themeMode"] = body.get("themeMode")
+                return 200, {"ok": True, "settings": dict(self._settings)}
             if path == "/polish/request":
                 # 球 → App：请 ta 捋一捋 / 问还能往哪儿改 / 把捋好的发进对话。
                 body = body if isinstance(body, dict) else {}

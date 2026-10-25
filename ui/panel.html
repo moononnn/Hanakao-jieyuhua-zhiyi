@@ -6,582 +6,791 @@
   <meta name="color-scheme" content="light dark">
   <title>解语花·知意设置</title>
   <link rel="stylesheet" href="./assets/panel.css">
+  <link rel="stylesheet" href="./assets/panel-layout.css">
+  <script src="./assets/theme-follow.js"></script>
 </head>
 <body>
-  <main class="page" aria-labelledby="page-title">
-    <header class="page-head">
-      <img class="mark" src="./assets/brand-mark.svg" alt="">
-      <div class="heading-copy">
-        <p class="eyebrow">解语花 · 知意</p>
-        <h1 id="page-title">知意</h1>
-        <p class="intro">让重要的选择问得清楚，也让事情顺顺当当地接着做。</p>
+  <div class="app-shell">
+    <!-- 左栏：页面自己的竖导航。不依赖宿主侧栏，一组一件事，点进去只看那一块 -->
+    <!-- 导航在宿主的左侧栏里（permission-panel.html），这里不再放第二套。 -->
+
+    <main class="workspace">
+      <div class="workspace-inner">
+
+        <!-- 概览：一眼看完，点一行就去改 -->
+        <section class="view on" id="view-overview" aria-labelledby="page-title">
+          <header class="view-head zy-head-with-action">
+            <div class="zy-head-copy">
+              <h1 id="page-title">概览</h1>
+              <p>一眼看完知意现在都帮你做什么。想改哪一项就点那一行，也可以直接拨上面那个开关。</p>
+            </div>
+            <div class="zy-head-actions">
+              <button id="ball-toggle" class="ball-toggle" type="button" aria-pressed="false" aria-label="桌面传音樱开关">
+                <span class="ball-toggle-label" id="ball-toggle-label">传音樱</span>
+                <span class="ball-toggle-switch" aria-hidden="true"><span class="ball-toggle-thumb"></span></span>
+              </button>
+              <button class="zy-fb-fab" id="open-feedback" type="button">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.6 8.1c0 2.4-2.5 4.3-5.6 4.3-.7 0-1.4-.1-2-.3L2.8 13.4l.7-2.3c-.9-.8-1.5-1.9-1.5-3C2 5.7 4.5 3.8 7.6 3.8s6 1.9 6 4.3Z" stroke-linejoin="round"/></svg>
+                <span>反馈</span>
+              </button>
+            </div>
+          </header>
+
+          <aside class="permission-note">
+            <span class="note-icon" aria-hidden="true">!</span>
+            <div>
+              <strong>先确认只有一套 Ask 在开着</strong>
+              <p>知意的提问（球旁的弹窗、对话里的卡片）、<code>zhiyi-ask</code> 配方，以及其他应用或配方做的确认卡，功能会撞车：两套同时开着，同一件事可能被问两遍，你答完还可能回不到原任务。用之前先把相似的 Ask 配方或应用关掉，只留一套。</p>
+            </div>
+          </aside>
+
+          <div class="zy-ov-card">
+            <div class="zy-ov" id="ov-ask" role="button" tabindex="0">
+              <div class="zy-ov-mark" aria-hidden="true">问</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">该你决定的，先问你</p>
+                <p class="zy-ov-desc">碰到需要你拍板的事，弹一张卡给你选，你选完它接着办。</p>
+              </div>
+              <button class="zy-tg" type="button" aria-label="切换：该你决定的先问你"><i></i></button>
+            </div>
+
+            <div class="zy-ov" id="ov-rec" role="button" tabindex="0">
+              <div class="zy-ov-mark" aria-hidden="true">回</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">帮你想怎么回</p>
+                <p class="zy-ov-desc">输入框上面点一下，出几句现成的话，改两个字就能发。</p>
+              </div>
+              <button class="zy-tg" type="button" aria-label="切换：帮你想怎么回"><i></i></button>
+            </div>
+
+            <div class="zy-ov" id="ov-summary" role="button" tabindex="0">
+              <div class="zy-ov-mark" aria-hidden="true">简</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">太长不看总结一下</p>
+                <p class="zy-ov-desc">回复太长时，末尾加一段短的概括。原文一个字都不动。</p>
+              </div>
+              <button class="zy-tg" type="button" aria-label="切换：太长不看总结一下"><i></i></button>
+            </div>
+
+            <div class="zy-ov" id="ov-voice" role="button" tabindex="0">
+              <div class="zy-ov-mark" aria-hidden="true">声</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">念出来听</p>
+                <p class="zy-ov-desc">说话太累的时候，让知意把回复读给你听。</p>
+              </div>
+              <button class="zy-tg" type="button" aria-label="切换：念出来听"><i></i></button>
+            </div>
+
+            <div class="zy-ov is-static" id="ov-ball">
+              <div class="zy-ov-mark" aria-hidden="true">球</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">桌面传音樱</p>
+                <p class="zy-ov-desc">桌面上那个小球，随手点开就能用。开关在右上角。</p>
+              </div>
+              <span class="zy-ov-state" id="ball-card-state">未启动</span>
+            </div>
+
+            <div class="zy-ov-sub">
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">打开这个页面时，球自己亮起来</p>
+                <p class="zy-ov-desc">每次进知意都顺手把传音樱开上。你手动关掉它以后，这一次不会再自己弹回来；收起页面也不会把球带走。</p>
+              </div>
+              <button id="ball-auto-open" class="zy-tg sm" type="button" aria-label="打开页面时自动开球"><i></i></button>
+            </div>
+
+            <div class="zy-ov-sub">
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">全屏时，弹窗也浮上来</p>
+                <p class="zy-ov-desc">开着：打游戏、看视频的时候，有事要问你也照样压在最上面。关着：跟球一个级别，全屏时不冒出来，等你退出全屏再弹。</p>
+              </div>
+              <button id="popup-on-top" class="zy-tg sm" type="button" aria-label="全屏时弹窗也浮上来"><i></i></button>
+            </div>
+
+            <div class="zy-ov" id="ov-sleep" role="button" tabindex="0">
+              <div class="zy-ov-mark" aria-hidden="true">关</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">干完活自动关机</p>
+                <p class="zy-ov-desc">活干完、Hana 静下来就关机。<span class="zy-ov-alert">它只看得见 Hana 的窗口和任务，别的程序在下载、文档没保存它一概不知，睡前先自己存好。</span></p>
+              </div>
+              <span class="zy-ov-go">去看看</span>
+              <button id="ov-sleep-action" class="zy-ov-btn" type="button">开始守</button>
+            </div>
+
+            <div class="zy-ov" id="ov-zoom">
+              <div class="zy-ov-mark" aria-hidden="true">图</div>
+              <div class="zy-ov-copy">
+                <p class="zy-ov-title">输入框里的图，点开能看大</p>
+                <p class="zy-ov-desc" id="ov-zoom-desc">贴一张图，点缩略图就全屏看。Hana 每次更新后会失效，回来点一下就好。</p>
+              </div>
+              <button id="ov-zoom-action" class="zy-ov-btn" type="button">看看状态</button>
+            </div>
+
+            <div class="zy-ov-foot">
+              <p id="ball-auto-open-status" class="ball-status" role="status" aria-live="polite"></p>
+              <p id="ball-status" class="ball-status" role="status" aria-live="polite">正在读取传音樱状态…</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 怎么回话 -->
+        <section class="view" id="view-chat" aria-labelledby="ask-title">
+          <header class="view-head">
+            <h1>怎么回话</h1>
+            <p>想不出下一句的时候，让知意先拟几句，你挑一句改改发。</p>
+          </header>
+
+          <section class="settings-section" aria-labelledby="ask-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">问</span>
+              <div>
+                <p class="eyebrow">核心能力</p>
+                <h2 id="ask-title">该你拍板的，先问你</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>遇到该你决定的事</h3>
+                <p>碰到该由你拍板的分岔时，知意会弹一张卡让你选。关掉以后卡片不再出现，伙伴也不会再收到关于它的提示。</p>
+              </div>
+              <div class="segmented" id="ask-display" role="group" aria-label="关键 Ask 卡展示">
+                <button type="button" data-value="on" aria-pressed="true">展示</button>
+                <button type="button" data-value="off" aria-pressed="false">关闭</button>
+              </div>
+            </div>
+            <p id="ask-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>你选完，它接着办</h3>
+                <p>你的选择会交回刚才那件事。你拒绝或者把卡片关掉，都不会被当成同意。</p>
+              </div>
+              <span class="setting-badge">自动</span>
+            </div>
+          </section>
+
+          <section class="settings-section" id="recommendation-behavior" aria-labelledby="recommendation-behavior-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">荐</span>
+              <div>
+                <p class="eyebrow">推荐回复</p>
+                <h2 id="recommendation-behavior-title">帮你想怎么回</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>要不要这个功能</h3>
+                <p>它只活在传音樱里：想不出下一句的时候掀开球，点一下就有几句现成的可以照着发，聊天里不会突然冒卡片。关掉以后球上那一块也会收起来。</p>
+              </div>
+              <div class="segmented" id="rec-display" role="group" aria-label="推荐展示方式">
+                <button type="button" data-value="ball" aria-pressed="true">开着</button>
+                <button type="button" data-value="off" aria-pressed="false">关掉</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>输入框里也放一个入口</h3>
+                <p>在聊天输入框中间放一个知意按钮，点一下就在上面摊开推荐，能直接改字再发。跟下面的条数、方向是一套设置。</p>
+              </div>
+              <div class="segmented" id="rec-input-button" role="group" aria-label="输入栏推荐按钮">
+                <button type="button" data-value="on" aria-pressed="true">显示</button>
+                <button type="button" data-value="off" aria-pressed="false">隐藏</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>常用回复</h3>
+                <p>你自己常说的那几句，在面板上排成小按钮，点一下直接发。最多 8 条，每条 30 字以内。点一下不花模型钱。</p>
+              </div>
+              <div class="quick-edit">
+                <div class="quick-tags" id="rec-quick-tags"></div>
+                <div class="quick-add">
+                  <input id="rec-quick-input" type="text" maxlength="30" placeholder="写一句常用的…">
+                  <button id="rec-quick-add" type="button">添加</button>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row rec-only-card">
+              <div class="setting-copy">
+                <h3>一次给几句</h3>
+                <p>给得多，方向铺得开；嫌吵就往少了调。</p>
+              </div>
+              <div class="segmented" id="rec-count" role="group" aria-label="推荐条数">
+                <button type="button" data-value="2" aria-pressed="false">2 句</button>
+                <button type="button" data-value="3" aria-pressed="true">3 句</button>
+                <button type="button" data-value="4" aria-pressed="false">4 句</button>
+              </div>
+            </div>
+            <div class="setting-row rec-only-card">
+              <div class="setting-copy">
+                <h3>往哪些方向想</h3>
+                <p>挑几个你常用的语气，按当前条数从上往下取。挑得不够会按默认顺序补上。</p>
+              </div>
+              <div class="style-list" id="rec-styles"></div>
+            </div>
+            <div class="setting-row rec-only-card">
+              <div class="setting-copy">
+                <h3>风格不太对味？</h3>
+                <p>跟知意说一句想怎么改，它会出一版对照给你看；你点了确认才真的换。</p>
+              </div>
+              <div class="model-controls">
+                <button id="rec-refine" class="model-test" type="button">跟知意说说</button>
+                <button id="rec-restore" class="model-save" type="button">恢复默认</button>
+              </div>
+            </div>
+            <p id="rec-refine-status" class="ball-status" role="status" aria-live="polite"></p>
+            <p id="rec-status" class="ball-status" role="status" aria-live="polite">正在读取推荐设置…</p>
+          </section>
+        </section>
+
+        <!-- 太长不看总结一下 -->
+        <section class="view" id="view-summary" aria-labelledby="summary-title">
+          <header class="view-head">
+            <h1>太长不看总结一下</h1>
+            <p>回复一长眼睛就累。超过你定的字数，末尾补一段短的。</p>
+          </header>
+
+          <section class="settings-section" aria-labelledby="summary-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">简</span>
+              <div>
+                <p class="eyebrow">阅读负担</p>
+                <h2 id="summary-title">回复太长时，末尾加一段概括</h2>
+              </div>
+            </div>
+            <div class="setting-row ball-row">
+              <div class="setting-copy">
+                <h3>开着</h3>
+                <p>概括只是加在末尾，原文不删也不改，不想看划过去就行。</p>
+              </div>
+              <div class="model-controls">
+                <label class="switch">
+                  <input id="summary-enabled" type="checkbox" checked disabled />
+                  <span>开启</span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row ball-row">
+              <div class="setting-copy">
+                <h3>超过多少字算长</h3>
+                <p>字太少的时候，概括比正文还长就没意思了。600 字上下刚好，一次调 50 字。</p>
+              </div>
+              <div class="model-controls threshold-controls" role="group" aria-label="速览字符阈值">
+                <button id="summary-min-chars-down" class="stepper-button" type="button" aria-label="减少 50 字" disabled>−</button>
+                <output id="summary-min-chars" class="stepper-value" aria-live="polite">600</output>
+                <span class="unit">字</span>
+                <button id="summary-min-chars-up" class="stepper-button" type="button" aria-label="增加 50 字" disabled>＋</button>
+                <button id="summary-save" class="model-save" type="button" disabled>保存</button>
+              </div>
+            </div>
+            <div class="status-actions">
+              <p id="summary-status" class="ball-status" role="status" aria-live="polite">正在读取设置…</p>
+              <button id="summary-retry" class="model-test" type="button" hidden>重试读取</button>
+            </div>
+          </section>
+        </section>
+
+        <!-- 念出来听 -->
+        <section class="view" id="view-voice" aria-labelledby="voice-live-title">
+          <header class="view-head">
+            <h1>念出来听</h1>
+            <p>不想看屏幕的时候，让它把话读给你。</p>
+          </header>
+
+          <section class="settings-section" id="voice-live-section" aria-labelledby="voice-live-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">声</span>
+              <div>
+                <p class="eyebrow">朗读</p>
+                <h2 id="voice-live-title">把回复读出来</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>允许朗读</h3>
+                <p>关掉以后不再合成任何语音，传音樱里的「念给我听」也跟着收起来。已经存下来的音频不受影响。</p>
+              </div>
+              <div class="segmented" id="voice-enabled" role="group" aria-label="是否允许朗读">
+                <button type="button" data-value="on" aria-pressed="true">允许</button>
+                <button type="button" data-value="off" aria-pressed="false">关闭</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>念哪些字</h3>
+                <p><strong>整条念</strong>就是把回复正文都读一遍；<strong>只念台词</strong>就只读带引号的部分。找不到引号时会退回整条。</p>
+              </div>
+              <div class="segmented" id="voice-scope" role="group" aria-label="朗读范围">
+                <button type="button" data-value="all" aria-pressed="true">整条念</button>
+                <button type="button" data-value="quoted" aria-pressed="false">只念台词</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>说多快</h3>
+                <p>三档够用了，不做细调。</p>
+              </div>
+              <div class="segmented" id="voice-speed" role="group" aria-label="语速">
+                <button type="button" data-value="0.85" aria-pressed="false">慢一点</button>
+                <button type="button" data-value="1" aria-pressed="true">正常</button>
+                <button type="button" data-value="1.15" aria-pressed="false">快一点</button>
+              </div>
+            </div>
+            <div class="tool-divider" role="presentation"></div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>默认声音</h3>
+                <p>没单独设置的伙伴都用这个。能选哪些声音，跟着下面接口里选的协议走；自建的就直接填声音名字。</p>
+              </div>
+              <div class="model-controls">
+                <div class="model-picker">
+                  <button id="voice-tone-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="voice-tone-options">正在读取音色…</button>
+                  <div id="voice-tone-options" class="model-options" role="listbox" aria-label="默认音色" hidden></div>
+                  <input id="voice-tone-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="填你那个服务里的声音 id（比如 anna）" hidden>
+                </div>
+                <button id="voice-tone-preview" class="model-test" type="button">▶ 试听</button>
+              </div>
+            </div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>每个伙伴用不一样的声音</h3>
+                <p>这里只列出你最近聊过的伙伴。选「跟着默认」就用上面那个声音。</p>
+              </div>
+              <div class="model-controls">
+                <button id="voice-partner-refresh" class="model-test" type="button">刷新伙伴</button>
+              </div>
+            </div>
+            <div id="voice-partners" class="partner-voice-list"></div>
+            <p id="voice-status" class="ball-status" role="status" aria-live="polite"></p>
+            <div class="tool-divider" role="presentation"></div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>存下来的朗读</h3>
+                <p>在传音樱里听完点「♡ 收藏」就存在这儿。只记着你当时想听的那段，不复制音频，再听不用重新花钱合成。</p>
+              </div>
+              <div class="model-controls">
+                <button id="voice-fav-refresh" class="model-test" type="button">刷新列表</button>
+              </div>
+            </div>
+            <div id="voice-fav-list" class="style-list">
+              <p class="ball-status">正在读取语音收藏…</p>
+            </div>
+            <div id="voice-fav-player" class="voice-player" hidden>
+              <audio id="voice-fav-audio" controls preload="none"></audio>
+            </div>
+            <p id="voice-fav-status" class="ball-status" role="status" aria-live="polite"></p>
+          </section>
+        </section>
+
+        <!-- 干完活关机 -->
+        <section class="view" id="view-auto" aria-labelledby="sleep-guard-title">
+          <header class="view-head">
+            <h1>干完活自动关机</h1>
+            <p>活干完了、Hana 里也真安静了，就帮你把电脑关掉，不用你爬起来按。</p>
+          </header>
+
+          <section class="settings-section" id="sleep-guard-section" aria-labelledby="sleep-guard-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">守</span>
+              <div>
+                <p class="eyebrow">睡前</p>
+                <h2 id="sleep-guard-title">它现在在看着吗</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>现在</h3>
+                <p id="sg-state-text">正在读取…</p>
+              </div>
+              <div class="model-controls">
+                <button id="sg-arm" class="model-save" type="button">开启自动关机</button>
+                <button id="sg-cancel" class="model-test" type="button" hidden>取消静候</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>多久没动静算忙完</h3>
+                <p>Hana 里没有窗口在回话、也没有后台任务在跑之后，再安静这么久才算真完事。中间有一下动静就从头再数。</p>
+              </div>
+              <div class="model-controls threshold-controls" role="group" aria-label="静默时长">
+                <button id="sg-idle-down" class="stepper-button" type="button" aria-label="少一分钟">−</button>
+                <output id="sg-idle" class="stepper-value" aria-live="polite">10</output><span class="unit">分钟</span>
+                <button id="sg-idle-up" class="stepper-button" type="button" aria-label="多一分钟">＋</button>
+              </div>
+            </div>
+            <aside class="permission-note">
+              <span class="note-icon" aria-hidden="true">!</span>
+              <div>
+                <strong>它只看得见 Hana，看不见你的电脑</strong>
+                <p>判断依据只有两样：Hana 里还有没有窗口在回话、有没有后台任务在跑。别的软件在下载、在渲染、文档开着没保存，它都不知道，也不会因此多等一会儿。要挂一整夜，先把那些东西存好、导出好，别把没保存的活留给它。</p>
+              </div>
+            </aside>
+            <p id="sg-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+          </section>
+        </section>
+
+        <!-- 断了自动接上 -->
+        <section class="view" id="view-resume" aria-labelledby="resume-title">
+          <header class="view-head">
+            <h1>断了自动接上</h1>
+            <p>回复发到一半断掉是常有的事。知意看一眼，能接着就接着。</p>
+          </header>
+
+          <section class="settings-section" id="resume-section" aria-labelledby="resume-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">续</span>
+              <div>
+                <p class="eyebrow">断点续接</p>
+                <h2 id="resume-title">断了以后怎么接</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>要不要这个功能</h3>
+                <p>默认关着。关掉以后不检测、不发送，也不会提醒你，正常聊天不受影响。</p>
+              </div>
+              <div class="segmented" id="resume-enabled" role="group" aria-label="断点续接总开关">
+                <button type="button" data-value="on" aria-pressed="false" disabled>开着</button>
+                <button type="button" data-value="off" aria-pressed="true" disabled>关着</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>断了以后怎么办</h3>
+                <p>提醒你只是告诉你一声，你自己决定要不要继续；自动接着发是它直接替你发一句「继续」。每接一次都是一次真实调用，会花钱，也占这段对话的位置。</p>
+              </div>
+              <div class="segmented" id="resume-auto" role="group" aria-label="断点续接方式">
+                <button type="button" data-value="off" aria-pressed="true" disabled>提醒我就好</button>
+                <button type="button" data-value="on" aria-pressed="false" disabled>自动接着发</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>同一个窗口最多接几次</h3>
+                <p>1 到 10 次。接上了就重新计数，不会一直往同一个窗口里灌。</p>
+              </div>
+              <div class="model-controls threshold-controls" role="group" aria-label="每个窗口的续接次数上限">
+                <button id="resume-max-down" class="stepper-button" type="button" aria-label="少续接一次" disabled>−</button>
+                <output id="resume-max" class="stepper-value" aria-live="polite">3</output><span class="unit">次</span>
+                <button id="resume-max-up" class="stepper-button" type="button" aria-label="多续接一次" disabled>＋</button>
+                <button id="resume-save" class="model-save" type="button" disabled>已保存 ✓</button>
+              </div>
+            </div>
+            <div class="status-actions">
+              <p id="resume-status" class="ball-status" role="status" aria-live="polite">正在读取续接设置…</p>
+              <button id="resume-retry" class="model-test" type="button" hidden>重试读取</button>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>这一次接成了没</h3>
+                <p>不开传音樱也能看；只记本次运行，重载后不保留。</p>
+              </div>
+              <button id="resume-refresh-status" class="model-test" type="button">刷新结果</button>
+            </div>
+            <p id="resume-result-status" class="ball-status" role="status" aria-live="polite"></p>
+            <ul id="resume-results" class="resume-results" aria-label="当前各窗口续接结果" hidden></ul>
+          </section>
+        </section>
+
+        <!-- 模型和接口 -->
+        <section class="view" id="view-models" aria-labelledby="content-model-title">
+          <header class="view-head">
+            <h1>模型和接口</h1>
+            <p>平时不用管。想省钱、想快一点，或者想用自己买的接口，再来这儿。</p>
+          </header>
+
+          <section class="settings-section" aria-labelledby="content-model-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">模</span>
+              <div>
+                <p class="eyebrow">模型</p>
+                <h2 id="content-model-title">日常这几样用哪条</h2>
+              </div>
+            </div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>推荐回复、判断要不要问你、长回复概括，都走这一条</h3>
+                <p>不选就跟着当前对话用的模型走，多数时候不用管。想省钱或者图快，就单独挑一条轻的。</p>
+              </div>
+              <div class="model-controls">
+                <div class="model-picker">
+                  <button id="content-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="content-model-options">正在读取模型…</button>
+                  <div id="content-model-options" class="model-options" role="listbox" aria-label="内容模型" hidden></div>
+                </div>
+                <button id="content-model-test" class="model-test" type="button" disabled>测试连接</button>
+                <button id="content-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
+              </div>
+            </div>
+            <p id="content-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+            <div class="tool-divider" role="presentation"></div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>备用模型</h3>
+                <p>上面那条连着三次都不成，换这条再试。真用上了，面板会写明「这几句是备用拟的」，不会瞒着你换掉。不设就不切。</p>
+              </div>
+              <div class="model-controls">
+                <div class="model-picker">
+                  <button id="fallback-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="fallback-model-options">正在读取模型…</button>
+                  <div id="fallback-model-options" class="model-options" role="listbox" aria-label="备用模型" hidden></div>
+                </div>
+                <button id="fallback-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
+              </div>
+            </div>
+            <p id="fallback-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+            <div class="tool-divider" role="presentation"></div>
+            <div class="setting-row model-row">
+              <div class="setting-copy">
+                <h3>快速模型</h3>
+                <p>长回复概括、给对话起名这类要立刻出结果的小活走这条。会尽量让模型别想太多，跑得快，也不容易把额度耗在思考上。不选就跟着上面那条。</p>
+              </div>
+              <div class="model-controls">
+                <div class="model-picker">
+                  <button id="fast-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="fast-model-options">正在读取模型…</button>
+                  <div id="fast-model-options" class="model-options" role="listbox" aria-label="快速模型" hidden></div>
+                </div>
+                <button id="fast-model-test" class="model-test" type="button" disabled>测试一下</button>
+                <button id="fast-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
+              </div>
+            </div>
+            <p id="fast-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+            <div class="tool-divider" role="presentation"></div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>用自己买的接口跑</h3>
+                <p>开启后，上面没选模型的时候，知意改走你填的这条接口。上面选了的还是优先用你选的。Key 只存在本机，用系统加密，不发给任何人。</p>
+              </div>
+              <div class="segmented" id="custom-enabled" role="group" aria-label="是否使用自定义模型">
+                <button type="button" data-value="on" aria-pressed="false">开启</button>
+                <button type="button" data-value="off" aria-pressed="true">关闭</button>
+              </div>
+            </div>
+            <div class="field-grid">
+              <label class="field field-wide">
+                <span>接口地址</span>
+                <input id="custom-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+              </label>
+              <label class="field">
+                <span>模型名</span>
+                <input id="custom-model-name" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-4o-mini">
+              </label>
+              <label class="field">
+                <span>API Key<span class="field-note" id="custom-key-note">用 Windows 系统加密保存</span></span>
+                <input id="custom-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你的 API Key">
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <p class="setting-hint">按 OpenAI 兼容的 <code>/chat/completions</code> 调用。Key 只留在本机知意的目录里。</p>
+              </div>
+              <div class="model-controls">
+                <button id="custom-test" class="model-test" type="button">测试一下</button>
+                <button id="custom-save" class="model-save" type="button">保存</button>
+                <button id="custom-clear-key" class="model-test" type="button">清掉 Key</button>
+              </div>
+            </div>
+            <p id="custom-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+          </section>
+
+          <section class="settings-section" id="voice-section" aria-labelledby="voice-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">声</span>
+              <div>
+                <p class="eyebrow">朗读</p>
+                <h2 id="voice-title">朗读用的接口</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>先挑个现成的</h3>
+                <p>这跟上面聊天用的模型不是一回事，是单独一个语音服务。挑个模板把地址和名字填好，再补上 Key。MiniMax 还要填 GroupId，在它控制台里能看到；自己搭的 TTS 一般不用 Key。</p>
+              </div>
+              <div class="segmented voice-presets" id="voice-presets" role="group" aria-label="朗读模型模板"></div>
+            </div>
+            <div class="field-grid">
+              <label class="field">
+                <span>接口协议</span>
+                <div class="segmented" id="voice-protocol" role="group" aria-label="接口协议">
+                  <button type="button" data-value="t2a" aria-pressed="true">MiniMax</button>
+                  <button type="button" data-value="chat" aria-pressed="false">OpenAI 兼容</button>
+                  <button type="button" data-value="speech" aria-pressed="false">自建 TTS</button>
+                </div>
+              </label>
+              <label class="field">
+                <span>接口地址</span>
+                <input id="voice-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.minimaxi.com">
+              </label>
+              <label class="field">
+                <span>模型名</span>
+                <input id="voice-model" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="speech-2.8-hd">
+              </label>
+              <label class="field" id="voice-groupid-field">
+                <span>GroupId<span class="field-note">只有 MiniMax 要</span></span>
+                <input id="voice-groupid" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="1234567890">
+              </label>
+              <label class="field field-wide">
+                <span>API Key<span class="field-note" id="voice-key-note">用系统加密存，不留在明文里</span></span>
+                <input id="voice-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴朗读服务的 API Key">
+              </label>
+              <label class="field field-wide" id="voice-authstyle-field">
+                <span>Key 怎么带<span class="field-note">各家不一样，分不清就留着「自动」</span></span>
+                <div class="segmented" id="voice-authstyle" role="group" aria-label="鉴权方式">
+                  <button type="button" data-value="" aria-pressed="true">自动</button>
+                  <button type="button" data-value="bearer" aria-pressed="false">Bearer</button>
+                  <button type="button" data-value="api-key" aria-pressed="false">api-key</button>
+                  <button type="button" data-value="none" aria-pressed="false">不要</button>
+                </div>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>不想自己填 Key</h3>
+                <p>勾上以后，知意每次合成都去问 Hana 要一次凭据，你一个 Key 都不用存。<strong>前提是</strong>Hana 里已经把这个服务商配好了，并且在「应用权限」里允许了「读取凭据」；拿不到会直接告诉你。</p>
+              </div>
+              <div class="segmented" id="voice-hana-key" role="group" aria-label="是否用 Hana 里的凭据">
+                <button type="button" data-value="on" aria-pressed="false">用 Hana 的</button>
+                <button type="button" data-value="off" aria-pressed="true">我自己填</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <p class="setting-hint">朗读会把你选中那段文字发给你填的这个语音服务商；音频只留在本机知意的目录里，不上传到别处。想听哪一段，在传音樱面板里点「念给我听」。</p>
+              </div>
+              <div class="model-controls">
+                <button id="voice-test" class="model-test" type="button" disabled>测试一下</button>
+                <button id="voice-save" class="model-save" type="button" disabled>保存</button>
+              </div>
+            </div>
+            <p id="voice-model-status" class="ball-status" role="status" aria-live="polite">正在读取朗读设置…</p>
+            <div id="voice-player" class="voice-player" hidden>
+              <audio id="voice-audio" controls preload="none"></audio>
+              <p id="voice-caption" class="voice-caption"></p>
+            </div>
+          </section>
+        </section>
+
+        <!-- 权限与诊断 -->
+        <section class="view" id="view-perm" aria-labelledby="permission-status-title">
+          <header class="view-head">
+            <h1>权限与诊断</h1>
+            <p>第一次用的时候看一眼就行，之后基本不用来。</p>
+          </header>
+
+          <aside class="permission-note">
+            <span class="note-icon" aria-hidden="true">i</span>
+            <div>
+              <strong>第一次用，先给个权限</strong>
+              <p>去 Hana 的「设置 → 应用 → 应用权限 → 解语花·知意」审核一下需要的权限，再把知意加到你想用的伙伴的工具里。装好了就不用管。伙伴自己会处理那些低风险、能反悔的小选择，不会为琐事一直来问你。</p>
+            </div>
+          </aside>
+
+          <section class="settings-section" aria-labelledby="permission-status-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">权</span>
+              <div>
+                <p class="eyebrow">运行状态</p>
+                <h2 id="permission-status-title">现在能用哪些</h2>
+              </div>
+            </div>
+            <div id="permission-status-list" class="permission-grid" aria-live="polite"></div>
+            <div class="permission-actions">
+              <button id="permission-status-refresh" class="model-test" type="button">刷新状态</button>
+            </div>
+            <p id="permission-status-message" class="ball-status" role="status" aria-live="polite">正在读取…</p>
+          </section>
+        </section>
+
       </div>
-      <div class="head-actions">
-        <button id="ball-toggle" class="ball-toggle" type="button" aria-pressed="false" aria-label="桌面传音樱开关" title="开启桌面传音樱">
-          <span class="ball-toggle-label" id="ball-toggle-label">传音樱</span>
-          <span class="ball-toggle-switch" aria-hidden="true"><span class="ball-toggle-thumb"></span></span>
+    </main>
+  </div>
+
+  <!-- 跟知意说说：小窗对话，聊够了给一份可确认的清单 -->
+  <div class="zy-chat-overlay" id="refine-chat" hidden>
+    <div class="zy-chat-box" role="dialog" aria-modal="true" aria-labelledby="refine-chat-title">
+      <header class="zy-chat-head">
+        <div>
+          <p class="zy-chat-kicker">推荐方向</p>
+          <h2 id="refine-chat-title">跟知意说说</h2>
+        </div>
+        <button class="zy-chat-close" id="refine-chat-close" type="button" aria-label="关掉这扇窗">×</button>
+      </header>
+      <div class="zy-chat-log" id="refine-chat-log" role="log" aria-live="polite"></div>
+      <div class="zy-chat-suggest" id="refine-chat-suggest" hidden></div>
+      <form class="zy-chat-form" id="refine-chat-form">
+        <textarea id="refine-chat-input" rows="2" placeholder="用大白话说就行，比如「太正经了，多点顺着我说话的」"></textarea>
+        <div class="zy-chat-actions">
+          <button type="submit" id="refine-chat-send" class="zy-chat-send">发送</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 反馈：把大白话（和截图）整理成一条 issue，发不发、发去哪里由用户自己点 -->
+  <div class="zy-chat-overlay zy-fb-overlay" id="feedback-chat" hidden>
+    <div class="zy-fb-box" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+      <header class="zy-fb-head">
+        <div>
+          <p class="zy-fb-kicker">反馈</p>
+          <h2 id="feedback-title">用着不顺手，跟我说</h2>
+        </div>
+        <div class="zy-fb-head-actions">
+          <button class="zy-fb-close" id="feedback-close" type="button" aria-label="关掉这扇窗">×</button>
+        </div>
+      </header>
+
+      <p class="zy-fb-error" id="feedback-error" role="status" hidden></p>
+
+      <div class="zy-fb-choices" id="feedback-choices">
+        <button class="zy-fb-choice" id="feedback-go-github" type="button">
+          <span class="zy-fb-choice-title">直接去 GitHub 提 issue</span>
+          <span class="zy-fb-choice-sub">自己写，最快；内容公开，谁都能看</span>
         </button>
-        <button id="open-settings" class="settings-btn" type="button" aria-haspopup="dialog" aria-controls="settings-modal">设置</button>
+        <button class="zy-fb-choice" id="feedback-go-chat" type="button">
+          <span class="zy-fb-choice-title">跟知意说说</span>
+          <span class="zy-fb-choice-sub">讲几句、能贴图，它帮你整成一条</span>
+        </button>
+        <p class="zy-fb-choice-note">没有 GitHub 账号？聊完点「发邮件」，或者直接发到 moononnn@qq.com。</p>
       </div>
-    </header>
 
-    <p id="ball-status" class="ball-status page-ball-status" role="status" aria-live="polite">正在读取传音樱状态…</p>
+      <div class="zy-fb-body" id="feedback-body" hidden>
+      <div class="zy-fb-log" id="feedback-log" role="log" aria-live="polite"></div>
+      <div class="zy-fb-thumbs" id="feedback-thumbs" hidden></div>
 
-    <aside class="permission-note">
-      <span class="note-icon" aria-hidden="true">i</span>
-      <div>
-        <strong>第一次使用</strong>
-        <p>请在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」审核需要的权限，并在目标伙伴的工具设置中启用知意。伙伴仍会自行处理低风险、可逆的小选择，不会为琐事频繁打断你。</p>
+      <div class="zy-fb-result" id="feedback-result" hidden>
+        <label class="zy-fb-field">
+          <span>标题</span>
+          <input id="feedback-title-input" type="text" maxlength="80" autocomplete="off">
+        </label>
+        <label class="zy-fb-field">
+          <span>正文</span>
+          <textarea id="feedback-body-input" rows="6"></textarea>
+        </label>
+        <div class="zy-fb-exits">
+          <button class="zy-fb-primary" id="feedback-github" type="button">有 GitHub 账号，去提 issue</button>
+          <button class="zy-fb-ghost" id="feedback-copy" type="button">复制正文</button>
+          <button class="zy-fb-ghost" id="feedback-mail" type="button">没账号，发邮件</button>
+        </div>
+        <p class="zy-fb-hint" id="feedback-hint">提交到 GitHub 的内容是公开的，发之前看一眼。</p>
       </div>
-    </aside>
 
-    <section class="settings-section" aria-labelledby="ask-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">知</span>
-        <div>
-          <p class="eyebrow">核心能力</p>
-          <h2 id="ask-title">关键决策 Ask</h2>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>遇事要不要问你</h3>
-          <p>遇到该由你拍板的分岔时，知意会弹一张卡让你选。关掉后这张卡不再出现，伙伴也不会再收到关于它的提示。</p>
-        </div>
-        <div class="segmented" id="ask-display" role="group" aria-label="关键 Ask 卡展示">
-          <button type="button" data-value="on" aria-pressed="true">展示</button>
-          <button type="button" data-value="off" aria-pressed="false">关闭</button>
-        </div>
-      </div>
-      <p id="ask-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>回答后回到原任务</h3>
-          <p>你的选择会交回发起提问的对话；拒绝、关闭或超时都不会被当成同意。</p>
-        </div>
-        <span class="setting-badge">无需额外配置</span>
-      </div>
-    </section>
-
-    <section class="settings-section" id="recommendation-behavior" aria-labelledby="recommendation-behavior-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">荐</span>
-        <div>
-          <p class="eyebrow">推荐回复</p>
-          <h2 id="recommendation-behavior-title">推荐什么、什么时候给</h2>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>要不要推荐</h3>
-          <p>推荐只活在传音樱里：你想不出下一句的时候掀开球，点一下就有几条现成的可以照着发。聊天里不会突然冒卡片。关掉的话，球上那一块也会整块收起来。</p>
-        </div>
-        <div class="segmented" id="rec-display" role="group" aria-label="推荐展示方式">
-          <button type="button" data-value="ball" aria-pressed="true">传音樱内展示</button>
-          <button type="button" data-value="off" aria-pressed="false">关闭</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>输入栏里的知意按钮</h3>
-          <p>在聊天输入框中间放一个知意按钮，点一下就在输入框上方摊开推荐，可以直接改字再发。跟下面的条数、方向是一套设置。</p>
-        </div>
-        <div class="segmented" id="rec-input-button" role="group" aria-label="输入栏推荐按钮">
-          <button type="button" data-value="on" aria-pressed="true">显示</button>
-          <button type="button" data-value="off" aria-pressed="false">隐藏</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>常用快捷回复</h3>
-          <p>写几条你常用的回话，面板上排成小按钮，点一下直接发出去。最多 8 条，每条 30 字以内。</p>
-        </div>
-        <div class="quick-edit">
-          <div class="quick-tags" id="rec-quick-tags"></div>
-          <div class="quick-add">
-            <input id="rec-quick-input" type="text" maxlength="30" placeholder="写一句常用的…">
-            <button id="rec-quick-add" type="button">添加</button>
+      <form class="zy-fb-compose" id="feedback-form">
+        <div class="zy-fb-inputwrap">
+          <textarea id="feedback-input" rows="2" placeholder="用大白话说就行，比如「速览那个折叠块点不开」"></textarea>
+          <div class="zy-fb-actions">
+            <button type="button" class="zy-fb-tool" id="feedback-add-image">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2"/><circle cx="5.7" cy="6.7" r="1"/><path d="M3 12l3.3-3.1 2.5 2.3 2-1.7L14 12" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>添加图片</span>
+            </button>
+            <input id="feedback-file" type="file" accept="image/*" multiple hidden>
+            <span class="zy-fb-note" id="feedback-note">图只给我看懂问题，不进 issue</span>
+            <button type="submit" id="feedback-send" class="zy-fb-send">发送</button>
           </div>
         </div>
-      </div>
-      <div class="setting-row rec-only-card">
-        <div class="setting-copy">
-          <h3>推荐几条</h3>
-          <p>条数越多覆盖的方向越全，嫌吵就往少了调。</p>
-        </div>
-        <div class="segmented" id="rec-count" role="group" aria-label="推荐条数">
-          <button type="button" data-value="2" aria-pressed="false">2 条</button>
-          <button type="button" data-value="3" aria-pressed="true">3 条</button>
-          <button type="button" data-value="4" aria-pressed="false">4 条</button>
-        </div>
-      </div>
-      <div class="setting-row rec-only-card">
-        <div class="setting-copy">
-          <h3>推荐方向</h3>
-          <p>按当前条数从上往下取用。勾选几个都行，勾得太少会自动补齐默认轮转。</p>
-        </div>
-        <div class="style-list" id="rec-styles"></div>
-      </div>
-      <div class="setting-row rec-only-card">
-        <div class="setting-copy">
-          <h3>方向不太对？</h3>
-          <p>跟知意聊一句想怎么改，它会出一张对照卡给你看；你点「确认修改」它才真的换。</p>
-        </div>
-        <div class="model-controls">
-          <button id="rec-refine" class="model-test" type="button">和小花聊聊</button>
-          <button id="rec-restore" class="model-save" type="button">恢复默认</button>
-        </div>
-      </div>
-      <p id="rec-refine-status" class="ball-status" role="status" aria-live="polite"></p>
-      <p id="rec-status" class="ball-status" role="status" aria-live="polite">正在读取推荐设置…</p>
-    </section>
-
-    <section class="settings-section" id="sleep-guard-section" aria-labelledby="sleep-guard-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">守</span>
-        <div>
-          <p class="eyebrow">睡前</p>
-          <h2 id="sleep-guard-title">静候关机</h2>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>现在</h3>
-          <p id="sg-state-text">正在读取…</p>
-        </div>
-        <button id="sg-cancel" class="model-test" type="button" hidden>取消静候</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>空多久才算真的干完</h3>
-          <p>所有窗口和后台任务都得停下来，再连续安静这么久才算数。中途任何一处有动静，计时归零重来。</p>
-        </div>
-        <div class="model-controls threshold-controls" role="group" aria-label="静默时长">
-          <button id="sg-idle-down" class="stepper-button" type="button" aria-label="少一分钟">−</button>
-          <output id="sg-idle" class="stepper-value" aria-live="polite">10</output><span class="unit">分钟</span>
-          <button id="sg-idle-up" class="stepper-button" type="button" aria-label="多一分钟">＋</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>动手前的可撤销窗</h3>
-          <p>判定成立后先进入这段倒计时，走完才动手；这期间只要还有一处动静，当场作废、退回继续守。</p>
-        </div>
-        <div class="model-controls threshold-controls" role="group" aria-label="可撤销窗">
-          <button id="sg-grace-down" class="stepper-button" type="button" aria-label="少一分钟">−</button>
-          <output id="sg-grace" class="stepper-value" aria-live="polite">5</output><span class="unit">分钟</span>
-          <button id="sg-grace-up" class="stepper-button" type="button" aria-label="多一分钟">＋</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>最近是谁在忙</h3>
-          <p>只记「忙的变了」，一晚下来能看出到底是哪个窗口拖到最后。</p>
-        </div>
-        <button id="sg-refresh" class="model-test" type="button">刷新</button>
-      </div>
-      <ul id="sg-timeline" class="resume-results" aria-label="守门复盘时间线"></ul>
-      <p id="sg-status" class="ball-status" role="status" aria-live="polite"></p>
-    </section>
-
-    <!-- 断点续接：2026-10-23 拆掉冻结层，进页即读设置，不再有暗号。 -->
-    <section class="settings-section" id="resume-section" aria-labelledby="resume-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">续</span>
-        <div><p class="eyebrow">断点续接</p><h2 id="resume-title">停在半路时，怎么接上</h2></div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>断点续接总开关</h3>
-          <p>默认关闭。关掉后不检测、不发送，也不显示断点提醒；正常聊天循环不受影响。</p>
-        </div>
-        <div class="segmented" id="resume-enabled" role="group" aria-label="断点续接总开关">
-          <button type="button" data-value="on" aria-pressed="false" disabled>开启</button>
-          <button type="button" data-value="off" aria-pressed="true" disabled>关闭</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>手动提醒，还是自动续接</h3>
-          <p>手动时仅在传音樱开启后弹出专用续接页。自动时由后台发送「继续哈」，球只在左键面板临时显示进度；达到上限仍未恢复才提醒你。每次续接会触发真实模型调用，产生费用并占用对话上下文。</p>
-        </div>
-        <div class="segmented" id="resume-auto" role="group" aria-label="断点续接方式">
-          <button type="button" data-value="off" aria-pressed="true" disabled>手动提醒</button>
-          <button type="button" data-value="on" aria-pressed="false" disabled>自动续接</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>每个窗口连续续接上限</h3>
-          <p>1 到 10 次。恢复正常后重新计数，不会一直往同一窗口发下去。</p>
-        </div>
-        <div class="model-controls threshold-controls" role="group" aria-label="每个窗口的续接次数上限">
-          <button id="resume-max-down" class="stepper-button" type="button" aria-label="少续接一次" disabled>−</button>
-          <output id="resume-max" class="stepper-value" aria-live="polite">3</output><span class="unit">次</span>
-          <button id="resume-max-up" class="stepper-button" type="button" aria-label="多续接一次" disabled>＋</button>
-          <button id="resume-save" class="model-save" type="button" disabled>已保存 ✓</button>
-        </div>
-      </div>
-      <div class="status-actions">
-        <p id="resume-status" class="ball-status" role="status" aria-live="polite">正在读取续接设置…</p>
-        <button id="resume-retry" class="model-test" type="button" hidden>重试读取</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy"><h3>当前续接结果</h3><p>不开传音樱也能查看；这里只记录本次运行，重载后不保留。</p></div>
-        <button id="resume-refresh-status" class="model-test" type="button">刷新结果</button>
-      </div>
-      <p id="resume-result-status" class="ball-status" role="status" aria-live="polite"></p>
-      <ul id="resume-results" class="resume-results" aria-label="当前各窗口续接结果" hidden></ul>
-    </section>
-
-<section class="settings-section" aria-labelledby="summary-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">简</span>
-        <div>
-          <p class="eyebrow">阅读负担</p>
-          <h2 id="summary-title">长回复速览</h2>
-        </div>
-      </div>
-      <div class="setting-row ball-row">
-        <div class="setting-copy">
-          <h3>达到阈值就附一段速览</h3>
-          <p>按中文字符数计。原文不会删改，速览作为附加内容显示在回复末尾。</p>
-        </div>
-        <div class="model-controls">
-          <label class="switch">
-            <input id="summary-enabled" type="checkbox" checked disabled />
-            <span>开启</span>
-          </label>
-        </div>
-      </div>
-      <div class="setting-row ball-row">
-        <div class="setting-copy">
-          <h3>多长算长</h3>
-          <p>每次调整 50 字；会保留当前数值，不会擅自改成固定档位。</p>
-        </div>
-        <div class="model-controls threshold-controls" role="group" aria-label="速览字符阈值">
-          <button id="summary-min-chars-down" class="stepper-button" type="button" aria-label="减少 50 字" disabled>−</button>
-          <output id="summary-min-chars" class="stepper-value" aria-live="polite">600</output>
-          <span class="unit">字</span>
-          <button id="summary-min-chars-up" class="stepper-button" type="button" aria-label="增加 50 字" disabled>＋</button>
-          <button id="summary-save" class="model-save" type="button" disabled>保存</button>
-        </div>
-      </div>
-      <div class="status-actions">
-        <p id="summary-status" class="ball-status" role="status" aria-live="polite">正在读取设置…</p>
-        <button id="summary-retry" class="model-test" type="button" hidden>重试读取</button>
-      </div>
-    </section>
-
-    <aside class="permission-note">
-      <span class="note-icon" aria-hidden="true">i</span>
-      <div>
-        <strong>第一次使用</strong>
-        <p>请在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」审核需要的权限，并在目标伙伴的工具设置中启用知意。伙伴仍会自行处理低风险、可逆的小选择，不会为琐事频繁打断你。</p>
-      </div>
-    </aside>
-
-    <section class="settings-section" id="voice-live-section" aria-labelledby="voice-live-title">
-      <div class="section-heading">
-        <span class="section-mark" aria-hidden="true">声</span>
-        <div>
-          <p class="eyebrow">朗读</p>
-          <h2 id="voice-live-title">念出来听</h2>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>要不要允许朗读</h3>
-          <p>关掉后知意不合成任何语音，传音樱里的「念给我听」也会跟着收起来。已经生成好的音频不影响。</p>
-        </div>
-        <div class="segmented" id="voice-enabled" role="group" aria-label="是否允许朗读">
-          <button type="button" data-value="on" aria-pressed="true">允许</button>
-          <button type="button" data-value="off" aria-pressed="false">关闭</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>念哪一段</h3>
-          <p><strong>整条回复</strong>把可见正文都念一遍；<strong>只念引号台词</strong>只念对话里带引号的部分。选了台词却没找到引号时会退回整条。</p>
-        </div>
-        <div class="segmented" id="voice-scope" role="group" aria-label="朗读范围">
-          <button type="button" data-value="all" aria-pressed="true">整条回复</button>
-          <button type="button" data-value="quoted" aria-pressed="false">只念引号台词</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <h3>语速</h3>
-          <p>三档就够用，不做细调。</p>
-        </div>
-        <div class="segmented" id="voice-speed" role="group" aria-label="语速">
-          <button type="button" data-value="0.85" aria-pressed="false">慢一点</button>
-          <button type="button" data-value="1" aria-pressed="true">正常</button>
-          <button type="button" data-value="1.15" aria-pressed="false">快一点</button>
-        </div>
-      </div>
-      <div class="tool-divider" role="presentation"></div>
-      <div class="setting-row model-row">
-        <div class="setting-copy">
-          <h3>默认音色</h3>
-          <p>没有单独设置的伙伴都用这个。音色列表跟着设置里那个协议走；自建 TTS 就直接填音色名。</p>
-        </div>
-        <div class="model-controls">
-          <div class="model-picker">
-            <button id="voice-tone-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="voice-tone-options">正在读取音色…</button>
-            <div id="voice-tone-options" class="model-options" role="listbox" aria-label="默认音色" hidden></div>
-            <input id="voice-tone-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="填你那个服务里的音色 id（比如 anna）" hidden>
-          </div>
-          <button id="voice-tone-preview" class="model-test" type="button">▶ 试听</button>
-        </div>
-      </div>
-      <div class="setting-row model-row">
-        <div class="setting-copy">
-          <h3>给伙伴分开选音色</h3>
-          <p>这里只列出你最近聊过的伙伴。选「跟随默认」就是用上面的默认音色。</p>
-        </div>
-        <div class="model-controls">
-          <button id="voice-partner-refresh" class="model-test" type="button">刷新伙伴</button>
-        </div>
-      </div>
-      <div id="voice-partners" class="partner-voice-list"></div>
-      <p id="voice-status" class="ball-status" role="status" aria-live="polite"></p>
-      <div class="tool-divider" role="presentation"></div>
-      <div class="setting-row model-row">
-        <div class="setting-copy">
-          <h3>语音收藏</h3>
-          <p>在传音樱里朗读完一段，点「♡ 收藏」就存在这儿。只存引用不复制音频，试听直接读当时那段，不会再花一次合成的钱。</p>
-        </div>
-        <div class="model-controls">
-          <button id="voice-fav-refresh" class="model-test" type="button">刷新列表</button>
-        </div>
-      </div>
-      <div id="voice-fav-list" class="style-list">
-        <p class="ball-status">正在读取语音收藏…</p>
-      </div>
-      <div id="voice-fav-player" class="voice-player" hidden>
-        <audio id="voice-fav-audio" controls preload="none"></audio>
-      </div>
-      <p id="voice-fav-status" class="ball-status" role="status" aria-live="polite"></p>
-    </section>
-  </main>
-
-  <!-- 设置弹窗：不常用的一律收在这里，主页面只留常用开关 -->
-  <div class="modal-overlay" id="settings-modal" hidden>
-    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
-      <div class="modal-head">
-        <h2 id="settings-modal-title">设置</h2>
-        <button id="settings-close" class="modal-close" type="button" aria-label="关闭设置">✕</button>
-      </div>
-      <div class="modal-body">
-
-        <section class="settings-section" aria-labelledby="content-model-title">
-          <div class="section-heading">
-            <span class="section-mark" aria-hidden="true">模</span>
-            <div>
-              <p class="eyebrow">模型</p>
-              <h2 id="content-model-title">内容模型</h2>
-            </div>
-          </div>
-          <div class="setting-row model-row">
-            <div class="setting-copy">
-              <h3>推荐回复、Ask 判断、速览共用这一条</h3>
-              <p>不选就跟随发起那一轮的当前模型，多数时候不用管。想省钱或图快，就单独挑一条轻量的。</p>
-            </div>
-            <div class="model-controls">
-              <div class="model-picker">
-                <button id="content-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="content-model-options">正在读取模型…</button>
-                <div id="content-model-options" class="model-options" role="listbox" aria-label="内容模型" hidden></div>
-              </div>
-              <button id="content-model-test" class="model-test" type="button" disabled>测试连接</button>
-              <button id="content-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
-            </div>
-          </div>
-          <p id="content-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-          <div class="tool-divider" role="presentation"></div>
-          <div class="setting-row model-row">
-            <div class="setting-copy">
-              <h3>备用模型</h3>
-              <p>推荐回复在一条模型上连撞三次都不成时，换这条再试一次；真用上了，面板会写明「这几句是备用拟的」，不会默默换掉。不设就不切。</p>
-            </div>
-            <div class="model-controls">
-              <div class="model-picker">
-                <button id="fallback-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="fallback-model-options">正在读取模型…</button>
-                <div id="fallback-model-options" class="model-options" role="listbox" aria-label="备用模型" hidden></div>
-              </div>
-              <button id="fallback-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
-            </div>
-          </div>
-          <p id="fallback-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-          <div class="tool-divider" role="presentation"></div>
-          <div class="setting-row model-row">
-            <div class="setting-copy">
-              <h3>快速模型</h3>
-              <p>长回复速览、会话标题这类要立刻出结果的小功能走这条。会尽量让模型关掉思考，跑得更快，也不容易思考吃光预算而吐不出正文。不选就跟随上面的内容模型。</p>
-            </div>
-            <div class="model-controls">
-              <div class="model-picker">
-                <button id="fast-model-trigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="fast-model-options">正在读取模型…</button>
-                <div id="fast-model-options" class="model-options" role="listbox" aria-label="快速模型" hidden></div>
-              </div>
-              <button id="fast-model-test" class="model-test" type="button" disabled>测试一下</button>
-              <button id="fast-model-save" class="model-save" type="button" disabled>已保存 ✓</button>
-            </div>
-          </div>
-          <p id="fast-model-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-          <div class="tool-divider" role="presentation"></div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <h3>用自己的接口跑</h3>
-              <p>开启后，上面没选模型时，知意改走你填的这条接口。上面选了 Hana 模型的仍然优先用你选的。</p>
-            </div>
-            <div class="segmented" id="custom-enabled" role="group" aria-label="是否使用自定义模型">
-              <button type="button" data-value="on" aria-pressed="false">开启</button>
-              <button type="button" data-value="off" aria-pressed="true">关闭</button>
-            </div>
-          </div>
-          <div class="field-grid">
-            <label class="field field-wide">
-              <span>接口地址</span>
-              <input id="custom-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
-            </label>
-            <label class="field">
-              <span>模型名</span>
-              <input id="custom-model-name" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-4o-mini">
-            </label>
-            <label class="field">
-              <span>API Key<span class="field-note" id="custom-key-note">用 Windows 系统加密保存</span></span>
-              <input id="custom-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你的 API Key">
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <p class="setting-hint">按 OpenAI 兼容的 <code>/chat/completions</code> 调用。Key 只存在本机知意的目录里，不发给 Hana，也不上传。</p>
-            </div>
-            <div class="model-controls">
-              <button id="custom-test" class="model-test" type="button">测试一下</button>
-              <button id="custom-save" class="model-save" type="button">保存</button>
-              <button id="custom-clear-key" class="model-test" type="button">清掉 Key</button>
-            </div>
-          </div>
-          <p id="custom-status" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-        </section>
-
-        <section class="settings-section" id="voice-section" aria-labelledby="voice-title">
-          <div class="section-heading">
-            <span class="section-mark" aria-hidden="true">声</span>
-            <div>
-              <p class="eyebrow">朗读</p>
-              <h2 id="voice-title">语音服务</h2>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <h3>朗读接口</h3>
-              <p>先挑一个现成模板把地址和模型名填好，再补上 Key。MiniMax 还需要填 GroupId，在它的控制台里能看到；自己部署的 TTS（GPT-SoVITS、kokoro、ChatTTS 这类）选「自建 TTS」，一般不用 Key。</p>
-            </div>
-            <div class="segmented voice-presets" id="voice-presets" role="group" aria-label="朗读模型模板"></div>
-          </div>
-          <div class="field-grid">
-            <label class="field">
-              <span>接口协议</span>
-              <div class="segmented" id="voice-protocol" role="group" aria-label="接口协议">
-                <button type="button" data-value="t2a" aria-pressed="true">MiniMax</button>
-                <button type="button" data-value="chat" aria-pressed="false">OpenAI 兼容</button>
-                <button type="button" data-value="speech" aria-pressed="false">自建 TTS</button>
-              </div>
-            </label>
-            <label class="field">
-              <span>接口地址</span>
-              <input id="voice-baseurl" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.minimaxi.com">
-            </label>
-            <label class="field">
-              <span>模型名</span>
-              <input id="voice-model" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="speech-2.8-hd">
-            </label>
-            <label class="field" id="voice-groupid-field">
-              <span>GroupId<span class="field-note">仅 MiniMax 需要</span></span>
-              <input id="voice-groupid" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="1234567890">
-            </label>
-            <label class="field field-wide">
-              <span>API Key<span class="field-note" id="voice-key-note">用 Windows 系统加密保存，不留在明文里</span></span>
-              <input id="voice-apikey" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴朗读模型的 API Key">
-            </label>
-            <label class="field field-wide" id="voice-authstyle-field">
-              <span>Key 怎么带<span class="field-note">各家不一样；分不清就留着「自动」</span></span>
-              <div class="segmented" id="voice-authstyle" role="group" aria-label="鉴权方式">
-                <button type="button" data-value="" aria-pressed="true">自动</button>
-                <button type="button" data-value="bearer" aria-pressed="false">Bearer</button>
-                <button type="button" data-value="api-key" aria-pressed="false">api-key</button>
-                <button type="button" data-value="none" aria-pressed="false">不要</button>
-              </div>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <h3>不想自己填 Key？</h3>
-              <p>勾上以后，知意每次合成都去问 Hana 要一次凭据，你自己一个 Key 都不用存。<strong>前提是</strong> Hana 里已经把这个服务商配好了，且在「应用权限」里允许了「读取凭据」；拿不到会直接告诉你。</p>
-            </div>
-            <div class="segmented" id="voice-hana-key" role="group" aria-label="是否用 Hana 里的凭据">
-              <button type="button" data-value="on" aria-pressed="false">用 Hana 的</button>
-              <button type="button" data-value="off" aria-pressed="true">我自己填</button>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <p class="setting-hint">朗读请求会把你选中那段文字发给你填的这个语音服务商；音频只留在本机知意的目录里，不上传到别处。想听哪一段，在传音樱面板里点「念给我听」。</p>
-            </div>
-            <div class="model-controls">
-              <button id="voice-test" class="model-test" type="button" disabled>测试一下</button>
-              <button id="voice-save" class="model-save" type="button" disabled>保存</button>
-            </div>
-          </div>
-          <p id="voice-model-status" class="ball-status" role="status" aria-live="polite">正在读取朗读设置…</p>
-          <div id="voice-player" class="voice-player" hidden>
-            <audio id="voice-audio" controls preload="none"></audio>
-            <p id="voice-caption" class="voice-caption"></p>
-          </div>
-        </section>
-
-        <section class="settings-section" aria-labelledby="ball-title">
-          <div class="section-heading">
-            <span class="section-mark flower-mark" aria-hidden="true">✿</span>
-            <div>
-              <p class="eyebrow">可选体验</p>
-              <h2 id="ball-title">桌面传音樱</h2>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-copy">
-              <h3>开关在页面右上角</h3>
-              <p>传音樱里可以提问、挑推荐、理顺、起标题、念给我听。传音樱没运行时，伙伴会在原对话里放一张知意选择卡，点选后在新回合接着办。</p>
-            </div>
-            <span class="setting-badge" id="ball-modal-state">正在读取…</span>
-          </div>
-          <p class="setting-hint">启动需要在 Hana「设置 → 应用 → 应用权限 → 解语花·知意」允许「运行外部程序」，并在本机 Python 环境安装 PyQt6。知意不会自动安装依赖；传音樱不可用时会退回聊天内的知意选择卡，配方卡也展示不了时才回退 Hana 原生确认卡。</p>
-        </section>
-
-        <section class="settings-section" aria-labelledby="permission-status-title">
-          <div class="section-heading">
-            <span class="section-mark" aria-hidden="true">权</span>
-            <div>
-              <p class="eyebrow">运行状态</p>
-              <h2 id="permission-status-title">知意当前权限</h2>
-            </div>
-          </div>
-          <div id="permission-status-list" class="permission-grid" aria-live="polite"></div>
-          <div class="permission-actions">
-            <button id="permission-status-refresh" class="model-test" type="button">刷新状态</button>
-          </div>
-          <p id="permission-status-message" class="ball-status" role="status" aria-live="polite">正在读取…</p>
-        </section>
-
-      </div>
-      <div class="modal-foot">
-        <p class="modal-note">Key 只存在本机，不上传。用哪条模型、花不花钱，你自己定。</p>
-        <button id="settings-done" class="model-save" type="button">好了</button>
+      </form>
       </div>
     </div>
+  </div>
+
+  <div class="zy-fb-lightbox" id="feedback-lightbox" hidden>
+    <button class="zy-fb-lightbox-close" id="feedback-lightbox-close" type="button" aria-label="关掉大图">×</button>
+    <img class="zy-fb-lightbox-image" id="feedback-lightbox-image" alt="截图大图">
   </div>
 
   <script>
@@ -590,5 +799,6 @@
     }, true);
   </script>
   <script type="module" src="./assets/panel.js"></script>
+  <script type="module" src="./assets/panel-layout.js"></script>
 </body>
 </html>

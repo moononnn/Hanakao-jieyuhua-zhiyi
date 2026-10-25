@@ -1,6 +1,10 @@
 import { hana } from './sdk.js';
 import { activeTimingIndex, buildReaderSegments, formatTimeLabel } from './voice-reader.js';
 import { buildPolishRequest, normalizePolishSuggestions, polishStatusText } from './polish-draft.js';
+import { followHostTheme } from './theme-report.js';
+
+// 跟着宿主的深浅走，顺手把深浅报给 App（它再转给传音樱）。
+followHostTheme();
 
 const list = document.getElementById('list');
 const empty = document.getElementById('empty');
@@ -25,6 +29,12 @@ const toolsGrid = document.getElementById('tools-grid');
 const openVoiceButton = document.getElementById('open-voice');
 const voiceBackButton = document.getElementById('voice-back');
 const openQueueButton = document.getElementById('open-queue');
+const shutdownButton = document.getElementById('toggle-shutdown');
+const shutdownLabel = document.getElementById('shutdown-label');
+const shutdownHint = document.getElementById('shutdown-hint');
+const ballButton = document.getElementById('toggle-ball');
+const ballLabel = document.getElementById('ball-label');
+const ballHint = document.getElementById('ball-hint');
 const queueBackButton = document.getElementById('queue-back');
 const queueView = document.getElementById('queue-view');
 const queueTarget = document.getElementById('queue-target');
@@ -39,6 +49,8 @@ const queueCancelButton = document.getElementById('queue-cancel');
 const queueSendButton = document.getElementById('queue-send');
 const polishPage = document.getElementById('polish-page');
 const polishInput = document.getElementById('polish-input');
+const polishResult = document.getElementById('polish-result');
+const polishResultBlock = document.getElementById('polish-result-block');
 const polishRequire = document.getElementById('polish-require');
 const polishSuggest = document.getElementById('polish-suggest');
 const polishSuggestList = document.getElementById('polish-suggest-list');
@@ -110,15 +122,16 @@ let volumeBeforeMute = 1;
 const VOICE_LIST_PANEL_HEIGHT = 460;
 const VOICE_READER_PANEL_HEIGHT = 560;
 const POLISH_PANEL_HEIGHT = 420;
-const TOOLS_PANEL_HEIGHT = 240;
+const POLISH_PANEL_HEIGHT_WITH_RESULT = 550;
+const TOOLS_PANEL_HEIGHT = 300;
 // 排队那层比格子高：输入框、轮数行、提示、状态、按钮都要摆下。
 const QUEUE_PANEL_HEIGHT = 420;
 const MAX_PANEL_HEIGHT = 560;
 // 面板现在有三页：推荐回复、小工具、帮我理顺。页签与页面一一对应，切页时一起换。
 const PANEL_PAGES = [
   { key: 'recommend', tab: recommendTab, page: recommendPage },
-  { key: 'tools', tab: toolsTab, page: toolsPage },
   { key: 'polish', tab: polishTab, page: polishPage },
+  { key: 'tools', tab: toolsTab, page: toolsPage },
 ];
 // 小工具那页现在有三层：入口格子、朗读、排队发送。记住停在哪一层。
 let toolsSubView = 'grid';
@@ -137,6 +150,8 @@ let queueActive = false;
 let polishSource = '';
 let polishLastResult = '';
 let polishBusy = false;
+// 出结果之后原稿又被改过，就不再接上一版改，重新起头。
+let polishSourceDirty = false;
 
 function panelSessionId() {
   const context = hana.inputPanel?.getContext?.();
@@ -167,11 +182,18 @@ function syncPanelContext(context) {
     // 换了一段对话，理顺的草稿也不能跟着过去（那句话是写给上一段 ta 的）。
     polishSource = '';
     polishLastResult = '';
-    if (polishInput) polishInput.value = '';
+    polishSourceDirty = false;
+    if (polishInput) {
+      polishInput.value = '';
+      polishInput.rows = 5;
+    }
+    if (polishResult) polishResult.value = '';
+    if (polishResultBlock) polishResultBlock.hidden = true;
     if (polishRequire) polishRequire.value = '';
     clearPolishSuggestions();
     if (polishQueueButton) polishQueueButton.hidden = true;
     if (polishSendButton) polishSendButton.hidden = true;
+    renderPolishRunLabel();
     setPolishStatus('');
     // 换了一段对话，排队草稿也得清掉（那句话是写给上一段 ta 的）；
     // 排队本身跟对话走，面板只负责把新会话的状态重新拉一遍。
@@ -894,6 +916,8 @@ async function showToolsView(sub = 'grid') {
   if (!inQueue) stopQueuePolling();
   if (next === 'grid') {
     await setPanelHeight(TOOLS_PANEL_HEIGHT);
+    void refreshShutdownState();
+    void refreshBallState();
     return;
   }
   if (inQueue) {
@@ -939,7 +963,7 @@ async function showPage(page) {
   }
   toolsSubView = 'grid';
   if (toolsGrid) toolsGrid.hidden = false;
-  await setPanelHeight(showPolish ? POLISH_PANEL_HEIGHT : recommendationHeight);
+  await setPanelHeight(showPolish ? polishPageHeight() : recommendationHeight);
 }
 
 recommendTab.addEventListener('click', () => void showPage('recommend'));
@@ -948,8 +972,104 @@ polishTab.addEventListener('click', () => void showPage('polish'));
 // 小工具里的三格：重新命名标题（就地跑）、朗读（进子视图）、排队发送（进子视图）。
 openVoiceButton?.addEventListener('click', () => void showToolsView('voice'));
 voiceBackButton?.addEventListener('click', () => void showToolsView('grid'));
-openQueueButton?.addEventListener('click', () => void showToolsView('queue'));
-queueBackButton?.addEventListener('click', () => void showToolsView('grid'));
+openQueueButton?.addEventListener('click', () => void showToolsView('queue'));queueBackButton?.addEventListener('click', () => void showToolsView('grid'));
+
+// 关机那格：点一下开，再点一下取消。
+// 它不自己维护一套状态，读的是设置页、提示条同一个 /sleep-guard。
+let shutdownArmed = false;
+let shutdownBusy = false;
+
+function renderShutdownTile() {
+  if (!shutdownButton) return;
+  shutdownButton.dataset.armed = shutdownArmed ? '1' : '0';
+  if (shutdownLabel) shutdownLabel.textContent = shutdownArmed ? '关机中' : '关机';
+  if (shutdownHint) {
+    shutdownHint.textContent = shutdownArmed ? '点一下取消，不关了' : '只查 Hana 窗口，别的先存好';
+  }
+}
+
+async function refreshShutdownState() {
+  try {
+    const response = await hana.api.fetch('/sleep-guard');
+    const snapshot = await response.json();
+    shutdownArmed = snapshot?.armed === true;
+  } catch {
+    // 读不到就维持现状，别把卡片弄成未知态。
+  }
+  renderShutdownTile();
+}
+
+async function toggleShutdown() {
+  if (!shutdownButton || shutdownBusy) return;
+  shutdownBusy = true;
+  shutdownButton.disabled = true;
+  if (shutdownHint) shutdownHint.textContent = shutdownArmed ? '正在取消…' : '正在开启…';
+  try {
+    const response = await hana.api.fetch(shutdownArmed ? '/sleep-guard/cancel' : '/sleep-guard/arm', { method: 'POST' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没成，再试一次。');
+    await refreshShutdownState();
+  } catch (error) {
+    if (shutdownHint) {
+      shutdownHint.textContent = error?.message || '没成，再试一次。';
+      setTimeout(renderShutdownTile, 2600);
+    }
+  } finally {
+    shutdownBusy = false;
+    shutdownButton.disabled = false;
+  }
+}
+
+shutdownButton?.addEventListener('click', () => void toggleShutdown());
+
+// 传音樱：桌面那个球。跟关机一样是“常驻”的东西，不是对这段对话做一件事。
+let ballRunning = false;
+let ballBusy = false;
+
+function renderBallTile() {
+  if (!ballButton) return;
+  ballButton.dataset.armed = ballRunning ? '1' : '0';
+  if (ballLabel) ballLabel.textContent = ballRunning ? '传音樱在' : '传音樱';
+  if (ballHint) {
+    ballHint.textContent = ballRunning ? '开着呢，点一下收起' : '把桌面那个球叫出来';
+  }
+}
+
+async function refreshBallState() {
+  try {
+    const response = await hana.api.fetch('/ball/status');
+    const snapshot = await readJsonSafe(response);
+    ballRunning = snapshot?.running === true;
+  } catch {
+    // 读不到就维持现状，不把卡片弄成未知态。
+  }
+  renderBallTile();
+}
+
+async function toggleBall() {
+  if (!ballButton || ballBusy) return;
+  ballBusy = true;
+  ballButton.disabled = true;
+  if (ballHint) ballHint.textContent = ballRunning ? '正在收起…' : '正在叫出来…';
+  try {
+    const response = await hana.api.fetch(ballRunning ? '/ball/stop' : '/ball/start', { method: 'POST' });
+    const payload = await readJsonSafe(response);
+    if (!ballRunning && payload?.running !== true) {
+      throw new Error(payload?.error || '没叫起来，看看 Python 装好了没。');
+    }
+    await refreshBallState();
+  } catch (error) {
+    if (ballHint) {
+      ballHint.textContent = error?.message || '没成，再试一次。';
+      setTimeout(renderBallTile, 3000);
+    }
+  } finally {
+    ballBusy = false;
+    ballButton.disabled = false;
+  }
+}
+
+ballButton?.addEventListener('click', () => void toggleBall());
 queueCancelButton?.addEventListener('click', () => void showToolsView('grid'));
 queueSendButton?.addEventListener('click', () => void sendQueuePlan());
 queueStopButton?.addEventListener('click', () => void stopQueuePlan());
@@ -1368,18 +1488,35 @@ async function loadPolishSuggestions(text) {
   }
 }
 
+// 回包不一定是 JSON：后端或中间层抛错时可能是一句纯文本，
+// 直接 response.json() 会把那句英文原文抬到用户面前。
+async function readJsonSafe(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('后台这次没回话，再点一次试试。');
+  }
+}
+
 async function runPolish() {
   if (polishBusy) return;
-  const text = String(polishInput?.value || '').trim();
+  const sourceText = String(polishInput?.value || '').trim();
+  const resultText = String(polishResult?.value || '').trim();
+  // 原稿出了结果后又被改过，就当换了一句新话，不再接着上一版改。
+  const keepResult = Boolean(resultText) && !polishSourceDirty;
+  const text = keepResult ? resultText : sourceText;
   if (!text) {
     setPolishStatus('先写点什么再理顺嘛。', 'warn');
     return;
   }
-  // 框里还是上一版结果，就当「在上一版上改」；自己改过了就当新原话。
+  // 迭代时锚点仍是最初那句原稿；重新起头时锚点就是刚写的这句。
+  const anchor = keepResult ? polishSource || sourceText : sourceText;
   const draft = buildPolishRequest({
     text,
-    lastResult: polishLastResult,
-    source: polishSource,
+    lastResult: keepResult ? polishLastResult : '',
+    source: anchor,
     instruction: String(polishRequire?.value || '').trim(),
   });
   const onPrevious = draft.onPrevious;
@@ -1395,33 +1532,40 @@ async function runPolish() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(draft.request),
     });
-    const payload = await response.json();
+    const payload = await readJsonSafe(response);
     if (!response.ok || payload?.ok !== true) {
       throw new Error(payload?.error || '这次没理顺成，原话没动。');
     }
     const result = String(payload.text || '').trim();
     if (!result) throw new Error('这次没理顺成，原话没动。');
-    if (polishInput) polishInput.value = result;
+    // 结果写进下面的框，原稿一个字不动，方便对照。
+    if (polishResult) polishResult.value = result;
+    if (polishResultBlock) polishResultBlock.hidden = false;
+    // 出了结果，原稿就能收了：只留个对照锚点，把地方留给下面。
+    if (polishInput) polishInput.rows = 3;
     polishLastResult = result;
     if (!onPrevious) polishSource = text;
+    polishSourceDirty = false;
     if (polishQueueButton) polishQueueButton.hidden = false;
     if (polishSendButton) polishSendButton.hidden = false;
     const status = polishStatusText(payload);
     setPolishStatus(status.text, status.tone);
     void loadPolishSuggestions(result);
+    await setPanelHeight(POLISH_PANEL_HEIGHT_WITH_RESULT);
   } catch (error) {
     setPolishStatus(String(error?.message || '这次没理顺成，原话没动。').slice(0, 200), 'warn');
   } finally {
     polishBusy = false;
     if (polishRunButton) {
       polishRunButton.disabled = false;
-      polishRunButton.textContent = '理顺';
+      renderPolishRunLabel();
     }
   }
 }
 
 async function sendPolish(mode, button) {
-  const text = String(polishInput?.value || '').trim();
+  const resultText = String(polishResult?.value || '').trim();
+  const text = resultText || String(polishInput?.value || '').trim();
   if (!text) {
     setPolishStatus('先写点什么再理顺嘛。', 'warn');
     return;
@@ -1445,13 +1589,21 @@ async function sendPolish(mode, button) {
       mode === 'steer' ? '插进去了，ta 正在看这句。' : '排上了，等 ta 这轮说完就发。',
       'ok',
     );
-    if (polishInput) polishInput.value = '';
+    if (polishInput) {
+      polishInput.value = '';
+      polishInput.rows = 5;
+    }
+    if (polishResult) polishResult.value = '';
+    if (polishResultBlock) polishResultBlock.hidden = true;
     if (polishRequire) polishRequire.value = '';
     polishSource = '';
     polishLastResult = '';
+    polishSourceDirty = false;
     clearPolishSuggestions();
     if (polishQueueButton) polishQueueButton.hidden = true;
     if (polishSendButton) polishSendButton.hidden = true;
+    renderPolishRunLabel();
+    void setPanelHeight(POLISH_PANEL_HEIGHT);
   } catch (error) {
     setPolishStatus(String(error?.message || '没发出去，再试一次。').slice(0, 200), 'warn');
   } finally {
@@ -1465,15 +1617,28 @@ async function sendPolish(mode, button) {
 polishRunButton?.addEventListener('click', () => void runPolish());
 polishQueueButton?.addEventListener('click', () => void sendPolish('followUp', polishQueueButton));
 polishSendButton?.addEventListener('click', () => void sendPolish('steer', polishSendButton));
+
+// 没有结果时叫「理顺」，有结果时叫「再理一版」——同一个动作，说清会接上一版改。
+function renderPolishRunLabel() {
+  if (!polishRunButton) return;
+  const hasResult = Boolean(polishResult && polishResult.value.trim());
+  polishRunButton.textContent = hasResult ? '再理一版' : '理顺';
+}
+
+/** 理顺页的高度：出了结果就多一块，没出就回到单个输入框的高度。 */
+function polishPageHeight() {
+  return polishResultBlock && !polishResultBlock.hidden ? POLISH_PANEL_HEIGHT_WITH_RESULT : POLISH_PANEL_HEIGHT;
+}
+
 polishInput?.addEventListener('input', () => {
-  // 自己动过输入框：上一版结果就不再是锚点了，下一次理顺重新起头。
-  if (polishLastResult && polishInput.value !== polishLastResult) {
-    polishLastResult = '';
-    polishSource = '';
-    clearPolishSuggestions();
-    if (polishQueueButton) polishQueueButton.hidden = true;
-    if (polishSendButton) polishSendButton.hidden = true;
-  }
+  // 原稿动过了，下一版就当新话重新起头；下面的结果先留着当对照，不急着抹。
+  if (polishLastResult) polishSourceDirty = true;
+  renderPolishRunLabel();
+});
+
+polishResult?.addEventListener('input', () => {
+  // 自己改过结果，就不再是模型那一版，下次点理顺按新原文处理（跟以前一致）。
+  renderPolishRunLabel();
 });
 
 async function load() {

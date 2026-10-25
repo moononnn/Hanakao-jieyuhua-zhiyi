@@ -373,6 +373,9 @@ class AskDialogTests(unittest.TestCase):
         ball = FakeBall()
         menu = self._shown_menu(ball)
         try:
+            # 「对话工具」默认折叠，里面的工具行不可见；要量位置得先展开。
+            menu.tools_body.setVisible(True)
+            menu.tools_expanded = True
             menu._set_undo_available(True)
             self.app.processEvents()
             self.assertTrue(menu.btn_undo.isVisible())

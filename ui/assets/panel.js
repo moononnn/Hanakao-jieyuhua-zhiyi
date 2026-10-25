@@ -1,5 +1,9 @@
 import { hana } from './sdk.js';
 import { initPermissionStatus } from './permission-status.js';
+import { followHostTheme } from './theme-report.js';
+
+// 深浅跟着宿主走，顺手报给 App（它再转给传音樱）。
+followHostTheme();
 
 const themeLink = document.createElement('link');
 themeLink.rel = 'stylesheet';
@@ -21,6 +25,7 @@ const ballStatus = document.querySelector('#ball-status');
 const ballToggleLabel = document.querySelector('#ball-toggle-label');
 const ballToggleSwitch = startButton?.querySelector('.ball-toggle-switch');
 const ballModalState = document.querySelector('#ball-modal-state');
+const ballCardState = document.querySelector('#ball-card-state');
 let currentBallState = { running: false, stopping: false, error: '' };
 
 function setBallState(state) {
@@ -52,6 +57,13 @@ function setBallState(state) {
     ballModalState.textContent = currentBallState.stopping
       ? '正在关闭'
       : currentBallState.running ? '已启动' : '未启动';
+  }
+  // 概览里那行「桌面传音樱」的右侧只报状态，开关在页头
+  if (ballCardState) {
+    ballCardState.textContent = currentBallState.stopping
+      ? '关闭中'
+      : currentBallState.running ? '已启动' : '未启动';
+    ballCardState.classList.toggle('is-on', currentBallState.running);
   }
 }
 
@@ -2022,21 +2034,8 @@ document.addEventListener('click', (event) => {
   }
 });
 
-// 对话式修订入口：只把「想聊」这个意思交给主对话的伙伴，具体的建议卡由它在对话里发。
-recRefineButton?.addEventListener('click', async () => {
-  recRefineButton.disabled = true;
-  if (recRefineStatus) recRefineStatus.textContent = '正在告诉知意……';
-  try {
-    const response = await hana.api.fetch('/recommendation-config/refine-request', { method: 'POST' });
-    const payload = await response.json();
-    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没递到话。');
-    recRefineButton.textContent = '已递到对话 ✓';
-    if (recRefineStatus) recRefineStatus.textContent = payload.hint || '去对话里说一声吧。';
-  } catch (error) {
-    recRefineButton.disabled = false;
-    if (recRefineStatus) recRefineStatus.textContent = error?.message || '没递到话，再点一次。';
-  }
-});
+// 对话式修订入口：点开一扇小窗在里面用大白话说，说得够清楚了才给一份可确认的清单。
+recRefineButton?.addEventListener('click', () => openRefineChat());
 
 recRestoreButton?.addEventListener('click', async () => {
   recRestoreButton.disabled = true;
@@ -2058,6 +2057,219 @@ recRestoreButton?.addEventListener('click', async () => {
   } finally {
     recRestoreButton.disabled = false;
   }
+});
+
+// ── 跟知意说说：小窗对话，聊够了给一份能确认的清单 ──
+const refineChatOverlay = document.querySelector('#refine-chat');
+const refineChatLog = document.querySelector('#refine-chat-log');
+const refineChatForm = document.querySelector('#refine-chat-form');
+const refineChatInput = document.querySelector('#refine-chat-input');
+const refineChatSend = document.querySelector('#refine-chat-send');
+const refineChatClose = document.querySelector('#refine-chat-close');
+const refineChatSuggest = document.querySelector('#refine-chat-suggest');
+
+const CHAT_ACTION_LABEL = { add: '新增', update: '改过', keep: '没动' };
+let refineChatMessages = [];
+let refineChatBusy = false;
+let refineChatPlan = null;
+let refineChatLastFocus = null;
+
+function chatRow(role, text) {
+  if (!refineChatLog) return null;
+  const row = document.createElement('div');
+  row.className = `zy-chat-row ${role}`;
+  const bubble = document.createElement('p');
+  bubble.className = 'zy-chat-bubble';
+  bubble.textContent = text;
+  row.append(bubble);
+  refineChatLog.append(row);
+  refineChatLog.scrollTop = refineChatLog.scrollHeight;
+  return row;
+}
+
+function openRefineChat() {
+  if (!refineChatOverlay) return;
+  refineChatLastFocus = document.activeElement;
+  refineChatOverlay.hidden = false;
+  refineChatPlan = null;
+  if (refineChatSuggest) {
+    refineChatSuggest.hidden = true;
+    refineChatSuggest.replaceChildren();
+  }
+  if (!refineChatMessages.length) {
+    chatRow('assistant', '想怎么改？用大白话说就行。比如「太正经了，多点顺着我说话的」。');
+  }
+  if (refineChatInput) {
+    refineChatInput.value = '';
+    refineChatInput.focus();
+  }
+}
+
+function closeRefineChat() {
+  if (!refineChatOverlay) return;
+  refineChatOverlay.hidden = true;
+  refineChatLastFocus?.focus?.();
+}
+
+async function askRefineChat({ force = false } = {}) {
+  if (refineChatBusy || !refineChatMessages.length) return;
+  refineChatBusy = true;
+  if (refineChatSend) refineChatSend.disabled = true;
+  const pending = document.createElement('div');
+  pending.className = 'zy-chat-row assistant is-waiting';
+  const dots = document.createElement('p');
+  dots.className = 'zy-chat-bubble zy-typing';
+  dots.setAttribute('aria-label', '知意在想');
+  dots.innerHTML = '<i></i><i></i><i></i>';
+  pending.append(dots);
+  refineChatLog?.append(pending);
+  if (refineChatLog) refineChatLog.scrollTop = refineChatLog.scrollHeight;
+  try {
+    const response = await hana.api.fetch('/recommendation-config/refine-chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: refineChatMessages, force }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没聊成，再说一次。');
+    pending.remove();
+    const reply = String(payload.reply || '……');
+    chatRow('assistant', reply);
+    refineChatMessages.push({ role: 'assistant', content: reply });
+    if (payload.ready === true && Array.isArray(payload.diff) && payload.diff.length) {
+      renderRefineChatPlan(payload);
+    }
+  } catch (error) {
+    pending.remove();
+    chatRow('assistant', error?.message || '没聊成，再说一次。');
+  } finally {
+    refineChatBusy = false;
+    if (refineChatSend) refineChatSend.disabled = false;
+    refineChatInput?.focus();
+  }
+}
+
+function renderRefineChatPlan(payload) {
+  if (!refineChatSuggest) return;
+  refineChatPlan = payload;
+  refineChatSuggest.replaceChildren();
+
+  const title = document.createElement('p');
+  title.className = 'zy-chat-suggest-title';
+  title.textContent = '改完是这样，你点头才生效';
+  refineChatSuggest.append(title);
+
+  const list = document.createElement('div');
+  list.className = 'zy-chat-plan';
+  for (const item of payload.diff) {
+    const row = document.createElement('div');
+    row.className = `zy-chat-plan-item is-${item.action}`;
+    const head = document.createElement('div');
+    head.className = 'zy-chat-plan-head';
+    const name = document.createElement('strong');
+    name.textContent = item.name;
+    const tag = document.createElement('span');
+    tag.className = 'zy-chat-plan-tag';
+    tag.textContent = CHAT_ACTION_LABEL[item.action] || '';
+    head.append(name, tag);
+    row.append(head);
+    const intent = document.createElement('p');
+    intent.className = 'zy-chat-plan-intent';
+    intent.textContent = item.intent;
+    row.append(intent);
+    if (item.action === 'update' && item.before) {
+      const before = document.createElement('p');
+      before.className = 'zy-chat-plan-before';
+      before.textContent = `原来：${item.before.intent || item.before.name || ''}`;
+      row.append(before);
+    }
+    list.append(row);
+  }
+  refineChatSuggest.append(list);
+
+  const actions = document.createElement('div');
+  actions.className = 'zy-chat-plan-actions';
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'zy-chat-apply';
+  apply.textContent = '就这样改';
+  apply.addEventListener('click', () => void applyRefineChatPlan(apply));
+  const again = document.createElement('button');
+  again.type = 'button';
+  again.className = 'zy-chat-ghost';
+  again.textContent = '再聊聊';
+  again.addEventListener('click', () => {
+    refineChatSuggest.hidden = true;
+    refineChatInput?.focus();
+  });
+  actions.append(apply, again);
+  refineChatSuggest.append(actions);
+
+  refineChatSuggest.hidden = false;
+  refineChatSuggest.scrollIntoView({ block: 'nearest' });
+}
+
+async function applyRefineChatPlan(button) {
+  if (!refineChatPlan) return;
+  button.disabled = true;
+  button.textContent = '正在改…';
+  try {
+    const response = await hana.api.fetch('/recommendation-config/refine-apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ styles: refineChatPlan.styles }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没改上。');
+    recommendationBehavior = {
+      display: payload.display ?? recommendationBehavior.display,
+      count: payload.count ?? recommendationBehavior.count,
+      inputButton: payload.inputButton ?? recommendationBehavior.inputButton,
+      quickReplies: payload.quickReplies ?? recommendationBehavior.quickReplies,
+      styles: payload.styles ?? recommendationBehavior.styles,
+      selectedByCount: payload.selectedByCount ?? recommendationBehavior.selectedByCount,
+    };
+    renderRecommendationBehavior();
+    refineChatMessages = [];
+    chatRow('assistant', '改好了。');
+    if (refineChatSuggest) refineChatSuggest.hidden = true;
+    setTimeout(closeRefineChat, 900);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = '就这样改';
+    chatRow('assistant', error?.message || '没改上，再点一次。');
+  }
+}
+
+function sendRefineChatMessage() {
+  const text = String(refineChatInput?.value || '').trim();
+  if (!text) return;
+  refineChatInput.value = '';
+  chatRow('user', text);
+  refineChatMessages.push({ role: 'user', content: text });
+  if (refineChatSuggest) refineChatSuggest.hidden = true;
+  void askRefineChat();
+}
+
+refineChatForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  sendRefineChatMessage();
+});
+
+// 输入框里 Ctrl+Enter 直接发，手不用离开键盘
+refineChatInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    sendRefineChatMessage();
+  }
+});
+
+refineChatClose?.addEventListener('click', closeRefineChat);
+refineChatOverlay?.addEventListener('click', (event) => {
+  if (event.target === refineChatOverlay) closeRefineChat();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && refineChatOverlay && !refineChatOverlay.hidden) closeRefineChat();
 });
 
 // ── 设置弹窗 ──
@@ -2108,12 +2320,12 @@ document.addEventListener('keydown', (event) => {
 });
 
 // ── 守门人（活都干完再关机）────────────────────────────────
-// 面板只负责看和调参：真正挂守门还是对话里说一句，或者让传音樱看着。
+// 面板现在能自己挂上：不再只能“说一句”或者靠传音樱。
 const sgSection = document.querySelector('#sleep-guard-section');
 const sgStateText = document.querySelector('#sg-state-text');
+const sgArm = document.querySelector('#sg-arm');
 const sgCancel = document.querySelector('#sg-cancel');
 const sgIdle = document.querySelector('#sg-idle');
-const sgGrace = document.querySelector('#sg-grace');
 const sgTimeline = document.querySelector('#sg-timeline');
 const sgStatus = document.querySelector('#sg-status');
 let sleepGuardSnapshot = null;
@@ -2167,13 +2379,11 @@ function renderSleepGuard() {
   if (!sgSection) return;
   const snapshot = sleepGuardSnapshot;
   if (sgStateText) sgStateText.textContent = sgStateLine(snapshot);
+  if (sgArm) sgArm.hidden = !!(snapshot && snapshot.armed === true);
   if (sgCancel) sgCancel.hidden = !(snapshot && snapshot.armed === true);
 
   const config = snapshot?.config || {};
   if (sgIdle && document.activeElement !== sgIdle) sgIdle.textContent = String(config.idleMinutes ?? 10);
-  if (sgGrace && document.activeElement !== sgGrace) sgGrace.textContent = String(config.graceMinutes ?? 5);
-
-  const realEnabled = snapshot?.realEnabled === true;
 
   if (sgTimeline) {
     sgTimeline.textContent = '';
@@ -2202,7 +2412,7 @@ function renderSleepGuard() {
   }
 
   if (sgStatus) {
-    sgStatus.textContent = '判定成立后会先进一段可撤销的倒计时，再真的关机。';
+    sgStatus.textContent = '全部停下来、再安静上面那么久，就真的关机。最后一分钟会倒数，这期间 Hana 里又有东西跑起来就取销。';
   }
 }
 
@@ -2269,8 +2479,6 @@ function bindSleepGuardStepper(buttonId, outputNode, key, delta, min, max) {
 
 bindSleepGuardStepper('#sg-idle-down', sgIdle, 'idleMinutes', -1, 1, 720);
 bindSleepGuardStepper('#sg-idle-up', sgIdle, 'idleMinutes', 1, 1, 720);
-bindSleepGuardStepper('#sg-grace-down', sgGrace, 'graceMinutes', -1, 1, 60);
-bindSleepGuardStepper('#sg-grace-up', sgGrace, 'graceMinutes', 1, 1, 60);
 
 sgCancel?.addEventListener('click', async () => {
   if (sgStatus) sgStatus.textContent = '正在撤…';
@@ -2282,6 +2490,25 @@ sgCancel?.addEventListener('click', async () => {
     if (sgStatus) sgStatus.textContent = '撤不掉，再试一次。';
   }
 });
+
+sgArm?.addEventListener('click', async () => {
+  const label = sgArm.textContent;
+  sgArm.disabled = true;
+  sgArm.textContent = '正在挂…';
+  try {
+    const response = await hana.api.fetch('/sleep-guard/arm', { method: 'POST' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没挂上。');
+    await loadSleepGuard();
+  } catch (error) {
+    if (sgStatus) sgStatus.textContent = error?.message || '没挂上，再试一次。';
+  } finally {
+    sgArm.disabled = false;
+    sgArm.textContent = label || '开启自动关机';
+  }
+});
+
+// 真关机开关已经撤了：这个功能就是关机，没有演练档。
 
 document.querySelector('#sg-refresh')?.addEventListener('click', () => { void loadSleepGuard(); });
 
@@ -2306,3 +2533,369 @@ void (async () => {
   ]);
   document.documentElement.dataset.ready = 'true';
 })();
+
+// ── 反馈：说几句，整理成一条 issue ──
+const FEEDBACK_REPO = 'moononnn/Hanakao-jieyuhua-zhiyi';
+const FEEDBACK_MAIL = 'moononnn@qq.com';
+const FEEDBACK_MAX_IMAGES = 3;
+const FEEDBACK_EDGE = 1400;
+
+const openFeedbackButton = document.querySelector('#open-feedback');
+const feedbackOverlay = document.querySelector('#feedback-chat');
+const feedbackLog = document.querySelector('#feedback-log');
+const feedbackForm = document.querySelector('#feedback-form');
+const feedbackInput = document.querySelector('#feedback-input');
+const feedbackSend = document.querySelector('#feedback-send');
+const feedbackClose = document.querySelector('#feedback-close');
+const feedbackChoices = document.querySelector('#feedback-choices');
+const feedbackBody = document.querySelector('#feedback-body');
+const feedbackGoGithub = document.querySelector('#feedback-go-github');
+const feedbackGoChat = document.querySelector('#feedback-go-chat');
+const feedbackError = document.querySelector('#feedback-error');
+const feedbackAddImage = document.querySelector('#feedback-add-image');
+const feedbackFile = document.querySelector('#feedback-file');
+const feedbackThumbs = document.querySelector('#feedback-thumbs');
+const feedbackResult = document.querySelector('#feedback-result');
+const feedbackTitleInput = document.querySelector('#feedback-title-input');
+const feedbackBodyInput = document.querySelector('#feedback-body-input');
+const feedbackGithub = document.querySelector('#feedback-github');
+const feedbackCopy = document.querySelector('#feedback-copy');
+const feedbackMail = document.querySelector('#feedback-mail');
+const feedbackHint = document.querySelector('#feedback-hint');
+const feedbackLightbox = document.querySelector('#feedback-lightbox');
+const feedbackLightboxImage = document.querySelector('#feedback-lightbox-image');
+const feedbackLightboxClose = document.querySelector('#feedback-lightbox-close');
+
+let feedbackMessages = [];
+let feedbackImages = [];
+let feedbackBusy = false;
+let feedbackLastFocus = null;
+
+function feedbackRow(role, text, images) {
+  if (!feedbackLog) return null;
+  const row = document.createElement('div');
+  row.className = `zy-fb-row ${role}${images?.length ? ' is-rich' : ''}`;
+  const bubble = document.createElement('p');
+  bubble.className = 'zy-fb-bubble';
+  bubble.textContent = text;
+  row.append(bubble);
+  if (images?.length) {
+    const strip = document.createElement('div');
+    strip.className = 'zy-fb-sent';
+    images.forEach((image, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'zy-fb-sent-thumb';
+      button.setAttribute('aria-label', `点开看第 ${index + 1} 张截图`);
+      const img = document.createElement('img');
+      img.src = image.preview;
+      img.alt = `截图 ${index + 1}`;
+      button.append(img);
+      button.addEventListener('click', () => openFeedbackLightbox(image.preview));
+      strip.append(button);
+    });
+    row.append(strip);
+  }
+  feedbackLog.append(row);
+  feedbackLog.scrollTop = feedbackLog.scrollHeight;
+  return row;
+}
+
+function openFeedbackLightbox(src) {
+  if (!feedbackLightbox || !feedbackLightboxImage || !src) return;
+  feedbackLightboxImage.src = src;
+  feedbackLightbox.hidden = false;
+}
+
+function closeFeedbackLightbox() {
+  if (!feedbackLightbox) return;
+  feedbackLightbox.hidden = true;
+  feedbackLightboxImage?.removeAttribute('src');
+}
+
+function renderFeedbackThumbs() {
+  if (!feedbackThumbs) return;
+  feedbackThumbs.replaceChildren();
+  feedbackThumbs.hidden = feedbackImages.length === 0;
+  feedbackImages.forEach((image, index) => {
+    const box = document.createElement('div');
+    box.className = 'zy-fb-thumb';
+    const img = document.createElement('img');
+    img.src = image.preview;
+    img.alt = `截图 ${index + 1}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', '去掉这张图');
+    remove.addEventListener('click', () => {
+      feedbackImages.splice(index, 1);
+      renderFeedbackThumbs();
+    });
+    box.append(img, remove);
+    feedbackThumbs.append(box);
+  });
+}
+
+function openFeedback() {
+  if (!feedbackOverlay) return;
+  feedbackLastFocus = document.activeElement;
+  feedbackOverlay.hidden = false;
+  // 先给两条路：直接去提，或者聊几句让它整理。
+  if (feedbackChoices) feedbackChoices.hidden = false;
+  if (feedbackBody) feedbackBody.hidden = true;
+}
+
+function enterFeedbackChat() {
+  if (feedbackChoices) feedbackChoices.hidden = true;
+  if (feedbackBody) feedbackBody.hidden = false;
+  // 只认 DOM 里有没有东西，别拿 feedbackMessages 数：欢迎语本身不进模型历史，数永远是 0。
+  if (feedbackLog && feedbackLog.childElementCount === 0) {
+    feedbackRow('assistant', '哪儿不顺手？用大白话说就行。能贴图就贴一张，我看看你屏幕上到底长什么样。');
+  }
+  feedbackInput?.focus();
+}
+
+function closeFeedback() {
+  if (!feedbackOverlay) return;
+  feedbackOverlay.hidden = true;
+  feedbackLastFocus?.focus?.();
+}
+
+async function compressFeedbackImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error('这张图读不出来'));
+      element.src = url;
+    });
+    const scale = Math.min(1, FEEDBACK_EDGE / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    return { data: String(dataUrl).split(',')[1] || '', mimeType: 'image/jpeg', preview: dataUrl };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function addFeedbackFiles(files) {
+  const list = [...(files || [])].filter((file) => file && file.type.startsWith('image/'));
+  for (const file of list) {
+    if (feedbackImages.length >= FEEDBACK_MAX_IMAGES) break;
+    try {
+      const image = await compressFeedbackImage(file);
+      if (image.data) feedbackImages.push(image);
+    } catch {}
+  }
+  renderFeedbackThumbs();
+  if (list.length && feedbackImages.length >= FEEDBACK_MAX_IMAGES) {
+    feedbackRow('assistant', `图最多 ${FEEDBACK_MAX_IMAGES} 张，多了我看不过来。`);
+  }
+}
+
+async function sendFeedback() {
+  if (feedbackBusy) return;
+  const text = String(feedbackInput?.value || '').trim();
+  if (!text && !feedbackImages.length) return;
+  feedbackBusy = true;
+  if (feedbackSend) feedbackSend.disabled = true;
+
+  const images = feedbackImages.map(({ data, mimeType }) => ({ data, mimeType }));
+  const sentPreviews = feedbackImages.map(({ preview }) => ({ preview }));
+  feedbackMessages.push({ role: 'user', content: text, images });
+  feedbackRow('user', text || `（${images.length} 张图）`, sentPreviews);
+  if (feedbackInput) feedbackInput.value = '';
+  feedbackImages = [];
+  renderFeedbackThumbs();
+
+  const pending = document.createElement('div');
+  pending.className = 'zy-fb-row assistant is-waiting';
+  const dots = document.createElement('p');
+  dots.className = 'zy-fb-bubble zy-typing';
+  dots.setAttribute('aria-label', '知意在想');
+  dots.innerHTML = '<i></i><i></i><i></i>';
+  pending.append(dots);
+  feedbackLog?.append(pending);
+  if (feedbackLog) feedbackLog.scrollTop = feedbackLog.scrollHeight;
+
+  try {
+    const response = await hana.api.fetch('/feedback/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: feedbackMessages }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没整理成，再说一次。');
+    pending.remove();
+    const reply = String(payload.reply || '……');
+    feedbackRow('assistant', reply);
+    feedbackMessages.push({ role: 'assistant', content: reply });
+    if (payload.ready === true && payload.title && payload.body) {
+      if (feedbackTitleInput) feedbackTitleInput.value = payload.title;
+      if (feedbackBodyInput) feedbackBodyInput.value = payload.body;
+      if (feedbackResult) feedbackResult.hidden = false;
+      if (feedbackHint) feedbackHint.textContent = '发之前看一眼：提交到 GitHub 的内容是公开的，不想公开的字自己删掉。';
+      feedbackResult?.scrollIntoView({ block: 'nearest' });
+    }
+  } catch (error) {
+    pending.remove();
+    feedbackRow('assistant', error?.message || '没整理成，再说一次。');
+  } finally {
+    feedbackBusy = false;
+    if (feedbackSend) feedbackSend.disabled = false;
+    feedbackInput?.focus();
+  }
+}
+
+function currentFeedbackDraft() {
+  return {
+    title: String(feedbackTitleInput?.value || '').trim(),
+    body: String(feedbackBodyInput?.value || '').trim(),
+  };
+}
+
+function buildIssueUrl(title, body) {
+  const base = `https://github.com/${FEEDBACK_REPO}/issues/new`;
+  if (!title && !body) return base;
+  return `${base}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+}
+
+function showFeedbackError(text) {
+  if (!feedbackError) return;
+  feedbackError.textContent = text;
+  feedbackError.hidden = !text;
+}
+
+// 跳转与复制都需要宿主能力授权；被拒时不能默默无反应，得告诉人去哪儿开。
+async function openExternalSafely(url) {
+  showFeedbackError('');
+  if (!/^(https?:|mailto:)/i.test(url)) return;
+  // 先走宿主能力；没授权就从 App 后端唤起系统默认程序，两条路都不通才告知用户。
+  try {
+    await hana.external.open(url);
+    return;
+  } catch {
+    // 往下走
+  }
+  try {
+    const response = await hana.api.fetch('/open-url', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没打开');
+  } catch {
+    const fallback = url.startsWith('http')
+      ? `选中这个地址自己打开：${url}`
+      : `直接发邮件到 ${FEEDBACK_MAIL}。`;
+    showFeedbackError(`没打开。${fallback}`);
+  }
+}
+
+async function copyTextSafely(text, okHint) {
+  showFeedbackError('');
+  try {
+    await hana.clipboard.writeText(text);
+    if (feedbackHint) feedbackHint.textContent = okHint;
+    return true;
+  } catch {
+    // 往下走：让后端写
+  }
+  try {
+    const response = await hana.api.fetch('/copy-text', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没复制上');
+    if (feedbackHint) feedbackHint.textContent = okHint;
+    return true;
+  } catch {
+    showFeedbackError('复制没成功，手动选中正文复制一下吧。');
+    return false;
+  }
+}
+
+openFeedbackButton?.addEventListener('click', openFeedback);
+feedbackGoChat?.addEventListener('click', enterFeedbackChat);
+feedbackGoGithub?.addEventListener('click', () => {
+  void openExternalSafely(buildIssueUrl('', ''));
+});
+feedbackClose?.addEventListener('click', closeFeedback);
+feedbackOverlay?.addEventListener('click', (event) => {
+  if (event.target === feedbackOverlay) closeFeedback();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (feedbackLightbox && !feedbackLightbox.hidden) {
+    closeFeedbackLightbox();
+    return;
+  }
+  if (feedbackOverlay && !feedbackOverlay.hidden) closeFeedback();
+});
+
+feedbackLightbox?.addEventListener('click', (event) => {
+  if (event.target === feedbackLightbox) closeFeedbackLightbox();
+});
+feedbackLightboxClose?.addEventListener('click', closeFeedbackLightbox);
+
+feedbackForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void sendFeedback();
+});
+
+feedbackInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    void sendFeedback();
+  }
+});
+
+feedbackInput?.addEventListener('paste', (event) => {
+  const files = [...(event.clipboardData?.files || [])];
+  if (files.length) {
+    event.preventDefault();
+    void addFeedbackFiles(files);
+  }
+});
+
+feedbackAddImage?.addEventListener('click', () => feedbackFile?.click());
+feedbackFile?.addEventListener('change', () => {
+  void addFeedbackFiles(feedbackFile.files);
+  feedbackFile.value = '';
+});
+
+feedbackGithub?.addEventListener('click', () => {
+  const { title, body } = currentFeedbackDraft();
+  if (!title || !body) return;
+  void openExternalSafely(buildIssueUrl(title, body));
+});
+
+feedbackCopy?.addEventListener('click', async () => {
+  const { title, body } = currentFeedbackDraft();
+  if (!title || !body) return;
+  await copyTextSafely(`${title}\n\n${body}`, '正文已经复制了，粘到哪儿都行。');
+});
+
+feedbackMail?.addEventListener('click', async () => {
+  const { title, body } = currentFeedbackDraft();
+  if (!title || !body) return;
+  const subject = encodeURIComponent(`[知意反馈] ${title}`);
+  const encodedBody = encodeURIComponent(`${body}\n\n（我用的知意版本：…）`);
+  // mailto 在多数客户端和浏览器里有长度上限，太长就先复制再让用户粘。
+  if (encodedBody.length > 1500) {
+    const copied = await copyTextSafely(`${title}\n\n${body}`, `正文太长，邮件里塞不下。已经复制好了，发到 ${FEEDBACK_MAIL} 自己粘进去就行。`);
+    if (!copied && feedbackHint) feedbackHint.textContent = `正文太长，先把正文复制下来，发到 ${FEEDBACK_MAIL}。`;
+    return;
+  }
+  if (feedbackHint) feedbackHint.textContent = `都在草稿里了，没配邮件客户端的话，直接复制正文发到 ${FEEDBACK_MAIL}。`;
+  void openExternalSafely(`mailto:${FEEDBACK_MAIL}?subject=${subject}&body=${encodedBody}`);
+});
+

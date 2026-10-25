@@ -81,10 +81,10 @@ test("输入框面板有第三个页签：帮我理顺", async () => {
   assert.match(html, /id="polish-send"/);
   assert.match(html, /id="polish-suggest-list"/);
 
-  // 页签顺序：推荐回复 / 小工具 / 帮我理顺（小工具在理顺左边）。
-  const tabOrder = ["tab-recommend", "tab-tools", "tab-polish"].map((id) => html.indexOf(`id="${id}"`));
+  // 页签顺序：推荐回复 / 帮我理顺 / 小工具（小工具在理顺右边，用户定的）。
+  const tabOrder = ["tab-recommend", "tab-polish", "tab-tools"].map((id) => html.indexOf(`id="${id}"`));
   assert.ok(tabOrder.every((pos) => pos >= 0), "三个页签都得在");
-  assert.ok(tabOrder[0] < tabOrder[1] && tabOrder[1] < tabOrder[2], "页签顺序是 推荐回复 → 小工具 → 帮我理顺");
+  assert.ok(tabOrder[0] < tabOrder[1] && tabOrder[1] < tabOrder[2], "页签顺序是 推荐回复 → 帮我理顺 → 小工具");
 
   // 三个页签都在同一张板上切换，别新开一块面板。
   assert.match(script, /const PANEL_PAGES = \[/);

@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>知意</title>
   <link rel="stylesheet" href="./assets/suggest-panel.css">
+  <script src="./assets/theme-follow.js"></script>
 </head>
 <body>
   <main class="panel">
@@ -33,8 +34,8 @@
 
     <nav class="page-tabs" role="tablist" aria-label="知意面板">
       <button id="tab-recommend" class="page-tab active" type="button" role="tab" aria-selected="true" aria-controls="recommend-page">推荐回复</button>
-      <button id="tab-tools" class="page-tab" type="button" role="tab" aria-selected="false" aria-controls="tools-page" tabindex="-1">小工具</button>
       <button id="tab-polish" class="page-tab" type="button" role="tab" aria-selected="false" aria-controls="polish-page" tabindex="-1">帮我理顺</button>
+      <button id="tab-tools" class="page-tab" type="button" role="tab" aria-selected="false" aria-controls="tools-page" tabindex="-1">小工具</button>
     </nav>
 
     <section id="recommend-page" class="tool-page" role="tabpanel" aria-labelledby="tab-recommend">
@@ -86,6 +87,26 @@
           <span class="tool-tile-body">
             <span class="tool-tile-label">排队发送</span>
             <span class="tool-tile-hint">等 ta 说完这一轮再送进去</span>
+          </span>
+        </button>
+
+        <button id="toggle-ball" class="tool-tile" type="button" data-armed="0">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><circle cx="10" cy="4.9" r="2" fill="currentColor" opacity=".5"></circle><circle cx="14.2" cy="7.8" r="2" fill="currentColor" opacity=".5"></circle><circle cx="12.6" cy="12.7" r="2" fill="currentColor" opacity=".5"></circle><circle cx="7.4" cy="12.7" r="2" fill="currentColor" opacity=".5"></circle><circle cx="5.8" cy="7.8" r="2" fill="currentColor" opacity=".5"></circle><circle cx="10" cy="10" r="1.6" fill="currentColor"></circle></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label" id="ball-label">传音樱</span>
+            <span class="tool-tile-hint" id="ball-hint">把桌面那个球叫出来</span>
+          </span>
+        </button>
+
+        <button id="toggle-shutdown" class="tool-tile tool-tile-wide" type="button" data-armed="0">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M10 3.4v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path><path d="M6.3 5.7a6.1 6.1 0 1 0 7.4 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label" id="shutdown-label">关机</span>
+            <span class="tool-tile-hint" id="shutdown-hint">只查 Hana 窗口，别的先存好</span>
           </span>
         </button>
       </div>
@@ -211,9 +232,22 @@
     </section>
 
     <section id="polish-page" class="tool-page polish-page" role="tabpanel" aria-labelledby="tab-polish" hidden>
-      <p class="polish-intro">话写得潦草就丢进来，我帮你理顺，原意不乱。理顺完可以直接发给 ta。</p>
+      <p class="polish-intro">话写得潦草就丢进来，我帮你理顺，原意不乱。原稿会给你留着，方便对照。</p>
 
-      <textarea id="polish-input" class="polish-input" rows="5" spellcheck="false" placeholder="写下你要发的话，随手写就行…"></textarea>
+      <div class="polish-block">
+        <div class="polish-block-head">
+          <span class="polish-tag">原稿</span>
+        </div>
+        <textarea id="polish-input" class="polish-input" rows="5" spellcheck="false" placeholder="写下你要发的话，随手写就行…"></textarea>
+      </div>
+
+      <div id="polish-result-block" class="polish-block polish-block-result" hidden>
+        <div class="polish-block-head">
+          <span class="polish-tag polish-tag-result">理顺后</span>
+          <span class="polish-block-hint">改完直接发</span>
+        </div>
+        <textarea id="polish-result" class="polish-input polish-output" rows="5" spellcheck="false" aria-label="理顺后的内容"></textarea>
+      </div>
 
       <input id="polish-require" class="polish-require" type="text" maxlength="200" placeholder="还想怎么改？（可选：语气客气点、拆成两句…）">
 

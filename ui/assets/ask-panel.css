@@ -52,11 +52,11 @@ textarea:focus { border-color: var(--mint-deep); }
 html[data-appearance="dark"] {
   color-scheme: dark;
   --paper: var(--bg, #202923);
-  --surface: #28342d;
+  --surface: #2f3c36;
   --ink: var(--text, #ecf2eb);
   --muted: var(--text-muted, #b1bcb3);
   --mint: #34483b;
   --mint-deep: #a5d0b5;
-  --line: #3c493f;
+  --line: #47564c;
 }
 @media (max-width: 440px) { .ask { padding: 12px 14px; } }

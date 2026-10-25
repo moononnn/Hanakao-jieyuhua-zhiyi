@@ -1,5 +1,166 @@
 # 未发布改动
 
+- 2026-10-24 | 资源 | **输入栏标志换成樱花枝 SVG（自适应深浅主题）**
+
+  用户提供的 1254² 黑底剪影位图 → `potracer` 描成单色 SVG（`ui/assets/input-icon.svg`，7 条曲线，5KB，viewBox 24×24，图形占 23，`fill="#000"` + `fill-rule="evenodd"`）。
+
+  自适应的机制已从宿主代码确认：`CardShell` 里那个图标组件用 `vo(path.split(/[?#]/,1)[0]) === "svg"` 判断扩展名，是 svg 就包一层 `mask-image`（`mask-mode: alpha`、`mask-size: contain`、`background-color: currentColor`），png/webp 则直接 `<img>` 贴上去。所以只有 SVG 能跟主题变色，位图不行。
+
+  **但字段名不是 `iconUrl`**：实机加载报 `iconUrl is not a recognized input status field; this version knows id, title, icon, text, tooltip, toolName, args`。翻服务端 `bundle/index.js` 的 `bkn()` 看到真相：`icon` 字段现在两种取值——内置名（check/pin/sync）或一个图片路径，路径走 `wkn()` 校验（必须在 `ui/` 下、扩展名 png/webp/svg、必须是存在的非空文件）。所以正确写法是 `"icon": "assets/input-icon.svg"`，不要 iconUrl，也不要 iconRevision。`text` 已去掉，免得字形和图标叠着显。
+
+  当前用的是 `assets/input-icon-pink.png`（256²，横花枝剪影染成樱花粉 #d395a8）。**颜色和自适应二选一**：svg 走蒙版，颜色由输入栏文字色给（灰绿），深浅主题自动变，但文件里写什么色都没用；png 走 `<img>`，颜色写死在图里，浅底深底都是同一色。挑了中等明度的粉，两种主题下都不刺眼。`input-icon.svg` 留着，想回自适应就换回去。
+
+  manifest 的 `contributes.ui.inputStatus` 去掉 `text: "🌸"`（避免 emoji 和图标叠着显示），改成 `iconUrl: "assets/input-icon.svg"` + `iconRevision: "1"`；以后换图记得改 revision，宿主靠它失效缓存。`["check","pin","sync"]` 那套内置 icon 名没动。
+
+  未实机：没在真输入栏里看过，渲染预览是用同一种 mask 写法模拟的。
+
+- 2026-10-24 | 优化 | **概览页警示块与第一张卡片贴死**
+
+  实机反馈：红色提醒框和下面卡片零间距，看着像粘在一起。原因：`.permission-note` 只有 `margin-top: 17px`、没有下外边距，`.zy-ov-card` 只有 `margin-bottom: 12px`、没有上外边距，两个 0 叠到一起。用相邻选择器只补这一个位置：`.permission-note + .zy-ov-card { margin-top: 14px; }`；关机页警示块后紧跟的状态行同样贴死，一并补 `.permission-note + .ball-status { margin-top: 12px; }`。不动 `.permission-note` 本体，其他地方原有间距不受影响。
+
+- 2026-10-24 | 新功能 | **反馈：把大白话（和截图）整理成一条 issue**
+
+  入口在概览页右上角，一个胶囊按钮「反馈」（`zy-fb-fab`），与标题同行；不再像卡片里的一行功能。点开先给两条路：「直接去 GitHub 提 issue」和「跟知意说说」，后者才展开对话。头部右上角只留关闭按钮——原来那个「直接去提 issue ↗」跟选择页第一项是同一个效果，用户说重了，已删。
+
+  等回复用三个点的小动画（`.zy-typing`，节奏 0 / .16 / .40、`1.5s ease-in-out`，亮时轻抬 1px），蓝本取自茶话会的 typing 指示器；对话态和设置页「跟知意说说」共用同一套，`prefers-reduced-motion` 下静止。
+
+  **图是给模型看的证据，不进 issue。** 贴图或选图后压缩到长边 1400、jpeg 0.82，最多 3 张，base64 附在同一条用户消息上；不落盘、不进日志、不进正文。
+
+  **图片不能撑破弹窗**（实机反馈两次）。真因：`renderFeedbackThumbs` 生成的容器还叫旧名 `zy-feedback-thumb`，而重写样式后 CSS 只认 `zy-fb-thumb`，于是 `img` 没有父宽约束、按原分辨率铺满。已把 JS 类名改齐；另加缩略图固定 58×58（窄窗 52）、`img` 的 `max-width/max-height: 100%`、`.zy-fb-box` 的 `overflow: hidden`、`.zy-fb-log` 的 `min-height: 0` 兼 `max-height: 30vh`，四层兼保险。图片解码从 `createImageBitmap` 换成 `Image` + `objectURL`。提示只在输入框工具条右侧一句「图只给我看懂问题，不进 issue」，不上色块、不堆在按钮旁（用户定的）；窄窗下允许换行，不隐藏。
+
+  后端 `/feedback/chat` → `lib/feedback-chat.js`。模型只负责整理，不发送；多轮压成一段转写发一条用户消息（跟 style-refine 的 `refineChat` 同一个理由，避开 assistant content 块格式）。输出 JSON：`{reply, ready}` 或 `{reply, ready, title, body}`。`ready:true` 但缺标题或正文时当没准备好，不糊弄成空草稿。
+
+  三个出口：`hana.external.open` 打 GitHub issue 预填页（`Hanakao-jieyuhua-zhiyi/issues/new?title=&body=`）、复制正文（`hana.clipboard.writeText`）、mailto 到 `moononnn@qq.com`。**mailto 有长度上限**：正文 encode 后超 1500 字符就改成复制 + 提示自己粘，不硬塞。
+
+  **跳转与复制失败必须出声**（实机反馈：点了没反应）。原因是被能力台账拒了，而调用写成了 `void`，错误被吞。现在两层：先 `hana.external.open` / `hana.clipboard.writeText`；被拒就转本 App 后端（`/open-url` 用 `rundll32.exe url.dll,FileProtocolHandler`、`/copy-text` 用 `clip.exe`，macOS/Linux 各有对应），只放行 http/https/mailto；两层都不通才在弹窗里出粉色提示，附可手动复制的地址或邮箱兜底。`permission-status.js` 的展示白名单也补了这两项——但实测用户在宿主权限页看不到它们，所以不能指望这条授权路径，后端兜底才是主路。
+
+  看不了图的模型：**直接拒读图，不搞「撤图重试」那套**（用户定的）。自定义接口那一档有图就报错；Hana 模型档按报错关键词（image/vision/modality/unsupported）换成一句人话，两边都只说「当前这条模型没法识别图片，用文字描述一下问题吧」；system prompt 里另让它「看不到图就直说，别猜图里有什么」，防宿静默丢图。
+
+  manifest 新增两个能力：`app/ui.open-external`、`app/ui.clipboard-write`。没有它们 `external.open` 和 `clipboard.writeText` 会被拒。权限页只列 9 项白名单，这两项没加进去。
+
+  验证：`node --check` 过；`tests/feedback.test.js` 8 项全绿（解析、追问问、代码块包裹、上限截断、弹窗 id 不重复、路由不碰 GitHub 接口）。**未实机**：没在真宿主里点过弹窗、贴图、跳转和 mailto。
+
+  顺手修了一个自己弄出来的错：改路由时把 `refine-request` 的函数体整段替掉了，已恢复；`panel.html` 尾部那个 `window.addEventListener('error')` 也被切掉过一次，已补回。
+
+- 2026-10-24 | 资源 | **三处图标全换：应用图标、卡面、侧栏小图标**
+
+  应用图标 → `assets/icon.png`（512²，樱花插画）；卡面 → `ui/assets/cover.png`（800×1200，庭院插画）；侧栏小图标 → `ui/assets/nav-icon-adaptive.svg`（新增，线条版）。旧的 `icon.svg`、`cover.svg` 归档到 `assets/_backup/`。
+
+  **侧栏图标踩了三脚**，都是同一张知识卡片里写过的：
+  1. `pageIcon` 的路径相对 `ui/` 解析，文件必须放 `ui/assets/`。我放在 app 根的 `assets/` 下，宿主找不到就静默回退——日志里那句是 `pageIcon must name an existing regular file at ui/assets/nav-icon-adaptive.svg`，只有翻日志才看得见，界面上毫无提示。
+  2. `pageIcon` 要求 `minAppVersion >= 0.1020.0`，而知意一直写着 `0.1013.0`，整应用被拒载。已提到 `0.1020.0`。
+  3. 一开始想用满幅不透明的 png 当侧栏图标，结果被宿主遮罩成一块实心方块——形状也一起没了。同列的提个醒、茶话会之所以干净，是因为它们的图本身就是透明剪影。
+
+  最终做法：从原始素材（1254² 透明底的黑色线条画）描摹成单色 SVG。用 `potracer`（`vtracer` 在这台机器的 Python 3.14 上直接访问冲突）。裁空白 → 缩到 190px → 二值 → `trace(turdsize=3, alphamax=1.0)`。**分辨率必须试**：340px 描出来在 24px 下糊成灰，190px 在 22px 还清楚，加粗那几版全成墨块。`data` 要传 `~line`，`fill-rule` 用 `evenodd`。
+
+  另外把设置页左侧栏顶部那个「知」字标记也换成了同一张画（40px 盒、36px 图标）——那个位置在 24px 下装不下这张画，必须放大才认得出。
+
+  这一层改完 reload 就生效，不需要重装或重启。
+
+- 2026-10-24 | 修复 | **折叠条看不出能点、面板自己抖、工具块压到静候关机——三处一起收**
+
+  用户反馈：「对话工具」那行看不出是能折叠的地方；面板动不动就抖一下；展开后排队发送和静候关机叠在一起。
+
+  **① 看不出能点**：原来只是个加粗 QLabel 加个小三角，颜色跟普通小标题一样，没有任何"可点"的信号。改成 `SectionToggle`（QFrame + 左标题 + 右箭头 + 整行可点），淡色底 + 虚线边框，鼠标移上去边框转主色。用 QFrame 而不是 QPushButton，是因为按钮的文本只能整体左对齐或居中，箭头没法摆到右侧，而"右边有个箭头"比任何提示语都更说明问题。
+
+  **② 面板自己抖**：两处轮询每几秒重排一次窗口尺寸，内容没变也照算——`_render_loop_state` 只要状态行有字就 `_resize_after_title_change()`，`_render_queue_state` 同理。现在都先比对文本，变了才重排；并在 `_resize_after_title_change` 里加一道：算完尺寸跟原来一样就直接返回，不再重新贴回球边。
+
+  **③ 相互重叠**：`tools_body` 这个容器被外层压扁，里面的卡片带自动换行、高度要自己撑，被压就直接画到框外，压住下面的静候关机。给容器设 `QSizePolicy(Preferred, Minimum)` + 布局 `SetMinimumSize`。
+
+  **另外两个崩溃**（都是我没核对类里有没有这个方法/属性就交付）：
+  - `self.state.get(...)` —— state 在球身上，面板没有，`_build_ui` 一行抛 `AttributeError`，面板根本建不出来，表现是「球在飘但左键没反应」，界面上毫无提示。
+  - `_resize_after_layout_change()` —— 那是润色窗那几个二级弹窗的方法，主面板只有 `_resize_after_title_change`，展开/收起那一刻就崩。
+
+  教训：改完球应该先在离屏模式（`QT_QPA_PLATFORM=offscreen`）实例化一次面板、跑一遍折叠切换，再交给用户。后两次改完就是这么验的，`ZhujianMenu` 构造 + 折叠/展开往返均通过。崩溃堆栈看 `app-data/jiegehua-zhiyi/ball-crash.log`。
+
+- 2026-10-24 | 改进 | **主面板「对话工具」折叠起来，静候关机从那一组里挪出来**
+
+  一级面板越滚越长：问问小花、会话标题、把话理顺、排队发送、压缩档案、静候关机，六行连排，想找下面那一项得先翻过去。
+
+  改法：把前五项装进 `tools_body`，标题换成可点的 `QPushButton#sectionToggle`，文案「对话工具 ▸ / ▾」。默认折叠，折叠状态存进球 state（`toolsExpanded`），下次点开还是上次那样。展开/收起后走 `_resize_after_layout_change()` 重新贴回球边。
+
+  静候关机不放进折叠区，两个理由：它动的是电脑，不是这段对话的措辞；而且它是状态型的（开没开要一眼看见），折进抽屉就看不见了。所以在它前面加 8px 空隙单独摆着。
+
+  连带改的：提问（ask）模式收起主面板时，原来逐个列 `lbl_section / say_tool / rename_tool / polish_tool / compaction_tool`，现在收 `btn_tools_head + tools_body` 一整块；退出提问时按 `tools_expanded` 决定摊不摊开，不会因为「恢复」就全打开。`_configure_app_mode` 里那个 show 列表同步换成 `btn_tools_head`。
+
+  折叠后进度行会被一起折起来，所以在标题上补了提示：折着且有排队在跑 → `对话工具 ▸ · 排队中`；起标题中 → `· 起标题中`；两件同时在跑只报排队（正在一句句往外发，更耽误事）。展开时不贴标签，状态行本来就看得见。刷新点挂在 `_render_queue_state`、`rename_async` 开始、`_apply_rename_result` / `_apply_undo_result`，以及 `_toggle_tools` 本身。
+
+  踩的坑：折叠状态存在球身上（`ball.state`），第一版写成了 `self.state`，而 `ZhujianMenu` 没有这个属性，`_build_ui` 一行就抛 `AttributeError`，面板构造不出来，表现是「球在飘但左键点了没反应」，界面上没有任何提示。`app-data/jiegehua-zhiyi/ball-crash.log` 里能看到确切行号。已改成 `self.ball.state`。
+
+  验证：`ast.parse` 通过；球重启正常（2026-10-24 17:26 / 17:33 / 17:39）。
+
+- 2026-10-24 | 改进 | **主题探测从「问接口」换成「读本地文件」，间隔 30 秒 → 3 秒；顺手修一个压制 bug**
+
+  用户反馈 30 秒太钝，"还不如之前读页面的感觉"。她判断得对：轮询本来就比事件驱动慢，而慢的根子不是间隔，是每次都走 HTTP。
+
+  实测（同一台机器、10 次取样）：`/api/preferences/appearance` 中位 2.06 ms、偶发 234 ms；`/api/apps/theme.css` 中位 13.10 ms。两次加起来约 15 ms，且跑在界面线程上，那 234 ms 会让球和面板顿一下，所以不敢压频率。改成读文件后：`user/preferences.json` 拿主题名（0.39 ms）+ `artifacts/renderer/*/themes/<主题>.css` 读 `--bg`，整条 **0.69 ms**，不碰网络。缓存 3 秒，平均 CPU 约 0.02%，界面线程上不会再有可感知的停顿。磁盘找不到 css 时仍走 HTTP 兜底。
+
+  **bug**：`_sync_theme` 原来写的是 `self.theme_override or read_hana_theme_mode()`——页面报过一次深浅，那个值就永久压住轮询。结果是"开页面切深色、关页面切回浅色，球永远停在深色"。现在拆成两条：页面报来的走 `_apply_theme_from_ui`（当场应用、不长期占位），轮询只看探测值，两者互不压制。`theme_override` 字段随之删掉。
+
+  附带：`_sync_theme` 里那串逐窗刷新抽成 `_refresh_theme_windows()`，两条路共用。
+
+  验证：路径解析实测命中 `artifacts/renderer/1.1.35-beta-.../themes/grass-aroma.css`，`--bg` 解析为 `#F5F8F3`，亮度 0.969 → light；球重启正常（2026-10-24 17:06）。
+
+- 2026-10-24 | 新功能 | **传音樱的弹窗跟随 Hana 主题深浅（球自己读不到）**
+
+  球本来就有整套深色配色（`THEME_COLORS`）+ 一个 1.5 秒的 `_sync_theme`，切主题时会把主面板、右键浮签、朗读窗、润色窗、排队窗、压缩窗一起刷一遍。问题在**它读不到 Hana 的主题**：`read_hana_theme_mode()` 只看 `QApplication.palette().Window` 的亮度，那是 Windows 系统配色，跟 Hana 自己的主题设置不是一回事。
+
+  接法：界面上订阅到宿主深浅（`hana.theme.subscribe`）就 POST `/ui-theme`，App 存进 `uiAppearance` 并推给桥（`/settings/push` 的 `themeMode`），球在一轮轮询里拿进 `self.theme_override`，`_sync_theme` 优先用它、拿不到才退回老路。App 重启后开球时也会补推一次。
+
+  新增 `ui/assets/theme-report.js`（`followHostTheme()`），在 `panel.js`、`suggest-panel.js`、`ask-panel.js` 三处调用。
+
+  顺手补的漏：`_sync_theme` 原来没管「问问小花」那个输入弹窗（`ask_flower_dialog`），主题切了它还是旧色，已加上。
+
+  边界：得打开过任一个知意页面，深浅才会报上去；一个都没开过时球仍按系统配色走。
+
+- 2026-10-24 | 新功能 | **知意四处页面跟随 Hana 主题深浅，并把深色下的色阶拉开**
+
+  `panel.css`、`panel-layout.css`、`ask-panel.css`、`suggest-panel.css`、侧栏那套里，深色规则（`html[data-appearance="dark"]`）其实早就写好了，但**从来没有人设过 `data-appearance`**，那一整套等于从未生效。
+
+  新增 `ui/assets/theme-follow.js`，三个来源按序兜底：URL 上的 `hana-theme-appearance`（宿主给 iframe 带的）→ 宿主发的 `hana.theme.changed` 消息（切换时实时跟）→ `prefers-color-scheme`。宿主明确给过深浅之后就不再让系统偏好覆盖它。引入到四处：`panel.html`、`permission-panel.html`（左侧栏）、`ask-panel.html`（对话里的 Ask 卡）、`suggest-panel.html`（输入框面板）。
+
+  顺手调的深色色阶（浅色不动）：卡片底 `#28342d → #2f3c36`、边线 `#3c493f → #47564c`（panel.css / ask-panel.css / permission-panel.html 三处同值）；输入框面板 `--card #222725 → #2a3230`、`--line #333a35 → #3f4a44`。原来卡片和背景只差不到 4% 亮度，深色下所有设置卡糊成一整块，看不出是卡片。
+
+  验证：`?hana-theme-appearance=dark` 静态渲染，底 `#202923`、卡片实测 `#303e38`，层次分得开；侧栏深色也正常。
+
+- 2026-10-24 | 清理 | **删掉「另一枝」剩下的两个类（482 行）**
+
+  用户说这个功能是她明确要求删掉的，但我扫主动弹窗时又看到 `BranchListMenu` 和 `BranchChatWindow` 躺在文件里，还差点提议“接上”。
+
+  实际情况：两个类没有任何实例化点（`BranchListMenu(` / `BranchChatWindow(` 只在定义处出现），但 `BranchListMenu._open` 里调了 `self.panel._toggle_branch_list_off()` 和 `self.ball.open_branch_window(branch)` —— 这两个方法在文件里根本不存在。等于一个从不打开、打开也必崩的窗。
+
+  处理：整段删除（类 + 上方分隔注释），并把 `QueueInsertPanel` 头上顶错的「我的另一枝 · 分支列表（面板内嵌）」注释改成「排队发送」。App 侧（index.js / panel.html / panel.js）没有 branch 残留，不用动。
+
+  验证：`ast.parse` 通过；类数 15→13；球重启正常（2026-10-24 15:11）。
+
+- 2026-10-24 | 修复 | **设置页左侧栏一直显示「应用加载失败」：缺一句 `hana.ready()`**
+
+  宿主用 iframe 装 `ui/permission-panel.html` 当功能面板，判断它有没有起来的唯一信号是页面里调 `hana.ready()`。这个面板从头到尾没调过，宿主一直等到超时，就显示「应用加载失败」。旁边主页面正常是因为 `panel.js` 里有 `await hana.ready()`。一行修好。
+
+  顺手收掉的重复：面板好了以后，页面内那套竖向导航跟它完全重复，`panel.html` 里 `<aside class="rail">` 整块撤掉，导航只留宿主侧栏那一栏（带状态绿点）。当前页在侧栏里改成深绿实心块，一眼知道自己在哪。
+
+- 2026-10-24 | 新功能 | **概览上直接开启关机，并在输入框上方挂提示条**
+
+  以前只有传音樱和模型工具能启动守门人，面板只能看和取消（后端原本就没有启动接口）。新增 `POST /sleep-guard/arm`；概览「干完活自动关机」那一行右侧加实按钮（开启关机 / 取消关机），自动化页也加了一个。
+
+  提示条用 `ctx.inputBanner`（跟排队那条同一个栏位）。**关键坑：横幅是按「会话」挂的**，一开始照茶话会做成「跟着活跃窗口走一条」，结果她一切窗口条子就搬到别的会话，当前窗口看不见，看起来像「必须发消息才出现、然后就消失」。改成给最近用过的 4 段对话各挂一条，切到哪个窗口都在。文案带「已开 14:59」不只是给人看，内容每次都在变才不会因为「一模一样」被跳过重画。
+
+  横幅上加了「取消关机」按钮（`notify-plugin`）：按了真的取消这次计划，所有窗口的条一起收；点 × 只收起这一条，关机还在。两者在代码里分开处理，不能混。
+
+- 2026-10-24 | 改进 | **关机只留一个判断标准，撤掉「关机前留几分钟反悔」**
+
+  用户质疑得对：既然判定看的是「Hana 里有没有会话或任务在跑」（`idle-watch.js` 全程没有鼠标键盘那一层），10 分钟已经确认空着，再等 5 分钟只是把同一件事又确认一遍。界面上只留「多久没动静算忙完」，默认 10 分钟；内部固定 60 秒给 Windows 关机命令当执行提前量，不再让人选。
+
+  同时去掉「演练」这一档：点开启就是真关机，面板上那个「到点真的关机」开关也撤了。文案里的「你们动一下 / 碰一下鼠标」全部删掉——那是错的说法，真实含义是「Hana 里又有东西跑起来了」。
+
+- 2026-10-24 | 改进 | **「跟知意说说」改成小窗里对话，说完直接给建议**
+
+  原来点它只是往主对话递一句话（`/recommendation-config/refine-request`），用户还得跳去聊天里说。改成小窗：`POST /recommendation-config/refine-chat` 多轮对话，模型自己判断聊够没聊够；够了就回一版方向清单，窗里逐条标「新增 / 改过 / 没动」，点「就这样改」才写盘（`/refine-apply`）。
+
+  踩的坑：宿主模型接口对 `assistant` 消息的 `content` 要求是块数组，按字符串传会报 `assistant.content must be an array`（英文原文还会被当聊天内容显示出来）。改成把多轮压成一段转写、当一条 user 消息发，短对话足够；错误信息也做了中文兜底，英文原文只进日志。
+
+  提示词按表情包「和小花聊聊」那套：用户说「不知道 / 你看着办」就直接给一版，不再追问。
+
 - 2026-10-23 | 修复 | **选两轮却发了三次：同一句话被两个触发源同时抢到（并发没锁住）**
 
   实机（会话 `sess_0mvl0gmr3_…`，日志 21:35:45）：`已送出第 2/2 轮` 后 27 毫秒又冒一条 `已送出第 0/0 轮`——第二句被连发了两次。
@@ -1017,3 +1178,5 @@
 - 2026-10-22 | 修复 | 朗读列表在长对话里永远只列得出开头的几轮（实机：这段 600 多条的会话，`session:history` 只回开头 200 条，列表最上面标的「最新」其实是我三轮前的回复）：朗读数据源改用 v2 的 `session:entries`，沿 parentId 把当前分支回溯成一条时间线再取尾部，旧分支/被改掉的回复不进列表；entries 拿不到时回落 history（短对话仍可用）
 
 - 2026-10-22 | 优化 | 输入栏 🌸 按钮改成开关（跟表情包那边一套）：第一下挂出知意面板，再点一下收起（走 userInteraction.dismiss），第三下再打开；面板被宿主收起/关掉时前端用 keepalive 请求报 /suggest-panel/hidden，后端清掉「开着」标记，避免下次点按钮被误判成收起；面板自己的「收起」按钮也会清标记
+
+- 2026-10-25 | 新功能 | 概览加一项「输入框里的图，点开能看大」：Hana 输入框里粘贴的图片缩略图默认点不开，发出去才能看。知意把自己携带的预览脚本装进当前 renderer 版本目录（首次改动前备份 index.html，再插一行 script），状态和安装位置由 /input-zoom 读回。Hana 换版本会解包成新目录、注入随之消失，那时这里显示「还没装」，点一下重装即可，装完要重启 Hana 才生效。
