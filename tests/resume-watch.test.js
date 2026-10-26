@@ -5,6 +5,7 @@ import {
   RESUME_MAX_CONSECUTIVE,
   buildResumeExplanation,
   buildSessionIndex,
+  classifyResumeBlocker,
   createResumeTracker,
   describeResumeSource,
   isSubagentSessionPath,
@@ -554,4 +555,70 @@ test("会话条目带着 kind 一路带进索引，复核时不用再猜", () =>
   assert.equal(lookupSession(index, { sessionId: "sess_sub" }).kind, "subagent_child");
   assert.equal(isSubagentSessionTarget(lookupSession(index, { sessionId: "sess_sub" })), true);
   assert.equal(isSubagentSessionTarget(lookupSession(index, { sessionId: "sess_chat" })), false);
+});
+
+// ── 额度/欠费/鉴权：续也续不回来（2026-10-25）──
+
+test("额度用完、欠费、鉴权失效这三类认成「续不回来」，普通掉线不算", () => {
+  // 实机原话：ChatGPT plan 的周额度提示（2026-10-25 会话记录里出现过这条）。
+  assert.equal(classifyResumeBlocker({ errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~31 min." }).kind, "quota");
+  assert.equal(classifyResumeBlocker({ errorMessage: "OpenAI API error (402): Insufficient Balance" }).kind, "quota");
+  assert.equal(classifyResumeBlocker({ errorMessage: "insufficient_quota" }).kind, "quota");
+  assert.equal(classifyResumeBlocker({ finalError: "账户余额不足，请充值后重试" }).kind, "quota");
+  assert.equal(classifyResumeBlocker({ reason: "本月额度已用完" }).kind, "quota");
+  assert.equal(classifyResumeBlocker({ errorMessage: "401 Unauthorized: invalid_api_key" }).kind, "auth");
+  // 可恢复的那几类不能误判：断网、连接被切、容量限流都还能接回来。
+  assert.equal(classifyResumeBlocker({ errorMessage: "Connection error." }), null);
+  assert.equal(classifyResumeBlocker({ errorMessage: "WebSocket closed 1012" }), null);
+  assert.equal(classifyResumeBlocker({ errorMessage: "OpenAI API error (429): [ttft_admission_refused] the cell is at capacity; retry shortly" }), null);
+  assert.equal(classifyResumeBlocker({ errorMessage: "You have hit the rate limit, slow down." }), null);
+  assert.equal(classifyResumeBlocker({ reason: "user_cancel" }), null);
+  assert.equal(classifyResumeBlocker({}), null);
+  assert.equal(classifyResumeBlocker(null), null);
+});
+
+test("额度用完不排队、不续发，也不让卡住兜底补一句", () => {
+  let clock = 1_000;
+  const tracker = createResumeTracker({ now: () => clock, autoResume: true, cooldownMs: 0 });
+  tracker.markStarted("sess_abc", "hanako");
+  const verdict = tracker.onAbnormal({ sessionId: "sess_abc", errorMessage: "You have hit your ChatGPT usage limit (plus plan)." });
+  assert.equal(verdict.action, "ignore");
+  assert.equal(verdict.blocker, "quota");
+  // 过了判断点也不发，不是「等一会儿再说」。
+  clock += 60_000;
+  assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "ignore");
+  // 卡住兜底同样不能碰它：那一条也是补发「继续哈」。
+  assert.equal(tracker.stuckCandidates(clock).length, 0);
+  // 面板上也不摆进度，免得看着像还在努力。
+  assert.equal(tracker.progressItems(clock).length, 0);
+});
+
+test("刚发出去那句撞上欠费：不再等它，也不会超时后补第二句", () => {
+  let clock = 1_000;
+  const tracker = createResumeTracker({ now: () => clock, autoResume: true, cooldownMs: 0, awaitingTimeoutMs: 30_000 });
+  tracker.onAbnormal({ sessionId: "sess_abc", reason: "connection_reset" });
+  clock += 5_000;
+  assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "resume");
+  tracker.markAwaiting("sess_abc");
+  clock += 2_000;
+  const verdict = tracker.onAbnormal({ sessionId: "sess_abc", errorMessage: "insufficient_balance" });
+  assert.equal(verdict.blocker, "quota");
+  clock += 120_000;
+  assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "ignore");
+});
+
+test("用户自己开口，或者真的回上话了，额度那道封锁才解开", () => {
+  let clock = 1_000;
+  const tracker = createResumeTracker({ now: () => clock, autoResume: true, cooldownMs: 0 });
+  tracker.onAbnormal({ sessionId: "sess_abc", errorMessage: "余额不足" });
+  clock += 5_000;
+  assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "ignore");
+  // 用户换了模型/充了值，自己先开一句：这一轮的账从这里重来。
+  tracker.forget("sess_abc");
+  assert.equal(tracker.isBlocked("sess_abc"), null);
+  tracker.markStarted("sess_abc", "hanako");
+  tracker.markRecovered("sess_abc", "hanako");
+  tracker.onAbnormal({ sessionId: "sess_abc", reason: "connection_reset" });
+  clock += 5_000;
+  assert.equal(tracker.resolve({ sessionId: "sess_abc" }).action, "resume");
 });

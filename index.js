@@ -85,6 +85,7 @@ import {
   assistantTextOf,
   buildResumeExplanation,
   buildSessionIndex,
+  classifyResumeBlocker,
   createResumeTracker,
   describeResumeSource,
   isSubagentSessionPath,
@@ -2397,6 +2398,8 @@ activeFusionServiceDispose = disposeFusionService;
     const alive = () => resumeConfig.enabled && (!token || resumeEpoch === token.epoch);
     if (!alive()) return;
     const signal = resumeSignals.get(decision.sessionId) || null;
+    // 双保险：状态机已经拦了一道，决策可能是在拦之前就排好的，发之前再对一次号。
+    if (decision.action === "resume" && resumeTracker.isBlocked(decision.sessionId)) return;
     const { target, ...described } = await describeSession(decision.sessionId, signal);
     if (!alive()) return;
     // 两套编号统一落到稳定编号上再发，不然写进别的键里，对话里看不到。
@@ -2452,6 +2455,12 @@ activeFusionServiceDispose = disposeFusionService;
       for (const key of stuckProbeAt.keys()) if (!activeKeys.has(key)) stuckProbeAt.delete(key);
       for (const candidate of candidates) {
         if (stale()) return;
+        // 已经判明「续不回来」的会话不再走卡住兜底。它可能是额度用完又没有错误事件的那一轮：
+        // 信号侧拦下的同时会把这个标记留下，两个入口共用一条账。
+        if (resumeTracker.isBlocked(candidate.sessionId)) {
+          stuckProbeAt.delete(candidate.sessionId);
+          continue;
+        }
         // 卡住兜底不能只信倒计时：宿主一次 RPC 限流就能把「这一轮已经说过话」的记账吞掉，
         // 于是正常会话被当成卡住。会话在那之后被写过，就说明有进展，不算卡住。
         const target = await resolveResumeTarget({ sessionId: candidate.sessionId }, { force: true });
@@ -2603,6 +2612,32 @@ activeFusionServiceDispose = disposeFusionService;
     // 那时再登记异常就是把关闭期间的事又写回新状态。
     const epoch = resumeEpoch;
     const stale = () => resumeEpoch !== epoch || !resumeConfig.enabled;
+    // provider 报错事件：不当异常信号调度（重试期间它会反复来），只用它认一件事——
+    // 这次断联是额度/欠费/鉴权，续也续不回来。登完这个标记，后面的路（包括 90 秒卡住兜底）
+    // 就都不会再补「继续哈」。2026-10-25 用户提的就是这一类：不该续的时候别续。
+    if (String(event?.type || "") === "error") {
+      const blocker = classifyResumeBlocker({ errorMessage: event.message, error: event.error, reason: event.reason });
+      if (!blocker) return;
+      const target = await resolveResumeTargetLite({ sessionId: String(event.sessionId || ""), sessionPath });
+      if (stale()) return;
+      if (isSubagentSessionTarget({ ...(target || {}), path: target?.path || sessionPath || "" })) return;
+      const key = target?.sessionId || sessionIdFromPath(sessionPath) || String(event.sessionId || "");
+      if (!key) return;
+      const already = resumeTracker.isBlocked(key);
+      resumeTracker.markBlocked(key, target?.agentId || event.agentId || "", blocker);
+      if (already?.kind === blocker.kind) return;
+      const blockedKey = resumeTracker.canonicalId(key);
+      resumeSignals.delete(blockedKey);
+      stuckProbeAt.delete(blockedKey);
+      if (resumeNoticeKey === blockedKey && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
+      void pushResumeProgress();
+      await sdk.logger.info(`这次不续：${blocker.label}（${blocker.kind}）`, {
+        sessionId: blockedKey,
+        via: "error-event",
+        source: target?.title || target?.agentName || "",
+      });
+      return;
+    }
     // 事件给的是文件名、钩子给的是 sess_xxx：先归一到 sessionId，
     // 否则「开始时记了 A、恢复时清了 B」，两边永远对不上。
     const retry = parseAutoRetryStart(event, sessionPath);
@@ -2646,7 +2681,23 @@ activeFusionServiceDispose = disposeFusionService;
         agentName: target?.agentName || "",
         firstMessage: target?.firstMessage || "",
       };
-      resumeTracker.onAbnormal(normalized);
+      const verdict = resumeTracker.onAbnormal(normalized);
+      // 额度用完、欠费、鉴权失效：这一次不是「被掉线掐断」，而是「模型那头不接」。
+      // 不排队、不推卡、也不发「继续哈」—— 2026-10-25 用户提的就是这个：
+      // 这种时候再补一句，只会再撞一次墙，白花一次调用。
+      // 只记一条日志说明原因（不写正文），并把这条会话从待执名单里拿掉。
+      if (verdict?.blocker) {
+        const blockedKey = resumeTracker.canonicalId(key);
+        resumeSignals.delete(blockedKey);
+        stuckProbeAt.delete(blockedKey);
+        if (resumeNoticeKey === blockedKey && resumeNoticeSource !== "loop_confirm") void pushResumeNotice(null);
+        void pushResumeProgress();
+        await sdk.logger.info(`这次不续：${verdict.reason}（${verdict.blocker}）`, {
+          sessionId: blockedKey,
+          source: target?.title || target?.agentName || "",
+        });
+        return;
+      }
       // 键用登记完别名之后那个：否则信号存在 UUID 名下、决策却按稳定编号去查，
       // 两边对不上，抬头又变回空白，日志里也找不到这段对话。
       resumeSignals.set(resumeTracker.canonicalId(key), normalized);
@@ -4308,12 +4359,12 @@ activeFusionServiceDispose = disposeFusionService;
                   env: {
                     ...process.env,
                     SESSIONNAME: "Console",
-                    COMPUTERNAME: process.env.COMPUTERNAME || "SUMMER椰",
+                    COMPUTERNAME: process.env.COMPUTERNAME || "",
                     SystemDrive: process.env.SystemDrive || "C:",
                     SystemRoot: process.env.SystemRoot || "C:\\WINDOWS",
                     windir: process.env.windir || "C:\\WINDOWS",
-                    USERPROFILE: process.env.USERPROFILE || "C:\\Users\\laotv",
-                    TEMP: process.env.TEMP || "C:\\Users\\laotv\\AppData\\Local\\Temp",
+                    USERPROFILE: process.env.USERPROFILE || process.env.PUBLIC || "",
+                    TEMP: process.env.TEMP || process.env.TMP || "",
                   },
                 }),
               },
