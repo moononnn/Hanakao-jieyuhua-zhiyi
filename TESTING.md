@@ -1,5 +1,14 @@
 # 测试
 
+## 2026-10-26 子代理会话不许知意插手：补钩子级回归（未升版本）
+
+- 需求：0.1.42 里两条钩子已经在开头认出子代理会话并直接退出，但只有 `resume-watch.test.js` 覆盖了那个识别函数本身，没有任何用例锁住「钩子真的提前返回」这个行为。重构 before-start 或者挪动那两行判断，删了也没人喊。
+- 改法：`tests/app-tool.test.js` 在「子代理会话报错不进账本」之后新增三条，复用现成的 `createContext` harness。① `agent/before-start`：子代理路径返回 `undefined` 且 `modelCalls` 为 0（Ask 预检一次都不花）；同一段带决策线索的 prompt 落到用户窗口仍注入基础引导并跑一次预检，证明跳过是按会话认的。② `messages/post-assistant`：子代理路径不贴卡、不叫速览模型；同一段 720 字正文在用户窗口会跑一次（对照组）。③ 子代理会话里调 `jiegehua_zhiyi_ask`，回 `subagent_session`、`created: false`、不弹球不发问。
+- 途中踩到的坑：速览那条一开始红了，不是闸门的事。`resolveFastModel` 要求先有一条配置好的模型，没有就抛 `MODEL_NOT_FOUND`，两条路径都跑不到模型，对照组变成空的。测试里必须 seed `fastTaskModel`，否则钉不住东西。这也顺带说明实机上没配快速档时速览本来就不工作。
+- 命令与结果：`node --experimental-vm-modules --test --test-name-pattern="子代理" tests/app-tool.test.js` **4 通过 / 0 失败**（含原有的报错不进账本那条）；`node --experimental-vm-modules --test tests/app-tool.test.js` **69 通过 / 0 失败**（原 66 + 新 3）；全量 `node --experimental-vm-modules --test` **491 通过 / 0 失败 / 0 跳过**。
+- 反向验证：临时把 `index.js` 两处 `isSubagentHook(invocation)` 判断改成 `false && isSubagentHook(invocation)`，两条新用例立刻变红（2 通过 / 2 失败）；恢复后复跑全绿。确认这不是写给自己看的瞎子测试。
+- 未覆盖：本轮只加测试，`index.js` 逻辑一行没改，不需要重载 App。子代理实机没重新复验（0.1.42 那轮已经看过会话文件里不再出现速览卡）。`provider/before-request` 没加子代理判断是有意的：它只清洗历史里的旧速览卡格式，不追加任何内容。
+
 ## 2026-10-26 断点续接：额度用完、欠费、鉴权失效时不再自动续发（0.1.41）
 
 - 需求：用户 2026-10-25 实测反馈，模型撞到限额或欠费时，知意把它当普通断联一并自动续发，反复往同一个窗口里灌「继续哈」，既花钱又推不动。

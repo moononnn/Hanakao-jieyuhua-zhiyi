@@ -1519,6 +1519,69 @@ test("子代理会话报错不进账本：事件没带路径时也要按 target 
   assert.equal(status.pending, null, "子代理会话不该被记成待决");
 });
 
+// 2026-10-26 实机：子代理的收尾回复被贴上「🌸 知意速览」，会话文件里看得见；Ask 引导也照旧
+// 塞进那段会话，Ask 预检还白跑一次模型。那些字是给用户看的，伙伴派出去干活的子代理既看不到
+// 用户也答不了题，只剩白读一遍。下面三条各钉住一个口子：子代理会话一步都不许走。
+const SUBAGENT_SESSION_PATH = "C:/Users/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl";
+const CHAT_SESSION_PATH = "C:/Users/me/.hanako/agents/hanako/sessions/chat.jsonl";
+const DECISION_PROMPT = "日记应用第一版只能选一种：云同步还是只在本地保存？我还没决定更看重哪边。";
+const LONG_REPLY = "盆土表面发白的时候再浇，一次浇透到盆底出水为止。".repeat(30);
+
+test("子代理会话不注入 Ask 引导：基础引导和预检都不跑", async () => {
+  const mock = createContext({ modelText: '{"mustAsk":true,"reason":"云端与本地会改变隐私边界和使用方式"}' });
+  await registeredTool(mock);
+  const beforeStart = mock.hook("agent/before-start");
+
+  const subagent = await beforeStart({
+    prompt: DECISION_PROMPT,
+    systemPrompt: "伙伴人格提示",
+    session: { sessionId: "sess_sub", sessionPath: SUBAGENT_SESSION_PATH },
+  });
+  assert.equal(subagent, undefined, "子代理会话整条跳过，连 systemPrompt 都不返回");
+  assert.equal(mock.modelCalls.length, 0, "子代理会话里不该为 Ask 预检花一次模型调用");
+
+  // 同一段 prompt 落到用户自己的窗口上，引导与预检照旧：上面那次跳过是按会话认的，不是开关关了。
+  const chat = await beforeStart({
+    prompt: DECISION_PROMPT,
+    systemPrompt: "伙伴人格提示",
+    session: { sessionId: "sess_chat", sessionPath: CHAT_SESSION_PATH },
+  });
+  assert.match(chat.systemPrompt, /实质改变行动、风险、成本或结果/, "用户窗口仍要拿到 Ask 引导");
+  assert.equal(mock.modelCalls.length, 1, "带决策线索的 prompt 在用户窗口里要跑一次预检");
+});
+
+test("子代理会话不贴速览卡：正文再长也不叫速览模型", async () => {
+  // 快速档得先有一条模型：没配时速览本来就会 MODEL_NOT_FOUND 退出，那样两条都跑不过，钉不住东西。
+  const mock = createContext({ storageSeed: { fastTaskModel: { provider: "test-provider", model: "test-model" } } });
+  await registeredTool(mock);
+  const postAssistant = mock.hook("messages/post-assistant");
+
+  const subagent = await postAssistant({
+    session: { sessionId: "sess_sub", sessionPath: SUBAGENT_SESSION_PATH },
+    message: { content: [{ type: "text", text: LONG_REPLY }], stopReason: "stop" },
+  });
+  assert.equal(subagent, undefined, "子代理会话不贴卡、不改消息");
+  assert.equal(mock.modelCalls.length, 0, "速览模型不该被子代理的长回复叫起来");
+
+  const baseline = mock.modelCalls.length;
+  await postAssistant({
+    session: { sessionId: "sess_chat", sessionPath: CHAT_SESSION_PATH },
+    message: { content: [{ type: "text", text: LONG_REPLY }], stopReason: "stop" },
+  });
+  assert.ok(mock.modelCalls.length > baseline, "同一段正文落在用户窗口里会跑速览模型");
+});
+
+test("子代理会话里调 Ask 工具也只回「用户不在场」", async () => {
+  const mock = createContext();
+  const tool = await registeredTool(mock);
+  const result = await tool.execute({ ...args, context: { sessionPath: SUBAGENT_SESSION_PATH } });
+  assert.equal(result.isError, undefined, "这不是错误：这段会话里本来就没人能答");
+  assert.equal(result.details?.ask?.created, false, "不登记待办卡");
+  assert.equal(result.details?.ask?.reason, "subagent_session");
+  assert.match(result.content[0].text, /用户不在场/);
+  assert.equal(mock.questions.length, 0, "不弹球、不发问");
+});
+
 // 2026-10-22 实机：这份名单一天被拉了 3994 次（几乎卡着 20 秒的缓存期跑满），
 // 每次要列三百多个会话、三四百毫秒、偶尔五秒，宿主的事件循环跟着一起等，
 // 钩子在这段时间堆到 App RPC 并发上限，被拒的就当成「没有决策」。
