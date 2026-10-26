@@ -12,9 +12,9 @@ jobs:
       # 本机开发环境是 UTC+8，涉及日期/生活日的断言跟时区绑着，跑 UTC 会挂。
       TZ: Asia/Shanghai
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -40,7 +40,7 @@ jobs:
         # 不给名单：Node 自己递归找 tests/*.test.js。tests/python-tests.mjs 不在匹配模式里，不会被当成用例。
         run: node --test
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
