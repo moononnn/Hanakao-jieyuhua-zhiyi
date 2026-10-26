@@ -38,7 +38,7 @@ import {
   resolveSummaryModelRef,
   summarizeReply,
 } from "./lib/length-summary.js";
-import { chatModelOptions, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
+import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
@@ -615,17 +615,63 @@ function installBallShutdownHooks() {
 
 export default defineApp(async (sdk) => {
   await sdk.logger.info("jiegehua-zhiyi loaded");
-  // 钩子每轮都要读几份配置，而宿主对 App RPC 有并发上限：撞上去整个钩子会被丢掉
-  // （日志里就是 adjudicator threw ... App RPC concurrency limit reached），
-  // 一次 Ask 判断或一段速览就这样静默没了，看上去像「模型没连上」。这里做两件事：
-  //   1. 配置读一次管几秒，连续回合和轮询不必每轮都打 RPC；
-  //   2. 撞上限时退避重试一次，仍失败就沿用上一次读到的值——不拿默认值当真相。
-  // 设置页写配置走 saveConfig，顺手清缓存，用户改完立即生效。
+  // 钩子每轮都要读几份配置，而宿主给 App 的反向 RPC 只有 128 个并发槽（bundle 里的
+  // MAX_PENDING）。钩子里只要有一个调用排在队尾撞上限，宿主就把**整条判定**丢掉
+  // （日志里是 adjudicator threw ... App RPC concurrency limit reached），一次 Ask 引导
+  // 或一段速览就这样静默没了——用户体验就是「时有时无」。所以现在的规矩是：
+  //   钩子主路径只读内存快照，不发 RPC；读不到就后台补一次，本轮先按已知值走；
+  //   readConfig 留给非钩子路径（设置页、手动操作），那边本来就该报错。
+  // 设置页写配置走 saveConfig：写成功就连快照一起更新，用户改完下一次钩子立即生效。
+  // 日志不能把正事带崩：logger 自己也走 RPC，撑上限时它会抛。
+  // 早先那句 warn 一抛，整条判定就跟着没了，界面上只剩一句假报错。这里包一层：日志挂了也不影响正事。
+  // 顺手带上一个节流：高频且提示意义不强的行（比如「这轮不够长不贴卡」）不必每轮占一个 RPC 仓。
+  const safeLog = {
+    info: (msg, fields) => { try { void Promise.resolve(sdk.logger.info?.(msg, fields)).catch(() => {}); } catch { /* 日志挂了就算了 */ } },
+    warn: (msg, fields) => { try { void Promise.resolve(sdk.logger.warn?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
+    debug: (msg, fields) => { try { void Promise.resolve(sdk.logger.debug?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
+  };
+  const logThrottleAt = new Map();
+  /** 同一个 key 在 ms 内只返回 true 一次，给高频日志限流用。 */
+  function logThrottled(key, ms = 60_000) {
+    const now = Date.now();
+    const last = logThrottleAt.get(key) || 0;
+    if (now - last < ms) return false;
+    logThrottleAt.set(key, now);
+    if (logThrottleAt.size > 64) {
+      const oldest = [...logThrottleAt.entries()].sort((a, b) => a[1] - b[1])[0];
+      if (oldest) logThrottleAt.delete(oldest[0]);
+    }
+    return true;
+  }
   const CONFIG_TTL_MS = 4_000;
   const configCache = new Map();
+  const configRefreshing = new Set();
+  // 速览配置的长期快照：钩子里只认这一份，saveConfig 写 "summaryConfig" 时清掉重读。
+  let summaryConfigCache = null;
   function rpcBusy(error) {
     const text = `${error?.code || ""} ${error?.message || ""}`;
     return /concurrency limit|IPC_BUSY|RPC_BUSY/i.test(text);
+  }
+  function refreshConfigInBackground(key, fallback) {
+    if (configRefreshing.has(key)) return;
+    configRefreshing.add(key);
+    void (async () => {
+      try {
+        const value = await sdk.storage.global.get(key, fallback);
+        configCache.set(key, { at: Date.now(), value });
+      } catch {
+        // 读不到就继续用旧值，下一次钩子会再试。不让它冒到钩子外面去。
+      } finally {
+        configRefreshing.delete(key);
+      }
+    })();
+  }
+  /** 钩子专用：立刻给值，不在 RPC 上等。缓存没有就先返回 fallback，同时后台补一份。 */
+  function peekConfig(key, fallback = null) {
+    const hit = configCache.get(key);
+    if (hit) return hit.value;
+    refreshConfigInBackground(key, fallback);
+    return fallback;
   }
   async function readConfig(key, fallback = null) {
     const hit = configCache.get(key);
@@ -647,11 +693,71 @@ export default defineApp(async (sdk) => {
   }
   async function saveConfig(key, value) {
     await sdk.storage.global.set(key, value);
-    configCache.delete(key);
+    // 写成功立刻把快照换成新值：改完设置下一次钩子就按新值走，既不必等 TTL，也不发 RPC。
+    configCache.set(key, { at: Date.now(), value });
+    if (key === "summaryConfig") summaryConfigCache = null;
   }
-  const askEnabledAtLoad = normalizeAskConfig(await sdk.storage.global.get("askConfig", {})).enabled;
-  await sdk.logger.info("Ask card registration decided at load", { enabled: askEnabledAtLoad });
+  // 子代理会话不是用户窗口。知意挂在这两条会话钩子上的东西——Ask 引导注入、速览小卡、
+  // 话单/循环/续接记账——全是给人看、等人回应的；落进伙伴派出去干活的那段会话里只剩噪音：
+  // 模型要逐字读完，用户拿不到它，Ask 预检还要白跑一次模型调用。
+  // 2026-10-26 实测：子代理的收尾回复被贴上「🌸 知意速览」，会话文件里能看到那张卡。
+  const isSubagentHook = (invocation) => isSubagentSessionPath(
+    String(invocation?.session?.path || invocation?.session?.sessionPath || ""),
+  );
+  // 载入时把钩子要用的配置一次读进快照，之后钩子主路径就不再排 RPC 队了。
+  for (const key of ["askConfig", "askJudgeModel", "summaryConfig", "summaryModel", "styleRefineRequested"]) {
+    try {
+      configCache.set(key, { at: Date.now(), value: await sdk.storage.global.get(key, null) });
+    } catch {
+      // 读不到就先留空：钩子会拿 fallback 并自己后台补。
+    }
+  }
+  // Ask 预检是钩子里最重的一笔：要占一次模型流，最长五秒。同一时间只放一个进飞，
+  // 同一段输入的结论缓十分钟。连发同题不再重复问模型，并发的新会话也不会各自挂一条流，
+  // 把仓存贴满——那正是「引导时有时无」的来源之一。
+  const ASK_REVIEW_TTL_MS = 10 * 60_000;
+  const askReviewCache = new Map();
+  let askReviewInFlight = false;
+  async function takeAskReview(configuredModel, prompt, onEvent = null) {
+    if (!hasDecisionCue(prompt)) return null;
+    const cacheKey = `${configuredModel?.provider || ""}/${configuredModel?.model || ""}\u0000${String(prompt || "")}`;
+    const hit = askReviewCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < ASK_REVIEW_TTL_MS) return hit.review;
+    // 已经有一次在飞：这一轮不排队，直接按「没有必问分岔」走（基础引导照旧注入）。
+    if (askReviewInFlight) return null;
+    askReviewInFlight = true;
+    try {
+      const review = await reviewAskNeed(sdk, prompt, configuredModel, onEvent);
+      if (review) {
+        askReviewCache.set(cacheKey, { at: Date.now(), review });
+        if (askReviewCache.size > 64) {
+          const oldest = [...askReviewCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+          if (oldest) askReviewCache.delete(oldest[0]);
+        }
+      }
+      return review;
+    } catch {
+      return null;
+    } finally {
+      askReviewInFlight = false;
+    }
+  }
+  // 速览判据要读「用户这条到底要什么」：每读一次就是一次历史读取（RPC + 文件解析）。
+  // 同一段对话十秒内复用上一份，足够新，也省下一次排队。
+  const lastUserCache = new Map();
+  async function lastUserMessageCached(session) {
+    const key = typeof session === "string" ? session : (session?.sessionPath ?? session?.path ?? "");
+    const hit = lastUserCache.get(key);
+    if (hit && Date.now() - hit.at < 10_000) return hit.text;
+    const text = await lastUserMessage(sdk, session);
+    if (lastUserCache.size > 32) lastUserCache.clear();
+    lastUserCache.set(key, { at: Date.now(), text });
+    return text;
+  }
+  const askEnabledAtLoad = normalizeAskConfig(configCache.get("askConfig")?.value).enabled;  await sdk.logger.info("Ask card registration decided at load", { enabled: askEnabledAtLoad });
   await sdk.hooks.onDecision("agent/before-start", async (invocation) => {
+    // 子代理会话整条跳过：不注入、不记账、不预检。
+    if (isSubagentHook(invocation)) return undefined;
     // 循环续接：用户自己开口就停（循环自己补发的那句要排除在外）。
     const loopSessionId = String(invocation?.session?.sessionId || "");
     const incomingPrompt = String(invocation?.prompt || "");
@@ -706,20 +812,28 @@ export default defineApp(async (sdk) => {
       resumeTracker.markStarted(invocation.session.sessionId);
     }
     // 每轮都现读开关：关掉后不必等重新加载，引导立刻不再注入。
-    // 顺带连判断模型那一次调用也省了——不引导就没必要先问模型该不该问。
-    const askEnabled = normalizeAskConfig(await readConfig("askConfig", {})).enabled;
+    // 这里全部走内存快照（peekConfig 不发 RPC）：只要钩子在 RPC 上等一次，就可能撞上
+    // 宿主并发上限、整条判定被丢，引导就这样时而有一回没一回。
+    const askEnabled = normalizeAskConfig(peekConfig("askConfig", null)).enabled;
     let prompt = invocation?.systemPrompt;
     if (askEnabled) {
-      const configuredModel = await readConfig("askJudgeModel", null);
-      const review = await reviewAskNeed(sdk, invocation?.prompt, configuredModel, (event) => {
-        void sdk.logger.debug?.("Ask model precheck", event);
-      });
-      prompt = appendAskGuidance(prompt, review);
+      try {
+        const configuredModel = peekConfig("askJudgeModel", null);
+        // 诊断事件先收在内存里，预检跑完只发一条日志：每条 event 都打一次是白占 RPC 仓。
+        const events = [];
+        const review = await takeAskReview(configuredModel, invocation?.prompt, (event) => { events.push(event); });
+        if (events.length) void sdk.logger.debug?.("Ask model precheck", events[events.length - 1]);
+        prompt = appendAskGuidance(prompt, review);
+      } catch (error) {
+        // 预检出意外也要把基础引导带上：宁可没预检，不能连引导一起没。
+        prompt = appendAskGuidance(prompt, null);
+        safeLog.debug("Ask 预检出错，本轮只注入基础引导", { error: String(error?.message || error).slice(0, 120) });
+      }
     }
     // 推荐回复只活在传音樱里，主对话不再出卡，也就没有推荐引导可注。
     // 设置页点了「方向不太对？和小花聊聊」→ 这一轮先把意图交给伙伴，只注一次。
     let refineHint = "";
-    if (await readConfig("styleRefineRequested", false)) {
+    if (peekConfig("styleRefineRequested", false) === true) {
       await saveConfig("styleRefineRequested", false);
       refineHint = "（知意）用户刚在设置里点了「方向不太对，和你聊聊」。先用一两句话问清楚他想怎么改，别急着调工具；他说完你再调 jiegehua_zhiyi_refine_recommendation_styles 出建议。";
     }
@@ -743,9 +857,7 @@ export default defineApp(async (sdk) => {
   // 长回复速览：正文达到阈值时生成几行要点，以引用块小卡接在原文末尾。
   // 原文完整保留，速览只是附在后面的一段。
   let summarizing = false;
-  // 这份配置在钩子里每轮都要读。缓存后少一次 App RPC——宿主对 App RPC 有并发上限，
-  // 撞上去的后果是整个钩子被丢掉，连前面那句「这一轮出正文了」都记不上。
-  let summaryConfigCache = null;
+  // 这份配置的快照存在文件顶部（summaryConfigCache），钩子里只读它；saveConfig 写盘时清。
   async function readSummaryConfig() {
     if (summaryConfigCache) return summaryConfigCache;
     try {
@@ -762,6 +874,8 @@ export default defineApp(async (sdk) => {
   // check 必须在 try 外面声明：catch 里要读它，写在 try 块内会在错误处理时再抛一次。
   let check = null;
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
+    // 子代理会话整条跳过：不贴速览卡、不跑速览模型、不记账。
+    if (isSubagentHook(invocation)) return undefined;
     // 排队话单：这一轮说完了，把下一句送进去。
     // 带工具调用的那条不算「说完了」：那是一轮里的中间段，提前送下一句会把 ta 打断。
     //
@@ -812,8 +926,11 @@ export default defineApp(async (sdk) => {
       // 这一轮可能是「正文 → 工具调用 → 正文」多段拼起来的：中间那条 assistant 消息
       // 带着 toolCall，后面一定还有正文。这时就插速览，卡片会夹在回复中间（实测就是
       // 这样：速览出现在段落之间，后面还接着写）。带工具调用的那条一律跳过，等最后一条。
+      // 中间段的提示最多 30 秒说一次：多步工具调用的回合里，这句会连着打几遍，白占 RPC 仓。
       if (hasToolCalls(invocation?.message)) {
-        await sdk.logger.debug?.("长回复速览跳过：这条消息还带工具调用，后面还有正文");
+        if (logThrottled("summary-skip-toolcall", 30_000)) {
+          safeLog.debug("长回复速览跳过：这条消息还带工具调用，后面还有正文");
+        }
         return undefined;
       }
 
@@ -839,7 +956,7 @@ export default defineApp(async (sdk) => {
         await sdk.logger.info(`正文里有 ${issuedByModel} 张速览卡，不是知意贴的，已清掉`);
       }
 
-      const userText = await lastUserMessage(sdk, invocation?.session);
+      const userText = await lastUserMessageCached(invocation?.session);
       check = shouldSummarize({ text, minChars: config.minChars, userText });
       if (!check.ok) {
         // 不够线就不该有卡：不管是早先贴的旧卡，还是模型自己写的，一并清掉。
@@ -847,19 +964,25 @@ export default defineApp(async (sdk) => {
           await sdk.logger.info(`撒掉不应存在的速览卡：${check.reason}（现 ${text.length} 字）`);
           return { message: withoutCards };
         }
-        await sdk.logger.info(`长回复速览跳过：${check.reason}（${text.length} 字）`);
+        // 不足阈值是最常见的路，每分钟说一次就够；以前每轮一条 info，光日志就占一个 RPC 仓。
+        if (logThrottled(`summary-under:${check.reason}`, 60_000)) {
+          safeLog.info(`长回复速览跳过：${check.reason}（${text.length} 字）`);
+        }
         return undefined;
       }
 
       summarizing = true;
       try {
+        // 模型配置也走内存快照：钩子里每多一次 RPC 等，就多一分被并发上限丢掉的可能。
         const configuredModel = resolveSummaryModelRef(
-          await readConfig("summaryModel", null),
-          await readConfig("askJudgeModel", null),
+          peekConfig("summaryModel", null),
+          peekConfig("askJudgeModel", null),
         );
+        const events = [];
         const { lines, elapsedMs, effort, attempts, reasoningTokens } = await summarizeReply(sdk, text, configuredModel, (event) => {
-          void sdk.logger.debug?.("长回复速览模型流", event);
+          events.push(event);
         });
+        if (events.length) safeLog.debug("长回复速览模型流", events[events.length - 1]);
         const sessionPath = typeof invocation?.session === "string"
           ? invocation.session
           : (invocation?.session?.sessionPath ?? invocation?.session?.path ?? "");
@@ -875,7 +998,10 @@ export default defineApp(async (sdk) => {
     } catch (error) {
       // 任何一步失败都保留原文，宁可啰嗦也不让内容丢失。
       const detail = recordSummaryFailure(sdk.dataDir, error, { chars: check?.chars ?? null });
-      await sdk.logger.warn(`长回复速览失败，保留原文：${detail.code ?? "no-code"} ${detail.message}`);
+      // 失败日志限流：短句、模型慢的时候这条会连着刷，刷到最后只剩噪音。
+      if (logThrottled(`summary-fail:${detail.code ?? "none"}`, 60_000)) {
+        safeLog.warn(`长回复速览失败，保留原文：${detail.code ?? "no-code"} ${detail.message}`);
+      }
       return undefined;
     }
   });
@@ -1117,14 +1243,7 @@ activeFusionServiceDispose = disposeFusionService;
   // 会话忙闲查不到时的等待：比冷却长得多，避免在 ta 写到一半时插进去。
   const QUEUE_UNKNOWN_STATE_WAIT_MS = 20_000;
 
-  // 排队这一路的日志不能把正事带崩：宿主对 App RPC 有并发上限，logger 自己也走 RPC，
-  // 撞上限时它自己会抛。早先那句 warn 一抛，整条话单的收尾（停话单、推状态）就跟着没了，
-  // 界面上只剩一句假报错。这里包一层：日志挂了也不影响正事。
-  const safeLog = {
-    info: (msg, fields) => { try { void Promise.resolve(sdk.logger.info?.(msg, fields)).catch(() => {}); } catch { /* 日志挂了就算了 */ } },
-    warn: (msg, fields) => { try { void Promise.resolve(sdk.logger.warn?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
-    debug: (msg, fields) => { try { void Promise.resolve(sdk.logger.debug?.(msg, fields)).catch(() => {}); } catch { /* 同上 */ } },
-  };
+  // 日志统一走顶部那份 safeLog（带节流），这里不重复定义。
   // 连续送不出去几次才真的停：宿主 RPC 撞上限时一次失败不代表话单坏了。
   const QUEUE_SEND_FAIL_MAX = 3;
   // 送失败几次（按会话）；以及明确没送出去时排的重试定时器。
@@ -4503,6 +4622,13 @@ activeFusionServiceDispose = disposeFusionService;
     parameters: ASK_TOOL_SCHEMA,
     sessionPermission: { readOnly: true },
     execute: async (args) => {
+      // 子代理会话不许发问：那段会话里用户不在场，题发出去没人答，球上还会多挂一道。
+      if (isSubagentSessionPath(args?.context?.sessionPath)) {
+        return {
+          content: [{ type: "text", text: "这一段是伙伴派出去干活的子代理会话，用户不在场、也答不了这道题，所以没有生成卡片、没有弹窗。不要改用文字假装征询：可逆的低风险细节自己定，真正需要用户拍板的点写进汇报，交给上级去问。" }],
+          details: { ask: { created: false, reason: "subagent_session" } },
+        };
+      }
       // 执行侧门禁：关掉之后到下一次重新加载之间，工具可能还挂在列表里。
       // 这里再读一次开关，真正不生成任何卡片。读失败落到外层 catch，按不生成处理。
       if (!normalizeAskConfig(await sdk.storage.global.get("askConfig", {})).enabled) {
