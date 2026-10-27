@@ -4262,9 +4262,12 @@ activeFusionServiceDispose = disposeFusionService;
         return { isError: true, content: [{ type: "text", text: "没认出这是哪段对话。" }] };
       }
       try {
-        // ui-actions 通道不一定带 callToken；先按路径反查会话编号，
-        // 拿到编号就能走「App 侧直给编号」那条路，不必再要凭证。
-        const sessionId = await resolveSessionIdByPath(sdk, sessionPath);
+        // 宿主在 ui-actions 通道里已经给过校验过的 sessionId，优先用它。
+        // 以前这里只按路径去 session:list 反查，而宿主给 App 的 session:list 只开
+        // home/app 两个命名空间，Code 页的会话不在里头——于是 Code 会话里点这个按钮
+        // 永远回「没认出这是哪段对话」。反查只留作聊天会话那条路的兜底。
+        const hostSessionId = String(context.sessionId || "").trim();
+        const sessionId = hostSessionId || await resolveSessionIdByPath(sdk, sessionPath);
         if (!sessionId) {
           return { isError: true, content: [{ type: "text", text: "没认出这是哪段对话。" }] };
         }

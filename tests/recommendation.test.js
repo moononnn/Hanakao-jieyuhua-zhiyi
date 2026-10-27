@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateRecommendations, resolveRecommendationModel } from "../lib/recommendation.js";
+import { generateRecommendations, pathForSessionId, resolveRecommendationModel } from "../lib/recommendation.js";
 
-function createSdk({ selectedModel = null, currentModel = { provider: "test-provider", modelId: "test-model" }, history = null, modelText = '[{"text":"那你再讲讲刚才的办法？","direction":"追问/延伸"},{"text":"我也想试试这个","direction":"行动/请求"}]', sessionList = null, streamImpl = null, fallbackModel = null } = {}) {
+function createSdk({ selectedModel = null, currentModel = { provider: "test-provider", modelId: "test-model" }, history = null, modelText = '[{"text":"那你再讲讲刚才的办法？","direction":"追问/延伸"},{"text":"我也想试试这个","direction":"行动/请求"}]', sessionList = null, streamImpl = null, fallbackModel = null, getImpl = null } = {}) {
   const modelCalls = [];
   const historyCalls = [];
   const contextCalls = [];
   const listCalls = [];
+  const getCalls = [];
   const sessions = sessionList || [
     { path: "D:/hana/agents/hanako/sessions/current.jsonl", sessionId: "sess_current" },
   ];
@@ -20,9 +21,17 @@ function createSdk({ selectedModel = null, currentModel = { provider: "test-prov
     historyCalls,
     contextCalls,
     listCalls,
+    getCalls,
     values,
     sdk: {
       bus: { request: async (type, input) => {
+        if (type === "session:get") {
+          getCalls.push(input);
+          if (getImpl) return getImpl(input);
+          const want = String(input?.sessionId || "").trim();
+          const row = sessions.find((item) => item.sessionId === want);
+          return { session: row ? { ...row } : null };
+        }
         if (type === "session:list") { listCalls.push(input); return { sessions }; }
         return null;
       } },
@@ -190,7 +199,9 @@ test("App 侧直给会话编号：不反查名单，也不要求工具调用凭�
   const mock = createSdk();
   const result = await generateRecommendations(mock.sdk, { sessionId: "sess_current" });
   assert.equal(result.suggestions.length, 2);
-  assert.equal(mock.listCalls.length, 1, "仍要读一次名单拿到 path 才能跟随当前模型");
+  // 拿位置改成先走 session:get（按编号直查，Code 会话也查得到），名单只做兜底。
+  assert.equal(mock.getCalls.length, 1, "应该先用 session:get 直查位置");
+  assert.equal(mock.listCalls.length, 0, "直查拿到了就不必再翻名单");
   assert.deepEqual(mock.historyCalls, [{ sessionId: "sess_current", scope: "all", limit: 8 }]);
   assert.equal(mock.modelCalls[0].callToken, undefined, "没有工具凭证就不该硬塞一个空 callToken");
 });
@@ -247,4 +258,25 @@ test("备用跟主模型重复时不切换，直接说失败", async () => {
     /服务商这次没接住/,
   );
   assert.equal(mock.modelCalls.length, 3, "重复的备用不该多跑一轮");
+});
+
+// Code 页的会话不在宿主给 App 的 session:list 里（只开 home/app），
+// 所以拿会话位置不能只靠名单，否则「跟随当前对话模型」在 Code 会话里永远拿不到位置。
+test("会话位置优先用 session:get 取，名单里没有也能拿到", async () => {
+  const mock = createSdk({ sessionList: [] });
+  const path = await pathForSessionId(mock.sdk, "sess_code");
+  // 名单空、session:get 也查不到 -> 空串，但前提是两条路都问过了
+  assert.equal(path, "");
+  assert.equal(mock.getCalls.length, 1, "应该先用 session:get 直查");
+  assert.equal(mock.listCalls.length, 1, "再落回名单兜底");
+});
+
+test("session:get 拿到位置就不必再翻名单", async () => {
+  const mock = createSdk({
+    sessionList: [],
+    getImpl: () => ({ session: { sessionId: "sess_code", path: "D:/hana/agents/hanako/sessions/code-s1.jsonl" } }),
+  });
+  const path = await pathForSessionId(mock.sdk, "sess_code");
+  assert.equal(path, "D:/hana/agents/hanako/sessions/code-s1.jsonl");
+  assert.equal(mock.listCalls.length, 0, "直查拿到了就不该再多问一次");
 });

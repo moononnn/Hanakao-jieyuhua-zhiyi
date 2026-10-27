@@ -6,7 +6,7 @@ import vm from "node:vm";
 import app from "../index.js";
 import { permissionPresentation } from "../ui/assets/permission-status.js";
 
-function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, updateError = null, sendError = null, historyMessages = null } = {}) {
+function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, sessionGetError = null, updateError = null, sendError = null, historyMessages = null } = {}) {
   const registrations = new Map();
   const hooks = new Map();
   const routes = new Map();
@@ -19,6 +19,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   const updateCalls = [];
   const sendCalls = [];
   const sessionListCalls = [];
+  const sessionGetCalls = [];
   const inputStatusCalls = [];
   const inputBannerCalls = [];
   const panelShows = [];
@@ -43,6 +44,14 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
         { role: "user", content: "帮我想想怎么给花浇水。", entryId: "e1" },
         { role: "assistant", content: "先看土壤干湿，再沿盆边慢慢浇。", entryId: "e2" },
       ] }; }
+      if (type === "session:get") {
+        sessionGetCalls.push(input);
+        const want = String(input?.sessionId || "").trim();
+        const rows = typeof sessionList === "function" ? sessionList() : sessionList;
+        const row = Array.isArray(rows) ? rows.find((item) => String(item?.sessionId || "").trim() === want) : null;
+        if (sessionGetError) throw sessionGetError;
+        return { session: row ? { ...row } : null };
+      }
       if (type === "session:list") {
         sessionListCalls.push(input);
         // 数组给固定名单；函数形式每次现取，既能换数据也能在函数里抛错模拟读不到。
@@ -151,6 +160,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     updateCalls,
     sendCalls,
     sessionListCalls,
+    sessionGetCalls,
     inputStatusCalls,
     inputBannerCalls,
     panelShows,
@@ -897,6 +907,27 @@ test("polish route rewrites through the configured model and reports a safety fa
   assert.equal(unsafe.data.text, "就按那个来就行", "丢了指代的改写必须退回原文");
   assert.equal(unsafe.data.fellBack, true);
   assert.equal(unsafe.data.reason, "safety");
+});
+
+test("输入栏 🌸 按钮在 Code 会话里也能开：宿主给的 sessionId 优先于名单反查", async () => {
+  // Code 页的会话不在宿主给 App 的 session:list 里（只开 home/app），
+  // 所以名单里故意不放它。宿主在 ui-actions 通道会直接给 sessionId，得用这个。
+  const mock = createContext({ sessionList: [] });
+  await registeredTool(mock);
+  const tool = mock.tool("jiegehua.zhiyi_suggest");
+  assert.ok(tool, "应该有输入栏面板工具");
+
+  const result = await tool.execute({
+    context: {
+      sessionPath: "D:/hana/agents/hanako/sessions/code-s1.jsonl",
+      sessionId: "sess_code",
+      messageId: null,
+    },
+  });
+
+  assert.equal(result.isError, undefined, `不该报错：${JSON.stringify(result.content)}`);
+  assert.equal(mock.panelShows.length, 1, "名单里查不到也要能把面板挂出来");
+  assert.equal(mock.panelShows[0].sessionId, "sess_code", "应该用宿主给的那个编号");
 });
 
 test("输入栏 🌸 按钮是开关：第二下收起，面板自己关掉后下次点又是打开", async () => {
