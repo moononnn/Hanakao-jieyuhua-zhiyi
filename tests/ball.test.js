@@ -60,7 +60,7 @@ function createHarness(fetch, {
     environment: environment || {
       PATH: "C:/Python",
       HOME: "C:/unreliable-home",
-      USERPROFILE: "C:/Users/test",
+      USERPROFILE: "D:/test-home",
       APPDATA: "C:/must-not-forward",
       TMPDIR: "C:/Temp",
       LANG: "zh_CN.UTF-8",
@@ -127,7 +127,7 @@ test("starts the copied ball with App-owned data and waits for its ready handsha
   assert.equal(spawned[0].options.env.ZHIYI_APP_MODE, "ask-only");
   assert.equal(spawned[0].options.env.PATH, "C:/Python");
   assert.equal(spawned[0].options.env.HOME, "C:/unreliable-home");
-  assert.equal(spawned[0].options.env.APPDATA, "C:\\Users\\test\\AppData\\Roaming");
+  assert.equal(spawned[0].options.env.APPDATA, "D:\\test-home\\AppData\\Roaming");
   assert.equal(spawned[0].options.env.USERPROFILE, undefined);
   assert.equal(spawned[0].options.env.TMPDIR, "C:/Temp");
   assert.equal(spawned[0].options.env.LANG, "zh_CN.UTF-8");

@@ -15,7 +15,7 @@
 - 改法：`lib/resume-watch.js` 新增 `classifyResumeBlocker(signal)` 与会话 `blocked` 账；`onAbnormal` 撞上三类时不排队、不等待、不续发，`resolve`、`stuckCandidates`（90 秒卡住兜底）、`progressItems` 全部跳过它；解锁只认 `markRecovered`（真的回上一轮）或 `forget`（用户自己开口）。`index.js` 两条事件入口接上：回合失败信号走 `onAbnormal`，provider 的 `error` 事件只登记封锁（重试期间反复来，不当异常调度）。设置页「断了以后怎么办」补文案。
 - 命令与结果：`node --test` **474 项，472 通过 / 0 失败 / 2 跳过**（跳过项为原有；`tests/resume-watch.test.js` 新增 4 条：分类、不排队不续发、撞上欠费不再等、用户开口后解锁）；`cd python && python -B -m unittest discover -p "test_*.py"` **122 通过 / 1 跳过（离屏 Qt）**。发布包核验：`validate-app.mjs --archive` 0 错误（1 条动态依赖静态不可证的通用警告）；暂存目录与解包树逐文件哈希对账 409/409 一致；`--smoke` 未跑（需要 Node 26+，本机 24）。
 - 已知边界：① 宿主不生产额度/欠费错误码（查过 1.2.1-beta 的 server bundle），只能认 provider 原文，供应商若只回一句通用文案（如 "Connection error."）仍会按普通断联续一次；判据宁可漏判也不误判。② 「连着接几轮」（`continue-loop`）没动，仍会在失败轮继续推下一句。③ 实机只由用户在本地目录版上验过续接行为，未在空环境从 Release 重装复核。
-- 顺手修掉的隐私问题：0.1.40 的公开包里，关机自检探针把本机用户名（`laotv`）与计算机名（`SUMMER椰`）写成了环境变量兜底值，已换成 `process.env.*` 链式兜底；发布前扫描 `SUMMER|laotv|C:\Users\<名字>` 无命中。
+- 顺手修掉的隐私问题：0.1.40 的公开包里，关机自检探针把本机用户名与计算机名写成了环境变量兜底值，已换成 `process.env.*` 链式兜底；发布前扫描本机用户名与本机路径无命中。
 - 补提交：`ui/nav.html` 在 0.1.40 的市场包里，但当时漏了 `git add`，仓库里缺这个文件，本版补上。
 
 ## 2026-10-22 排队发送（话单）
@@ -36,7 +36,7 @@
 - 改法：`ui/suggest-panel.html` 页签换成 `推荐回复 / 小工具 / 帮我理顺`，新增 `tools-page`（`tools-grid` 两列入口格 + `rename-slug` 那一格 + `slug-note` 结果行），朗读的 `voice-list-view` / `voice-reader-view` 整体收进小工具页并加「← 小工具」；头部只剩「编辑常用」「收起」；`ui/assets/suggest-panel.js` 的 `PANEL_PAGES` 改成 `recommend / tools / polish`，新增 `showToolsView(sub)` 管两层与三档高度，`setRenameState()` 改格子上的小字；`ui/assets/suggest-panel.css` 新增格子样式。
 - 关键判定：起名那格是复合结构（图标 + 标题 + 说明），改字只能改说明行 `rename-hint`；沿用 `textContent = '起名中…'` 会把整格内容抹平（图标和标题一起没）。`/suggest-panel/rename` 与「还原」链路没动，起名仍然只改面板所在那段对话。
 - 命令与结果：`node --experimental-vm-modules --test tests/app-tool.test.js tests/suggest-panel.test.js tests/suggest-panel-ui.test.js tests/polish-panel.test.js tests/polish.test.js tests/session-title.test.js tests/voice-routes.test.js tests/voice-reader.test.js tests/voice.test.js tests/ball-bridge.test.js` **202 通过 / 0 失败**（`suggest-panel-ui` 与 `polish-panel` 各重写/新增用例：头部不再有起名、起名在小工具页里、朗读不再是一级页签且退路留全、页签顺序是 推荐回复 → 小工具 → 帮我理顺）；单跑 `suggest-panel-ui + polish-panel` **14 通过 / 0 失败**；`node --check ui/assets/suggest-panel.js` 通过；本轮改动的临时预览文件用完即删（`ui/__preview-*.html` 已删）。
-- 视觉核对：用 Edge 无头把面板 HTML 离屏渲染成 PNG（`L:\哈娜的工作台\知意小工具页预览.png`、`知意朗读子页预览.png`），确认三页签排布、入口格两列、图标与说明不挤、「返回小工具」自己占一行。渲染用的是去掉脚本的静态副本，只看排版，不当作实机行为证据。
+- 视觉核对：用 Edge 无头把面板 HTML 离屏渲染成 PNG（本机工作台里的 `知意小工具页预览.png`、`知意朗读子页预览.png`），确认三页签排布、入口格两列、图标与说明不挤、「返回小工具」自己占一行。渲染用的是去掉脚本的静态副本，只看排版，不当作实机行为证据。
 - 未覆盖：**实机没验**——真面板里的手感（小工具页高度 240 是否合适、朗读子页进出是否顺、起名结果行出现后面板会不会多出滚动条）、宿主重载后 iframe 是否拿到新 HTML、真实模型起的名字是否可用。未跑全应用回归，未调付费模型。
 
 ## 2026-10-22 面板头部加「起名」

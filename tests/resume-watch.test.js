@@ -25,7 +25,7 @@ import {
   sessionWrittenSince,
 } from "../lib/resume-watch.js";
 
-const PATH = "C:/Users/me/.hanako/agents/hanako/sessions/sess_abc.jsonl";
+const PATH = "D:/me/.hanako/agents/hanako/sessions/sess_abc.jsonl";
 
 function turnEnd(patch = {}) {
   return {
@@ -482,7 +482,7 @@ test("sessionPath 为空、事件只给裸 UUID 时，也能落到同一条会�
   const uuid = "01a14908-bc69-71c9-b629-2b6e8d424530";
   const index = buildSessionIndex([{
     sessionId: "sess_0mvc7z5bx_8d43b7057117984aeba0",
-    path: `C:/Users/me/.hanako/agents/hanako/sessions/2026-10-17T08-44-31-721Z_${uuid}.jsonl`,
+    path: `D:/me/.hanako/agents/hanako/sessions/2026-10-17T08-44-31-721Z_${uuid}.jsonl`,
     title: "",
     firstMessage: "小花，你帮我看看断联续接",
     agentName: "小花",
@@ -525,8 +525,8 @@ test("登记别名时把旧键上的进度搬过去，不把已经续过的次�
 });
 test("子代理会话不进断点续接：路径、kind、provenance 任一条都能认出来", () => {
   // 2026-10-19 实机：一次派发四个子代理，四段会话各自在 90 秒后被判卡住。
-  assert.equal(isSubagentSessionPath("C:/Users/me/.hanako/agents/hanako/subagent-sessions/direct/2026-10-19T05-04-44-870Z_01a1528c-3d46-7a9e-8e34-d0d68e8ae95a.jsonl"), true);
-  assert.equal(isSubagentSessionPath("C:/Users/me/.hanako/agents/hanako/sessions/2026-10-19T05-19-18-546Z_01a15299.jsonl"), false);
+  assert.equal(isSubagentSessionPath("D:/me/.hanako/agents/hanako/subagent-sessions/direct/2026-10-19T05-04-44-870Z_01a1528c-3d46-7a9e-8e34-d0d68e8ae95a.jsonl"), true);
+  assert.equal(isSubagentSessionPath("D:/me/.hanako/agents/hanako/sessions/2026-10-19T05-19-18-546Z_01a15299.jsonl"), false);
   assert.equal(isSubagentSessionPath(""), false);
   assert.equal(isSubagentSessionTarget({ kind: "subagent_child" }), true);
   assert.equal(isSubagentSessionTarget({ kind: "chat" }), false);
@@ -540,13 +540,13 @@ test("会话条目带着 kind 一路带进索引，复核时不用再猜", () =>
   const index = buildSessionIndex([
     {
       sessionId: "sess_sub",
-      path: "C:/Users/me/.hanako/agents/hanako/subagent-sessions/direct/2026-10-19T05-04-44-870Z_01a1528c.jsonl",
+      path: "D:/me/.hanako/agents/hanako/subagent-sessions/direct/2026-10-19T05-04-44-870Z_01a1528c.jsonl",
       kind: "subagent_child",
       modified: 1792230000000,
     },
     {
       sessionId: "sess_chat",
-      path: "C:/Users/me/.hanako/agents/hanako/sessions/2026-10-19T05-19-18-546Z_01a15299.jsonl",
+      path: "D:/me/.hanako/agents/hanako/sessions/2026-10-19T05-19-18-546Z_01a15299.jsonl",
       kind: "chat",
       title: "修知意断点续接",
       modified: 1792230000000,

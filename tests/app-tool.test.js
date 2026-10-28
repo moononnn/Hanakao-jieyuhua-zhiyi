@@ -1712,8 +1712,8 @@ test("子代理会话报错不进账本：事件没带路径时也要按 target 
 // 2026-10-26 实机：子代理的收尾回复被贴上「🌸 知意速览」，会话文件里看得见；Ask 引导也照旧
 // 塞进那段会话，Ask 预检还白跑一次模型。那些字是给用户看的，伙伴派出去干活的子代理既看不到
 // 用户也答不了题，只剩白读一遍。下面三条各钉住一个口子：子代理会话一步都不许走。
-const SUBAGENT_SESSION_PATH = "C:/Users/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl";
-const CHAT_SESSION_PATH = "C:/Users/me/.hanako/agents/hanako/sessions/chat.jsonl";
+const SUBAGENT_SESSION_PATH = "D:/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl";
+const CHAT_SESSION_PATH = "D:/me/.hanako/agents/hanako/sessions/chat.jsonl";
 const DECISION_PROMPT = "日记应用第一版只能选一种：云同步还是只在本地保存？我还没决定更看重哪边。";
 const LONG_REPLY = "盆土表面发白的时候再浇，一次浇透到盆底出水为止。".repeat(30);
 

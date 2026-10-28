@@ -13,7 +13,7 @@ import { createActivityLedger, IDLE_GRACE_MS, STALE_MS } from "../lib/activity-l
 import { judgeIdle } from "../lib/sleep-guard.js";
 import { sampleIdleSnapshot, summarizeSnapshot } from "../lib/idle-watch.js";
 
-const CODE_PATH = "L:/小花的git工作台/.hana/worktrees/sess-1-code/x.jsonl";
+const CODE_PATH = "D:/workbench/.hana/worktrees/sess-1-code/x.jsonl";
 
 test("一轮开始就记成忙：turn_start 之后不能算空", () => {
   const ledger = createActivityLedger();
