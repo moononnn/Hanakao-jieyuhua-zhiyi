@@ -106,9 +106,16 @@
           </span>
           <span class="tool-tile-body">
             <span class="tool-tile-label" id="shutdown-label">关机</span>
-            <span class="tool-tile-hint" id="shutdown-hint">只查 Hana 窗口，别的先存好</span>
+            <span class="tool-tile-hint" id="shutdown-hint">Hana 干完才关</span>
           </span>
         </button>
+
+        <!-- 保存提醒单独占一行，不藏在按钮的小字里。
+             这个功能只保证「Hana 干完」和「到点关机」两件事，
+             别的内容有没有存盘它管不了——那就得在人动手之前把这句话说清楚。 -->
+        <p class="shutdown-warning" role="note">
+          <strong>开之前请先存好别的：</strong>它只等 Hana 的窗口和任务跑完，不会替你保存 Word、PS、浏览器里没提交的内容。
+        </p>
       </div>
 
       <p id="slug-note" class="slug-note" role="status" aria-live="polite"></p>

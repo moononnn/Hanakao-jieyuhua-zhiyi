@@ -22,6 +22,9 @@
   --muted: #8b938a;
   --line: #eae7de;
   --shadow: 0 1px 2px rgba(45, 70, 58, .06);
+  /* 提醒色：只用在「关机前存好别的东西」这类不可逆提醒上，
+     跟主色（绿）区分开，免得被当成普通说明跳过。 */
+  --warn: #b8730b;
 }
 
 html[data-appearance="dark"] {
@@ -36,6 +39,7 @@ html[data-appearance="dark"] {
   --muted: #949c93;
   --line: #3f4a44;
   --shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  --warn: #e0a341;
 }
 
 * { box-sizing: border-box; }
@@ -387,6 +391,27 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 }
 
 .tool-tile-wide .tool-tile-hint { margin-left: auto; }
+
+/* 保存提醒：单独一行，用自己的颜色和底，不跟按钮的小字混在一起。
+   关机是不可逆动作，而它恰好管不了别的程序有没有存盘，
+   所以这句话必须看起来像一句提醒，而不是一行说明。 */
+.shutdown-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in oklab, var(--warn, #b8730b) 34%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--warn, #b8730b) 10%, transparent);
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+  opacity: 0.95;
+}
+
+.shutdown-warning strong {
+  font-weight: 600;
+  color: color-mix(in oklab, var(--warn, #b8730b) 72%, var(--ink));
+}
 
 /* 关机开着的时候，这张卡就一直是高亮的那一格 */
 .tool-tile[data-armed="1"]:not(:disabled) {

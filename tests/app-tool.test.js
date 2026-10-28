@@ -6,7 +6,7 @@ import vm from "node:vm";
 import app from "../index.js";
 import { permissionPresentation } from "../ui/assets/permission-status.js";
 
-function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, sessionGetError = null, updateError = null, sendError = null, historyMessages = null } = {}) {
+function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, sessionGetError = null, updateError = null, sendError = null, historyMessages = null, storageError = null } = {}) {
   const registrations = new Map();
   const hooks = new Map();
   const routes = new Map();
@@ -144,8 +144,19 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     },
     storage: {
       global: {
-        get: (key, fallback = undefined) => storage.has(key) ? storage.get(key) : fallback,
-        set: (key, value) => { storage.set(key, value); },
+        get: (key, fallback = undefined) => {
+          // storageError 用来模拟宿主 RPC 满仓（APP_RPC_BUSY）。
+          // 传函数时按调用时刻取值：apply 阶段本身也要读 storage，
+          // 所以得能「装完再开始报错」，否则测不到工具那一层。
+          const failure = typeof storageError === "function" ? storageError() : storageError;
+          if (failure) throw failure;
+          return storage.has(key) ? storage.get(key) : fallback;
+        },
+        set: (key, value) => {
+          const failure = typeof storageError === "function" ? storageError() : storageError;
+          if (failure) throw failure;
+          storage.set(key, value);
+        },
       },
       agent: () => ({}),
     },
@@ -930,7 +941,11 @@ test("输入栏 🌸 按钮在 Code 会话里也能开：宿主给的 sessionId 
   assert.equal(mock.panelShows[0].sessionId, "sess_code", "应该用宿主给的那个编号");
 });
 
-test("输入栏 🌸 按钮是开关：第二下收起，面板自己关掉后下次点又是打开", async () => {
+test("输入栏 🌸 按钮不再自己记开关：每一下都是摆出来，不会变成空 dismiss", async () => {
+  // 旧行为：App 自己用一张内存表记「现在开着」，第二下就 dismiss。
+  // 但那张表和宿主真实状态会分歧（宿主关面板的路很多，通知不一定会到），
+  // 一分歧就变成「点一下只跑一个空 dismiss，界面没反应」——这就是点不开的来源。
+  // 现在一律 show：宿主 show 是按 (session, app, id) 原地 upsert 的幂等操作。
   const mock = createContext({
     sessionList: [{ path: "D:/hana/agents/hanako/sessions/s1.jsonl", sessionId: "sess_s1", agentId: "hanako", modified: 1 }],
   });
@@ -940,26 +955,58 @@ test("输入栏 🌸 按钮是开关：第二下收起，面板自己关掉后�
   const call = { context: { sessionPath: "D:/hana/agents/hanako/sessions/s1.jsonl" } };
 
   await tool.execute(call);
-  assert.equal(mock.panelShows.length, 1, "第一下应该挂出面板");
+  assert.equal(mock.panelShows.length, 1, "第一下应该摆出面板");
+
+  await tool.execute(call);
+  assert.equal(mock.panelShows.length, 2, "第二下也必须再摆一次，不能变成收起");
+  assert.equal(mock.panelDismisses.length, 0, "按钮不能自己发起 dismiss：那是状态分歧时的死路");
+  assert.equal(mock.panelShows[1].sessionId, "sess_s1");
+  assert.equal(mock.panelShows[1].id, "zhiyi-suggest-panel");
+
+  // 关键回归点：面板被宿主关掉（或 App 重载）后，再点必须能开。
+  // 旧实现靠面板 iframe 报 /suggest-panel/hidden 清标记；那一下常常不发。
+  // 这里连报都不报，直接再点，也必须开。
+  await tool.execute(call);
+  assert.equal(mock.panelShows.length, 3, "宿主关掉面板后，再点必须能重新打开");
   assert.equal(mock.panelDismisses.length, 0);
+});
 
-  await tool.execute(call);
-  assert.equal(mock.panelDismisses.length, 1, "第二下应该收起面板");
-  assert.equal(mock.panelDismisses[0].id, "zhiyi-suggest-panel");
-  assert.equal(mock.panelDismisses[0].sessionId, "sess_s1");
-  assert.equal(mock.panelShows.length, 1, "收起这一下不该再挂一遍");
+test("输入栏面板每次 show 都显式要求展开：折起来的旧面板点一下要能摊开", async () => {
+  // 宿主 show 在「参数完全一样」时直接返回、什么都不动；
+  // 如果人把面板折叠过（还占位置但内容看不见），而 App 传的仍是默认展开，
+  // 参数一致就什么也不会发生——看着就是点了没反应。所以必须显式传 expanded: true。
+  const mock = createContext({ sessionList: [] });
+  await registeredTool(mock);
+  const tool = mock.tool("jiegehua.zhiyi_suggest");
+  await tool.execute({ context: { sessionPath: "D:/hana/agents/hanako/sessions/s1.jsonl", sessionId: "sess_s1" } });
 
-  await tool.execute(call);
-  assert.equal(mock.panelShows.length, 2, "第三下应该重新打开");
+  assert.equal(mock.panelShows.length, 1);
+  assert.equal(mock.panelShows[0].presentation.expanded, true, "必须显式要求展开，不能留给宿主默认值");
+  assert.ok(mock.panelShows[0].presentation.height >= 180, "高度要报出实际需要的高度");
+});
 
-  // 面板自己被宿主关掉时前端会报一声，之后点按钮应该是打开而不是收起
-  await mock.route("POST", "/suggest-panel/hidden")({
-    req: { query: (key) => (key === "sessionId" ? "sess_s1" : "") },
-    json: (data, status = 200) => ({ data, status }),
+test("开面板不靠记账：读设置/写状态被 RPC 拒了也照样把面板摆出来", async () => {
+  // 宿主 RPC 有并发上限（128），实测日志一天拒了 3046 次（APP_RPC_BUSY）。
+  // 旧实现在一次点击里串行跑六次 RPC，任何一环被拒都会让整次点击变成一个报错，
+  // 表现就是「点了没反应」。但人点这个按钮只想要一件事：面板出来。
+  // 所以核心动作（show）不依赖任何记账；记账失败不能反过来弄挂这一次点击。
+  const busy = Object.assign(new Error("App RPC concurrency limit reached"), { code: "APP_RPC_BUSY" });
+  // 装 App 的时候还不能报错（apply 自己也要读 storage）；装完再开始拒。
+  let storageBusy = false;
+  const mock = createContext({ sessionList: [], storageError: () => (storageBusy ? busy : null) });
+  await registeredTool(mock);
+  const tool = mock.tool("jiegehua.zhiyi_suggest");
+  assert.ok(tool, "应该有输入栏面板工具");
+  storageBusy = true;
+
+  const result = await tool.execute({
+    context: { sessionPath: "L:/w/code.jsonl", sessionId: "sess_code" },
   });
-  await tool.execute(call);
-  assert.equal(mock.panelShows.length, 3, "面板已经关了，这一下应该打开");
-  assert.equal(mock.panelDismisses.length, 1);
+
+  assert.equal(result.isError, undefined, `读不到设置/写不进状态也不能报错：${JSON.stringify(result.content)}`);
+  assert.equal(mock.panelShows.length, 1, "面板必须摆出来——这是人点按钮唯一的目的");
+  assert.equal(mock.panelShows[0].sessionId, "sess_code");
+  assert.equal(mock.panelShows[0].presentation.expanded, true);
 });
 
 test("session title reads the most recently active session and cleans the model output", async () => {
@@ -1117,6 +1164,118 @@ test("面板里的排队发送：没会话、没内容都不往下走；状态�
   });
   assert.equal(stop.data.ok, true);
   assert.equal(stop.data.stopped, false, "本来就没在排，不该假装停成功");
+});
+
+test("关机提示条要挂到 Code 页的会话上（不能只认 session:list 里那几段）", async () => {
+  // 这是 2026-10-28 玥儿实机碰到的：她在 Code 页点了关机，
+  // 输入框上方一条提示都没出来，想反悔都看不到入口。
+  //
+  // 根因：提示条的候选名单只来自 session:list，而宿主给 v2 App 的 session:list
+  // 把 namespace 写死成 home/app，Code 页（namespace=code）不在里面。
+  // 跟「守门人看不见 Code 页」是同一个洞。
+  //
+  // 这里把 session:list 弄成只给 home 页那一段，然后用全局事件把一段 Code 会话
+  // 写进账本，验证提示条会往那段挂。
+  const mock = createContext({
+    sessionList: [
+      { path: "D:/hana/agents/hanako/sessions/home.jsonl", sessionId: "sess_home", agentId: "hanako", modified: 10 },
+    ],
+  });
+  await registeredTool(mock);
+
+  // 模拟 Code 页里正在跑的那段会话（只有全局事件能看见它）。
+  await mock.emitBus(
+    { type: "turn_start" },
+    "D:/hana/agents/hanako/sessions/code-page.jsonl",
+  );
+
+  const armed = await mock.route("POST", "/sleep-guard/arm")({ json: (data) => ({ data }) });
+  assert.equal(armed.data.ok, true, armed.data.error);
+
+  // 提示条是定时同步 + 挂上时同步，等一个回合。
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  const bannered = mock.inputBannerCalls
+    .filter((item) => item.kind === "set" && item.bannerId === "zhiyi-shutdown")
+    .map((item) => item.sessionPath);
+  assert.ok(
+    bannered.some((path) => String(path).includes("code-page")),
+    `Code 页的会话也该收到关机提示条，实际挂到：${JSON.stringify(bannered)}`,
+  );
+
+  // 收尾：别把守门人留着。
+  await mock.route("POST", "/sleep-guard/cancel")({ json: (data) => ({ data }) });
+});
+
+test("取消关机后，记忆里挂过的横幅必须全部收掉（不能变成收不掉的孤儿）", async () => {
+  // 2026-10-28 玥儿截图：「关机早取消了，某个窗口里还挂着演练中、已开 3:48」。
+  //
+  // 根因：已挂名单（shutdownBannerTexts）只在内存，App 重载就空了，
+  // 而宿主上的横幅还在。App 不知道它存在，就不会去收。
+  //
+  // 这里直接验证收尾逻辑：先挂上（记下名单），再取消，
+  // 断言列表里那条被 dismiss。
+  const mock = createContext({
+    sessionList: [
+      { path: "D:/hana/agents/hanako/sessions/home.jsonl", sessionId: "sess_home", agentId: "hanako", modified: 10 },
+    ],
+  });
+  await registeredTool(mock);
+
+  const armed = await mock.route("POST", "/sleep-guard/arm")({ json: (data) => ({ data }) });
+  assert.equal(armed.data.ok, true, armed.data.error);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  const mounted = mock.inputBannerCalls
+    .filter((item) => item.kind === "set" && item.bannerId === "zhiyi-shutdown")
+    .map((item) => item.sessionPath);
+  assert.ok(mounted.length > 0, "挂上守门后应该已经有横幅了");
+
+  const cancelled = await mock.route("POST", "/sleep-guard/cancel")({ json: (data) => ({ data }) });
+  assert.equal(cancelled.data.ok, true, cancelled.data.error);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  const dismissed = mock.inputBannerCalls
+    .filter((item) => item.kind === "dismiss" && item.bannerId === "zhiyi-shutdown")
+    .map((item) => item.sessionPath);
+  for (const path of mounted) {
+    assert.ok(
+      dismissed.includes(path),
+      `取消后这条横幅应该被收掉：${path}；实际收了：${JSON.stringify(dismissed)}`,
+    );
+  }
+});
+
+test("App 重载后，上次挂的横幅名单能从盘里读回来（不然永远收不掉）", async () => {
+  // 这是「取消了还挂着」的重载版本：
+  // 旧代码里已挂名单只在内存，重载就空了；宿主的横幅却不会因为 App 重载而消失。
+  // 结果就是 App 压根不知道那几条存在，取消时也不会去收。
+  //
+  // 这里直接验证「重载后刚启动、还没挂新的」那个时刻：
+  // 存储里存着上次挂过的路径，取消之后必须把它们都 dismiss。
+  const lingering = "D:/hana/agents/hanako/sessions/lingering.jsonl";
+  const mock = createContext({
+    sessionList: [
+      { path: "D:/hana/agents/hanako/sessions/home.jsonl", sessionId: "sess_home", agentId: "hanako", modified: 10 },
+    ],
+  });
+  // 预先写入“上次重载前挂过这一条”，模拟宿主上还挂着的孤儿横幅。
+  await mock.context.storage.global.set("shutdownBannerMounted", {
+    at: new Date().toISOString(),
+    paths: [lingering],
+  });
+
+  await registeredTool(mock);
+  // 此时关机状态是未开启（新会话默认），同步一轮就该把那张表读回来并全收。
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  const dismissed = mock.inputBannerCalls
+    .filter((item) => item.kind === "dismiss" && item.bannerId === "zhiyi-shutdown")
+    .map((item) => item.sessionPath);
+  assert.ok(
+    dismissed.includes(lingering),
+    `重载后应该能把上次挂的横幅收掉，实际收了：${JSON.stringify(dismissed)}`,
+  );
 });
 
 test("排队一开始就在输入框上方挂提示条，写清轮次与文案", async () => {

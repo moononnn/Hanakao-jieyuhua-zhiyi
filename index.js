@@ -10,10 +10,12 @@ import { createBallBridge, RECOMMEND_POLL_MS } from "./lib/ball-bridge.js";
 import { createCardAskRegistry } from "./lib/card-handoff.js";
 import { appendAskGuidance } from "./lib/ask-guidance.js";
 // 「活干完帮我关」的守门人：采样在 lib/idle-watch.js，判定在 lib/sleep-guard.js。
-import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setRealEnabled } from "./lib/sleep-guard.js";
+import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setActivityLedger, setRealEnabled } from "./lib/sleep-guard.js";
 // 开发期只读探针：连续拍忙闲快照，肉眼对时间线用。
 // 发布前连同 lib/idle-probe.js 与下面的工具注册一起删掉（见 PENDING_CHANGES），不影响守门功能。
 import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from "./lib/idle-probe.js";
+// 宿主事件账本：守门人的第三层眼睛，也是唯一看得见 Code 页会话的那一层。
+import { createActivityLedger } from "./lib/activity-ledger.js";
 import { sampleIdleSnapshot, summarizeSnapshot } from "./lib/idle-watch.js";
 import { ContinueLoopRegistry, describeLoop, planManualResume, shouldJudgeLoop } from "./lib/continue-loop.js";
 // 排队话单：球上写一句或一串话，等 ta 这一轮说完就送进去；一串话一轮一条往下推。
@@ -130,10 +132,16 @@ import {
 
 export const name = "jiegehua-zhiyi";
 
-// 输入栏那个 🌸 按钮做成开关：面板开着就收起，关着就挂出来。
-// 面板自己被收起/关掉时，前端会报 /suggest-panel/hidden 把这条清掉，
-// 不然下次点按钮会被当成「收起」，看着像点了没反应。
-const openSuggestPanels = new Map();
+// 输入栏那个 🌸 按钮：点一下就把面板摆出来，不再自己记「现在开着还是关着」。
+// 以前这里是开关，靠一张 openSuggestPanels 表记状态；那张表活在 App 进程内存里，
+// 而宿主关面板的路径有好多条（宿主自己的关闭、切会话、App 重载），
+// 唯一能把表清掉的通知是面板 iframe 的 pagehide/visibilitychange——它经常不发。
+// 结果就是表里写着「开着」、宿主那边其实早关了：点一下只走 dismiss（空操作），
+// 界面上什么都没发生，得再点一下才出来。这就是「有时候点不开」。
+// 宿主 userInteraction.show 本身就是按 (session, app, id) 原地 upsert 的，
+// 重复调用是幂等的，所以没必要自己记状态：一律 show，收起交给面板里的「收起」。
+// 发出去之后就不可撤销，别让它落到「点了没反应」那条路上。
+// 关面板的唯一入口是面板里的「收起」按钮和宿主自己的关闭，两者都直连 dismiss。
 
 // ─── 断点续接的对外可见性（2026-10-19 与用户定下）───
 // 冻结的是「界面上看不看得见」，不是这套功能本身：判定、记账、日志全部照跑，
@@ -1382,25 +1390,118 @@ activeFusionServiceDispose = disposeFusionService;
   const shutdownMutedPaths = new Set();
   let shutdownBannerLoggedAt = 0;
 
+  // 「我挂过哪几条」得落盘。
+  //
+  // 为什么：这张表原来只在内存里。App 一重载（升级、改代码、宿主重启）它就空了，
+  // 可宿主上那几条提示条还在。App 不再知道它们存在，就不会去收，
+  // 于是关机早取消了、横幅还一直挂在某个窗口上。
+  // 2026-10-28 玥儿截了个图问「为啥还挂着」，就是这个。
+  const SHUTDOWN_BANNER_KEY = "shutdownBannerMounted";
+  let shutdownBannerRestored = false;
+
+  async function persistMountedBanners() {
+    try {
+      // 没恢复成功就不写。
+      // 否则会出现这个事故：启动时存储还没就绪、恢复失败，名单是空的，
+      // 然后把空的写回去——磁盘上那份记录就真被抹掉了，下次重载也救不回来。
+      if (!shutdownBannerRestored) return;
+      await sdk.storage.global.set(SHUTDOWN_BANNER_KEY, {
+        at: new Date().toISOString(),
+        paths: [...shutdownBannerTexts.keys()].filter((p) => String(p).endsWith(".jsonl")),
+      });
+    } catch { /* 存不进去不影响主流程 */ }
+  }
+
+  /** 启动时把上次挂过的名单读回来，好让取消/收起时能真的把它们收掉。 */
+  async function restoreMountedBanners() {
+    if (shutdownBannerRestored) return;
+    let raw = null;
+    try {
+      raw = await sdk.storage.global.get(SHUTDOWN_BANNER_KEY, null);
+    } catch (error) {
+      // 这次没读到就下次再试，不置标记。
+      void sdk.storage.global.set("shutdownBannerRestoreDebug", {
+        at: new Date().toISOString(), step: "get-failed",
+        error: String(error?.message || error).slice(0, 120),
+      }).catch?.(() => {});
+      return;
+    }
+    const paths = Array.isArray(raw?.paths) ? raw.paths : [];
+    let restored = 0;
+    for (const path of paths) {
+      const value = String(path || "").trim();
+      // 只恢复看起来像会话路径的。
+      // 账本里既有真实 sessionPath，也有裸的 sessionId（sess_xxx），
+      // 后者拿去调 dismiss 是无效的，还会永远滞在名单里清不掉。
+      if (!value || !value.endsWith(".jsonl")) continue;
+      // 只恢复“知道它存在”，不恢复文本：文本每轮都会重新算。
+      if (!shutdownBannerTexts.has(value)) shutdownBannerTexts.set(value, "");
+      restored += 1;
+    }
+    void sdk.storage.global.set("shutdownBannerRestoreDebug", {
+      at: new Date().toISOString(), step: "ok",
+      rawIsNull: raw === null, rawPaths: paths.length, restored,
+    }).catch?.(() => {});
+    // 只有真读成功才标记完成。
+    // 以前这行写在 try 外面，于是「启动时存储还没就绪、读抛错」
+    // 也会把标记置上，之后永远不再重试——旧横幅就永远收不掉了。
+    shutdownBannerRestored = true;
+  }
+
   function describeShutdownBanner() {
     const described = describeSleepGuard();
     if (described.armed !== true) return "";
     const state = described.state || {};
+    // 提醒尾巴：挂在输入框上方那条提示条是这个功能最长驻、最显眼的展示位。
+    // 宿主横幅 text 上限 200 字符，所以这句得短，不能把整段警告塞进来。
+    const saveTail = "· 别的内容请先存好";
+    if (state.status === "shutdown-issued") {
+      // 命令已经发出去了。这 30 秒里还能抢回来，所以提示条不能消失。
+      // 以前 armed 不包含这个状态，提示条会直接收掉，人以为没事了。
+      const left = Math.max(0, Math.round((described.abortLeftMs || 0) / 1000));
+      return left > 0
+        ? `关机已发出，约 ${left} 秒后关（还能撤）· 点一下取消`
+        : "关机已发出，可撤销窗口已过";
+    }
     if (state.status === "countdown") {
       const left = Math.max(0, Math.round((described.countdownLeftMs || 0) / 1000));
-      return `${left} 秒后关机`;
+      return state.dryRun === true
+        ? `${left} 秒后结束演练（不关机） ${saveTail}`
+        : `${left} 秒后关机 ${saveTail}`;
     }
     const idleMin = Math.max(1, Math.round((state.idleMs || 0) / 60_000));
     // 尾巴上那个时间不只是给她看的：内容每次都在变，宿主不会因为“一模一样”跳过重画。
     const totalSec = Math.max(0, Math.round((described.sinceArmedMs || 0) / 1000));
     const mm = Math.floor(totalSec / 60);
     const ss = String(totalSec % 60).padStart(2, "0");
-    return `会自动关机：没动静满 ${idleMin} 分钟就开始倒数 · 已开 ${mm}:${ss}`;
+    if (state.dryRun === true) {
+      return `演练中（不会真关）：Hana 空满 ${idleMin} 分钟走一遍流程 ${saveTail} · 已开 ${mm}:${ss}`;
+    }
+    return `会自动关机：Hana 没动静满 ${idleMin} 分钟就开始倒数 ${saveTail} · 已开 ${mm}:${ss}`;
   }
 
   /** 最近用过的几段对话：先查索引，查不到就直接问宿主要名单。 */
+  /** 把这一轮提示条的名单与结果落盘一份，排查用。失败不影响任何主流程。 */
+  async function recordBannerRound(text, paths) {
+    try {
+      const mounted = [...shutdownBannerTexts.keys()];
+      await sdk.storage.global.set("shutdownBannerDebug", {
+        at: new Date().toISOString(),
+        text: String(text || "").slice(0, 200),
+        candidates: Array.isArray(paths) ? paths.map((p) => String(p)) : [],
+        mounted,
+        muted: [...shutdownMutedPaths.keys()],
+        ledgerPaths: (() => { try { return activityLedger?.paths?.() || []; } catch { return []; } })(),
+      });
+    } catch { /* 排查信息写不进去就算了 */ }
+  }
+
   async function pickRecentSessionPaths(limit = SHUTDOWN_BANNER_MAX) {
     const out = [];
+    const push = (path) => {
+      const value = String(path || "").trim();
+      if (value && !out.includes(value)) out.push(value);
+    };
     try {
       const snapshot = await readResumeSessionIndex();
       const rows = [...(snapshot?.index?.byId?.values?.() || [])]
@@ -1408,38 +1509,86 @@ activeFusionServiceDispose = disposeFusionService;
         .sort((a, b) => Number(b.modified || 0) - Number(a.modified || 0));
       for (const row of rows) {
         if (out.length >= limit) break;
-        out.push(String(row.path));
+        push(row.path);
       }
     } catch {
       // 索引拿不到就走下面那条
     }
-    if (out.length) return out;
+    if (!out.length) {
+      try {
+        const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "active" }, { timeoutMs: 6_000 });
+        const rows = Array.isArray(listed) ? listed : listed?.sessions || [];
+        for (const row of rows) {
+          if (out.length >= limit) break;
+          push(row?.path || row?.sessionPath);
+        }
+      } catch {
+        // 拿不到就算了，下一轮再试
+      }
+    }
+    // 补上账本里知道的会话。
+    //
+    // 上面两条路都只看得见 home/app（宿主给 v2 App 的 session:list 把 namespace
+    // 写死成这两样），Code 页的 namespace 是 code，根本不在名单里。
+    // 于是「在 Code 页挂了关机，那边输入框上方一条提示都不出」——人看不见，也就
+    // 没法及时反悔。账本靠全局事件，不受 namespace 限制，正好补上这个缺口。
+    //
+    // 账本里的排在前面：它们是真正「有过动静」的会话，比冷会话更可能正是她现在看的那个。
     try {
-      const listed = await sdk.bus.request("session:list", { scope: "all", lifecycle: "active" }, { timeoutMs: 6_000 });
-      const rows = Array.isArray(listed) ? listed : listed?.sessions || [];
-      for (const row of rows) {
-        if (out.length >= limit) break;
-        const path = String(row?.path || row?.sessionPath || "");
-        if (path) out.push(path);
+      const tracked = activityLedger?.paths?.() || [];
+      if (tracked.length) {
+        const tail = out.filter((path) => !tracked.includes(path));
+        out.length = 0;
+        for (const path of tracked) {
+          if (out.length >= limit) break;
+          push(path);
+        }
+        for (const path of tail) {
+          if (out.length >= limit) break;
+          push(path);
+        }
       }
     } catch {
-      // 拿不到就算了，下一轮再试
+      // 账本读不到不影响已有的名单
     }
-    return out;
+    return out.slice(0, limit);
   }
 
   async function dismissShutdownBanner(path) {
     shutdownBannerTexts.delete(path);
     await sdk.inputBanner.dismiss({ sessionPath: path, bannerId: SHUTDOWN_BANNER_ID }).catch(() => {});
+    void persistMountedBanners();
   }
 
   async function syncShutdownBanner() {
+    // 先确保知道“上次挂过哪些”：否则重载后取消时，那些孤儿横幅永远收不掉。
+    await restoreMountedBanners();
     const text = describeShutdownBanner();
+    // 把每次同步的轨迹落一笔（只记阶段与数量，不记正文）。
+    void sdk.storage.global.set("shutdownBannerTrace", {
+      at: new Date().toISOString(),
+      step: text ? "has-text" : "no-text",
+      known: shutdownBannerTexts.size,
+      armed: describeSleepGuard().armed === true,
+    }).catch?.(() => {});
+    // 先把“这一轮之前挂了什么”拍个快照：下面循环里会改这张表，
+    // 改完再比就看不出变化了，名单就落不成盘。
+    const before = shutdownBannerTexts.size;
     if (!text) {
+      // 没在守了：把知道的全收掉。
+      // 这里必须无条件全收，不能先看候选名单——重载后候选名单可能是空的，
+      // 而旧横幅还在宿主上挂着，那就永远收不掉（2026-10-28 那个「取消了还挂着」就是这个）。
       for (const path of [...shutdownBannerTexts.keys()]) await dismissShutdownBanner(path);
       return;
     }
     const paths = await pickRecentSessionPaths();
+    // 把这一轮名单落盘一份，排查用。
+    //
+    // 为什么需要：2026-10-28 「Code 页挂了关机、横幅不出来」那个问题，
+    // 当时完全没有现场可看：不知道名单里到底有没有那段会话、
+    // 是没算进去还是算进去了但写失败。只能读代码推。
+    // 这个文件只写路径与结果，不写正文，也不参与任何判断。
+    void recordBannerRound(text, paths);
     if (!paths.length) {
       safeLog.debug("关机提示条没有会话可挂", {});
       return;
@@ -1469,9 +1618,13 @@ activeFusionServiceDispose = disposeFusionService;
       await dismissShutdownBanner(path);
     }
     // 文本每秒都在变，日志每 5 分钟留一条就够，否则会把日志刷满。
-    if (changed && Date.now() - shutdownBannerLoggedAt > 5 * 60_000) {
-      shutdownBannerLoggedAt = Date.now();
-      safeLog.info(`关机提示条挂到 ${paths.length} 段对话：${text}`);
+    if (changed || shutdownBannerTexts.size !== before) {
+      // 挂过的名单得落盘：重载之后靠这份记录才能把它们收掉。
+      void persistMountedBanners();
+      if (changed && Date.now() - shutdownBannerLoggedAt > 5 * 60_000) {
+        shutdownBannerLoggedAt = Date.now();
+        safeLog.info(`关机提示条挂到 ${paths.length} 段对话：${text}`);
+      }
     }
   }
 
@@ -2846,12 +2999,27 @@ activeFusionServiceDispose = disposeFusionService;
     }
   }
 
+  // 宿主事件账本：「谁还在跑」的第三层，也是**唯一看得见 Code 页会话**的那层。
+  // 为什么需要（2026-10-27 看宿主源码确认）：v2 App 的 session:list 在宿主里写死了
+  //   namespace: d ? ["home", "app"] : ...
+  // Code 页的会话 namespace 是 code，根本不在名单里；v2 契约也没有 namespace 参数可传。
+  // 所以守门人原来在 Code 页干活时看到的永远是「全空」。
+  // 全局订阅（不给 filter.sessionPath）能收到每个会话上的事件，跟 namespace 无关，
+  // 而且事件自带 sessionPath，不需要先知道 sessionId——正好绕开死路。
+  const activityLedger = createActivityLedger();
+  setActivityLedger(activityLedger);
+
   // 订阅必须显式给第二个参数：省略时经 RPC 会变成 null，宿主在装载阶段读 types 直接抛错，
   // 整条安装记录作废（kc-debug-App里bus订阅省略参数会炸装载）。
   // 宿主不支持时只降级、不报错：卡住兜底走的是两个 hook，不依赖这条订阅。
   try {
     if (typeof sdk.bus?.subscribe === "function") {
       await sdk.bus.subscribe((event, sessionPath) => {
+        // 记账放在最前面：下面一堆分支都有 return，早退不能把账漏了。
+        // 这里只记内存，不 await、不发请求。
+        try {
+          activityLedger.note(event, sessionPath);
+        } catch {}
         // 新会话默认会显示输入栏那个按钮，开关关着时得补一次盖住。
         if (event === "session_created") {
           void currentInputButtonEnabled()
@@ -2877,6 +3045,9 @@ activeFusionServiceDispose = disposeFusionService;
     await sdk.logger.warn(`宿主不支持事件订阅，断联续接只剩卡住兜底：${String(error?.code || error?.message || error).slice(0, 120)}`);
   }
   // 关机条上写着倒计时，隔一会儿对一次；没开的时候它自己什么都不做。
+  // 启动时立刻跑一轮，不等 12 秒：上次重载前挂过、但宿上还在的那些横幅，
+  // 得尽快收掉。等定时器到点的话，人就对着一条早该消失的提示发楞。
+  void syncShutdownBanner();
   const shutdownBannerTimer = setInterval(() => { void syncShutdownBanner(); }, 12_000);
   shutdownBannerTimer.unref?.();
   const resumeTimer = setInterval(() => { void pumpResume(); }, 5_000);
@@ -3120,9 +3291,63 @@ activeFusionServiceDispose = disposeFusionService;
       await sdk.logger.info(`真关机开关（面板）：${realEnabled ? "已打开" : "已关闭"}`);
       return c.json({ ok: true, realEnabled });
     });
+    app.get("/sleep-guard/banner-debug", async (c) => {
+      // 排查专用：看关机提示条到底挂到了哪几段会话上。
+      //
+      // 为什么需要它：2026-10-28 玥儿在 Code 页挂了关机，输入框上方一条提示都没出。
+      // 根因是候选名单只看 session:list（它看不见 Code 页），但当时根本无从查起，
+      // 只能读代码推。有了这个接口，下次一条命令就能看出名单里有没有那段会话。
+      const candidates = await pickRecentSessionPaths();
+      return c.json({
+        ok: true,
+        bannerText: describeShutdownBanner(),
+        // 当前已经挂上的（App 记住的那几段）
+        mounted: [...shutdownBannerTexts.keys()],
+        // 这一轮算出来的候选名单（实际会往这些挂）
+        candidates,
+        // 被手动收起过、暂时不再挂的
+        muted: [...shutdownMutedPaths.keys()],
+        // 账本里知道的全量会话路径（不看忙闲）
+        ledgerPaths: (() => {
+          try { return activityLedger?.paths?.() || []; } catch { return []; }
+        })(),
+        ledgerSize: (() => {
+          try { return activityLedger?.size ?? 0; } catch { return 0; }
+        })(),
+      });
+    });
+
+    app.post("/sleep-guard/banner-reset", async (c) => {
+      // 急救用：把当前知道的会话上的关机横幅全部摘掉，不管 App 记不记得挂过。
+      //
+      // 为什么需要：已挂名单以前只在内存，重载就丢。宿主的横幅不会因为 App 重载而消失，
+      // 于是会出现「取消了还挂着」的孤儿横幅，而 App 自己没任何办法把它收掉。
+      // 现在虽然加了持久化与启动回收，但已经漏在外面的那些得有个手动出口。
+      const candidates = await pickRecentSessionPaths();
+      const extra = [...shutdownBannerTexts.keys()];
+      const all = [...new Set([...candidates, ...extra])];
+      let dismissed = 0;
+      for (const path of all) {
+        const value = String(path || "");
+        if (!value) continue;
+        await dismissShutdownBanner(value);
+        dismissed += 1;
+      }
+      return c.json({ ok: true, dismissed, paths: all });
+    });
+
     app.post("/sleep-guard/cancel", async (c) => {
       const result = await cancelSleepGuard(sdk, "在知意面板上手动取消");
       void syncShutdownBanner();
+      // 已经发出过关机命令时，面板得能看出「撤没撤成」。
+      // 以前这里无条件报 ok，机器却照关，那是最坑人的一种反馈。
+      if (result.wasIssued && result.abort?.ok !== true) {
+        return c.json({
+          ok: false,
+          error: `关机已经发出去了，撤销没成功（${result.abort?.detail || "原因不明"}），机器还会关。`,
+          ...result,
+        }, 409);
+      }
       return c.json({ ok: true, ...result });
     });
     // 面板上的启动入口：以前只有传音樱和模型工具能挂，面板只能取不能开。
@@ -4011,7 +4236,6 @@ activeFusionServiceDispose = disposeFusionService;
         const state = readPanelState(raw);
         if (state.sessionId) {
           await sdk.userInteraction.dismiss({ sessionId: state.sessionId, id: SUGGEST_PANEL_ID });
-          openSuggestPanels.delete(state.sessionId);
         }
         await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({ sessionId: state.sessionId }));
         return c.json({ ok: true });
@@ -4021,10 +4245,10 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
 
-    // 面板自己被宿主收起/关掉时前端报一声，只清标记：下次点按钮应该是「打开」而不是「收起」。
+    // 面板被宿主收起/关掉时前端会报一声。现在 App 不再自己记开关状态，
+    // 这个入口只留着不报错：旧版面板页面（浏览器缓存里的）还会往这里发，
+    // 接住就行，不做事。
     app.post("/suggest-panel/hidden", async (c) => {
-      const sessionId = String(c.req.query("sessionId") || "").trim();
-      if (sessionId) openSuggestPanels.delete(sessionId);
       return c.json({ ok: true });
     });
 
@@ -4220,6 +4444,12 @@ activeFusionServiceDispose = disposeFusionService;
     }
   }
 
+  // 失败计数：宿主还没把本 App 的 inputStatus 声明投影进贡献表时，
+  // 写一条就报一个错。一条失败不能把整趟循环拖死，也不能把整个 App 装载带崩。
+  // （这一点以前只当成注释写了，实际上第一条报错就会被上层当成装载失败，
+  // 日志里是「plugin "jiegehua-zhiyi" failed to load」。2026-10-28 实机撞上）
+  let hideSyncFailures = 0;
+
   async function syncInputStatusVisibility(enabled) {
     let rows = [];
     try {
@@ -4238,9 +4468,11 @@ activeFusionServiceDispose = disposeFusionService;
       try {
         await sdk.inputStatus.set({ sessionId: row.sessionId, id: SUGGEST_INPUT_STATUS_ID, visible: enabled });
       } catch (error) {
-        // 一个会话失败（比如那个伙伴里没激活知意）不影响其他会话；
-        // 但如果整批都失败，那多半是权限没批或者声明还没被宿主认，记一笔就收手。
+        hideSyncFailures += 1;
         await sdk.logger.warn("输入栏按钮显隐同步失败", { code: error?.code || "INPUT_STATUS_ERROR" });
+        // 「has no declared input status item」说明声明还没投影进宿主的贡献表。
+        // 这种错每个会话都会报一次，继续往下写只是刷日志——当场停。
+        if (/no declared input status/i.test(String(error?.message || ""))) return;
         continue;
       }
     }
@@ -4252,7 +4484,7 @@ activeFusionServiceDispose = disposeFusionService;
   // 走 ui-actions 通道，不进模型车道：模型看不见这个工具，只有人点得到。
   await sdk.tools.register({
     name: "jiegehua.zhiyi_suggest",
-    description: "在输入栏的「知意」按钮上被点开时：在输入框上方挂出知意面板，里面有常用回复和「生成推荐回复」按钮。",
+    description: "在输入栏的「知意」按钮上被点开时：在输入框上方摆出知意面板（已经摆着就原地刷新），里面有常用回复和「生成推荐回复」按钮。",
     sessionPermission: { readOnly: true },
     parameters: { type: "object", additionalProperties: false, properties: {} },
     execute: async (args) => {
@@ -4271,58 +4503,111 @@ activeFusionServiceDispose = disposeFusionService;
         if (!sessionId) {
           return { isError: true, content: [{ type: "text", text: "没认出这是哪段对话。" }] };
         }
-        const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
-        // 再点一下 = 收起：同一个会话的面板还开着，就没必要再挂一遍
-        if (openSuggestPanels.has(sessionId)) {
-          try {
-            await sdk.userInteraction.dismiss({ sessionId, id: SUGGEST_PANEL_ID });
-          } catch (error) {
-            await sdk.logger.warn("收起输入栏面板失败", { code: error?.code || "PANEL_DISMISS_ERROR" });
-          }
-          openSuggestPanels.delete(sessionId);
-          await sdk.logger.info("输入栏面板已收起", { sessionPath });
-          return { content: [{ type: "text", text: "面板收起来了。再点一下还能叫回来。" }] };
+
+        // 先读常用回复（只为了报高度）：读不到也不能链式拖垮整次点击。
+        // 之前这整条是一个串行链：storage.get → storage.set → show → storage.get
+        // → storage.set → logger，六次串行 RPC。宿主 RPC 有并发上限（128），
+        // 实测日志里一天拒了 3046 次（APP_RPC_BUSY）。
+        // 那条链上**任何一环**被拒，整次点击就变成一个报错——表现就是点了没反应。
+        // 但人点这个按钮只想要一件事：面板出来。其余全是记账。
+        let quickCount = 0;
+        try {
+          const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+          quickCount = recConfig.quickReplies.length;
+        } catch {
+          // 读不到就按 0 条估高度：面板矮一点、里面自己会滚动，总比不开好。
         }
-        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({
-          sessionId,
-          suggestions: [],
-          quickReplies: recConfig.quickReplies,
-        }));
+
+        // 面板要用的状态先落到存储（面板 iframe 要读）；写入失败就算了，
+        // 面板仍然照开，里面读不到状态只是这一轮没有推荐句。
+        try {
+          await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({
+            sessionId,
+            suggestions: [],
+          }));
+        } catch {}
+
+        // 核心动作：摆面板。它失败才算真失败，才值得报错给用户。
+        // 宿主 show 是按 (session, app, id) 原地 upsert 的幂等操作，
+        // 所以不再自己记「现在开着还是关着」——那张内存表跟宿主真实状态
+        // 一旦分歧，点一下只会跑一个空 dismiss，人就看到「点了没反应」。
         const shown = await sdk.userInteraction.show({
           sessionId,
           id: SUGGEST_PANEL_ID,
           title: "知意",
           message: "常用回复点一下就发；要现成的点「生成推荐回复」",
           contentFrame: { route: SUGGEST_PANEL_ROUTE },
+          // 必须显式写 expanded: true。宿主 show 是「参数完全一致就直接返回」，
+          // 而人有可能在宿主那边把它折叠起来（折起来还占着位置、内容看不见）。
+          // 这时候如果传的还是默认展开，参数一模一样，宿主直接返回、什么都不动，
+          // 于是看着就是「点了没反应」。传 true 就一定能把它重新摊开。
           presentation: buildPanelPresentation({
-            height: estimatePanelHeight({ quickCount: recConfig.quickReplies.length }),
+            height: estimatePanelHeight({ quickCount }),
+            expanded: true,
           }),
         });
-        // 记下 panelId：生成完之后内容变多，要靠它把面板调高（不用重挂）。
-        const state = readPanelState(await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {}));
-        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, { ...state, panelId: shown?.panelId || "" });
-        openSuggestPanels.set(sessionId, { openedAt: Date.now() });
-        await sdk.logger.info("输入栏面板已挂上", { sessionPath, quick: recConfig.quickReplies.length });
+
+        // 以下全是记账，一律失败不响：面板已经出来了，不能因为记不上一个 panelId
+        // 就回一句报错。panelId 只用于生成后调高度，丢了最多是那一轮高度不变。
+        try {
+          const state = readPanelState(await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {}));
+          await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, { ...state, panelId: shown?.panelId || "" });
+        } catch {}
+        try {
+          await sdk.logger.info("输入栏面板已挂上", { sessionPath, quick: quickCount });
+        } catch {}
         return { content: [{ type: "text", text: "面板打开了：常用回复点一下就发，要现成的点里面的「生成推荐回复」。" }] };
       } catch (error) {
         const message = String(error?.message || "面板没挂上，再点一次试试。");
-        await sdk.logger.warn(`输入栏面板失败：${message.slice(0, 160)}`);
-        return { isError: true, content: [{ type: "text", text: message.slice(0, 200) }] };
+        // 宿主 RPC 满仓时给一句人话，别把 APP_RPC_BUSY 这种英文甩到界面上。
+        const busy = error?.code === "APP_RPC_BUSY" || /concurrency limit/i.test(message);
+        try {
+          await sdk.logger.warn(`输入栏面板失败：${message.slice(0, 160)}`, { code: error?.code || "" });
+        } catch {}
+        return {
+          isError: true,
+          content: [{ type: "text", text: busy ? "这会儿忙不过来，等一秒再点一下。" : message.slice(0, 200) }],
+        };
       }
     },
   });
 
-  // 启动时先对一遍输入栏按钮的显隐：上次关着的会话得盖回去，
-  // 以后每开一个新会话也补一次（新建会话默认是显示的）。
-  // ① 不能写成顶层 await：这段要等会话名单，慢一点不能把整个 App 启动挂住。
-  // ② 必须延后：App 还在加载时宿主的贡献表里还没投影这个 App 的 inputStatus 声明，
-  //    这时候调 set 会报「has no declared input status item」并把装载带崩。
+  // 启动时对一遍输入栏按钮的显隐：上次关着的会话得盖回去。
+  //
+  // 这段很容易把整个 App 装载搞崩（2026-10-28 实机撞上两次）：
+  // 宿主的 inputStatus.set 会查贡献表快照里有没有本 App 的声明：
+  //   `uiContributions.snapshot().find(pluginId===app)?.contributions.inputStatus?.find(id===...)`
+  // 而 App 刚 reload 那阵子，旧声明可能已经撤了、新声明还没投影进来，
+  // 这个查找就是空 → 抛「has no declared input status item」。
+  // 更麻烦的是：这个异常会从 apply 的异步任务里冒出去，宿主就判定
+  // 「plugin failed to load」，把整份 App 下掉（工具全部消失）。
+  //
+  // 所以三道防：
+  //   ① 不写成顶层 await，也不让异常漏出去（自己吞掉并记一笔）；
+  //   ② 一条写失败就当场停掉整趟（说明声明还没就位，继续写只会继续报）；
+  //   ③ 隔一会儿再试一次，那时声明一般已经投影完了。
+  // 失败本身不影响功能：按钮默认就是显示的，这个同步只在「用户把按钮关了」时才有意义。
   const scheduleInputStatusSync = () => {
-    const timer = setTimeout(() => {
-      void currentInputButtonEnabled()
-        .then((enabled) => syncInputStatusVisibility(enabled))
-        .catch(() => {});
-    }, 2000);
+    const runOnce = async (attempt) => {
+      try {
+        const enabled = await currentInputButtonEnabled();
+        await syncInputStatusVisibility(enabled);
+      } catch {
+        // 自己吞：绝不让它冒到 apply 的 Promise 上。
+      }
+      // 声明还没就位就隔久一点再试一趟，试两次还不够就算了，下一轮启动会再来。
+      if (hideSyncFailures > 0 && attempt < 1) {
+        const retry = setTimeout(() => { void runOnce(attempt + 1); }, 15_000);
+        retry.unref?.();
+        return;
+      }
+      if (hideSyncFailures > 0) {
+        try {
+          await sdk.logger.info(`输入栏按钮显隐这次没对成（声明还没就位），下次启动再说`, { failures: hideSyncFailures });
+        } catch {}
+      }
+    };
+    const timer = setTimeout(() => { void runOnce(0); }, 4000);
     timer.unref?.();
   };
   scheduleInputStatusSync();
@@ -4404,10 +4689,12 @@ activeFusionServiceDispose = disposeFusionService;
   });
 
   // 「活干完了帮我关」的入口。
-  // 默认演练；真关机要先打开总开关，且要用户在对话里明确同意才能调。
+  // 挂上就是真关机（演练已于 2026-10-21 退役）；仍有可撤销的倒计时窗口。
+  // 描述必须跟代码一致：以前这里写「默认只演练」「先调 enable-real」，
+  // 而那套开关早就退役了，会让人误以为还有一道拦截。
   await sdk.tools.register({
     name: "jiegehua_zhiyi_sleep_guard",
-    description: "守门人：当 Hana 里所有窗口和后台任务都停下来一段时间，就在用户睡后替他收尾。用户说「干完帮我关」「我睡了以后自己关」时用。默认只演练（到点只记录和提醒）；只有用户明确说要真关机时，才先调 enable-real 再挂 arm。",
+    description: "守门人：聊天页和 Code 页的所有对话、以及所有后台任务都停下来一段时间后，才执行关机。用户说「干完帮我关」「我睡了以后自己关」时用。挂上就是真关机（没有演练模式）；动手前有一段时间可撤销的倒计时，期间一有动静就自动收手。只有用户明确说要真关机才调 arm。",
     sessionPermission: { readOnly: true },
     parameters: {
       type: "object",
@@ -4415,8 +4702,8 @@ activeFusionServiceDispose = disposeFusionService;
       properties: {
         action: {
           type: "string",
-          enum: ["arm", "status", "cancel", "enable-real", "disable-real", "selftest", "probe-shutdown", "test-shutdown"],
-          description: "arm 挂上守门；status 看现在守着没、空了多久、历史上的记录；cancel 撤掉；enable-real / disable-real 是真关机的总开关，只在用户明确要求真关机时才打开；selftest 验起进程的能力；probe-shutdown 在 App 进程里试一下 shutdown.exe 能不能跑（跑 /a，无副作用）。",
+          enum: ["arm", "rehearse", "status", "cancel", "enable-real", "disable-real", "selftest", "probe-shutdown", "test-shutdown"],
+          description: "arm 挂上守门（真关机）；rehearse 演练：整个流程真跑但不执行关机命令，拿不准时先用这个；status 看现在守着没、空了多久、历史上的记录，以及是哪一层在拦（会话层/任务层/事件层）；cancel 撤掉；enable-real / disable-real 已废弃（演练退役后总开关不再拦任何东西）；selftest 验起进程的能力；probe-shutdown 在 App 进程里试一下 shutdown.exe 能不能跑（跑 /a，无副作用）；test-shutdown 真发一次关机但留 120 秒撤销窗口（仅供验证，不要当正规路径）。",
         },
         idleMinutes: { type: "number", description: "要连续空多久才算真的干完，默认 10 分钟。" },
         maxWaitMinutes: { type: "number", description: "最多守多久，超过就放弃并提醒，默认 240 分钟。" },
@@ -4527,37 +4814,89 @@ activeFusionServiceDispose = disposeFusionService;
             return { isError: true, content: [{ type: "text", text: `测试没跑成：${String(error?.message || error).slice(0, 160)}` }] };
           }
         }
-        if (action === "arm") {
+        if (action === "arm" || action === "rehearse") {
+          // rehearse = 演练：整套流程真跑，只有最后一步（发 shutdown.exe）不跑。
+          // 为什么留这条路：分享版里真关机是个高后果动作（会中断正在写的文件），
+          // 拿不准的时候应该能先把流程跑一遍看清楚。
+          // 演练不是「模拟数据」：采样、判定、倒计时、撤销、通知、记录全是真的，
+          // 唯一区别就是 executeShutdown 里那一支 dryRun 分支——它只记一笔。
+          const rehearse = action === "rehearse";
           const result = await armSleepGuard(sdk, {
             idleMs: Number(args?.idleMinutes) > 0 ? Number(args.idleMinutes) * 60_000 : undefined,
             maxWaitMs: Number(args?.maxWaitMinutes) > 0 ? Number(args.maxWaitMinutes) * 60_000 : undefined,
             graceMs: Number(args?.graceMinutes) > 0 ? Number(args.graceMinutes) * 60_000 : undefined,
             note: args?.note,
             armedBy: "model",
+            // 显式传 true 才演练，跟 lib 层那个约定一致。
+            dryRun: rehearse ? true : false,
           });
           const state = result.state || {};
           const minutes = Math.round((state.idleMs || 0) / 6000) / 10;
+          const graceMinutes = Math.round((state.graceMs || 0) / 60_000);
+          if (rehearse) {
+            return {
+              content: [{
+                type: "text",
+                text: [
+                  "演练挂上了：整套流程会真跑，但最后一步不执行关机命令。",
+                  `空满 ${minutes} 分钟后进 ${graceMinutes} 分钟倒计时；倒计时走完只记一笔「本来这时候会关」，不会关机器。`,
+                  "采样、判定、撤销、通知都是真的，所以这一次就是真实流程的完整彩排。",
+                ].join("\n"),
+              }],
+              details: { sleepGuard: result },
+            };
+          }
           return {
             content: [{
               type: "text",
               text: [
                 `静候已挂上：所有窗口和后台任务都停下来之后满 ${minutes} 分钟，才算真的结束。`,
                 `最多守 ${Math.round((state.maxWaitMs || 0) / 6000) / 10} 分钟，超过就放弃并提醒。`,
-                `到点会先进 ${Math.round((state.graceMs || 0) / 60_000)} 分钟可撤销倒计时，期间一有动静就当场取消，然后真的关机。`,
+                `到点会先进 ${graceMinutes} 分钟可撤销倒计时，期间一有动静就当场取消，然后真的关机。`,
               ].join("\n"),
             }],
             details: { sleepGuard: result },
           };
         }
+        if (action === "bannerReset") {
+          // 急救：把现在知道的会话上的关机横幅全摘掉。
+          // 场景：以前已挂名单只在内存，重载就丢，而宿主的横幅不会跟着消失，
+          // 于是会出现「关机早取消了、某个窗口里还挂着」的孤儿横幅。
+          const candidates = await pickRecentSessionPaths();
+          const extra = [...shutdownBannerTexts.keys()];
+          const all = [...new Set([...candidates, ...extra])];
+          let dismissed = 0;
+          for (const path of all) {
+            const value = String(path || "");
+            if (!value) continue;
+            await dismissShutdownBanner(value);
+            dismissed += 1;
+          }
+          return {
+            content: [{ type: "text", text: `已把 ${dismissed} 段会话上的关机横幅摘掉。` }],
+            details: { dismissed, paths: all },
+          };
+        }
         if (action === "cancel") {
           const result = await cancelSleepGuard(sdk, args?.reason || "手动取消");
-          return {
-            content: [{ type: "text", text: result.cancelled ? "守门已经撤掉了，不会再触发。" : "现在没有在守门，不用撤。" }],
-            details: { sleepGuard: result },
-          };
+          // 已经发出过关机命令的话，光说「撤了」是谎：得把 /a 的结果如实报。
+          let text;
+          if (result.wasIssued) {
+            text = result.abort?.ok
+              ? "关机命令已经发出去了，不过我发了撤销，机器不会关了。"
+              : `关机命令已经发出去了，撤销没成功（${result.abort?.detail || "原因不明"}），机器还会关。`;
+          } else {
+            text = result.cancelled ? "守门已经撤掉了，不会再触发。" : "现在没有在守门，不用撤。";
+          }
+          return { content: [{ type: "text", text }], details: { sleepGuard: result } };
         }
         const status = await readSleepGuard(sdk, { withLog: true });
         const timeline = await readSleepTimeline(sdk, Number(args?.timelineLimit) > 0 ? Number(args.timelineLimit) : 60);
+        // 这里得自己读一次：`realEnabled` 以前是个没声明的变量，
+        // 一走到 details 就抛 ReferenceError，整个 status 分支直接崩。
+        // 而工具层把任何异常都包成「守门没弄成：…」，所以看起来像是「守门挂了」，
+        // 实际上只是这一个查询字段没定义。（2026-10-28 演练时撞出来的）
+        const realEnabled = await isRealEnabled(sdk).catch(() => null);
         const state = status.state || {};
         const labels = {
           idle: "没在守",
@@ -4573,11 +4912,28 @@ activeFusionServiceDispose = disposeFusionService;
           ? `当前：${labels[state.status] || state.status}`
           : "当前：没在守";
         const idleLine = state.status === "countdown"
-          ? `还剩 ${Math.round((status.countdownLeftMs || 0) / 1000)} 秒关机，这期间一有动静就取消。`
-          : status.armed
-            ? `已经空了 ${Math.round(status.idleForMs / 1000)} 秒，需要满 ${Math.round((state.idleMs || 0) / 1000)} 秒。`
-            : "";
-        const switchLine = "现在是真关机：判定成立后会真的关机器。";
+          ? `还剩 ${Math.round((status.countdownLeftMs || 0) / 1000)} 秒${dryRun ? "结束演练" : "关机"}，这期间一有动静就取消。`
+          : state.status === "shutdown-issued"
+            // 这一段是最要紧的警告：命令已经出去了，但还有几秒能拉回来。
+            ? (status.abortLeftMs > 0
+              ? `关机命令已经发出，还有约 ${Math.round(status.abortLeftMs / 1000)} 秒可撤。要取消就现在点。`
+              : "关机命令已经发出，可撤销窗口已过，现在拦不住了。")
+            : status.armed && status.busyCount !== null && status.busyCount > 0
+              // 有活在跑就没在计时。以前这里写「已经空了 0 秒」，
+              // 跟时间线上那句「忙 N 处」正面矛盾，看着像坏了。
+              ? `还有 ${status.busyCount} 处在跑，所以还没开始算空。`
+              : status.armed
+                ? `已经空了 ${Math.round(status.idleForMs / 1000)} 秒，需要满 ${Math.round((state.idleMs || 0) / 1000)} 秒。`
+                : "";
+        // 这一行必须按实际情况报。以前是写死的「现在是真关机」，
+        // 演练挂上也会这么写——那就把「演练」说成了「真关机」，
+        // 正是最不能错的那种谎。演练时人看到这句话会不敢测，也分不清到底会不会关。
+        const dryRun = state.dryRun === true;
+        const switchLine = !status.armed
+          ? "没在守门，不会做任何事。"
+          : dryRun
+            ? "演练中：流程全真，最后一步不执行关机命令。"
+            : "现在是真关机：判定成立后会真的关机器。";
         const timeText = (iso) => {
           const d = new Date(iso);
           return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;

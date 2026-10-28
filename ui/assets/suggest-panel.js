@@ -126,7 +126,12 @@ const POLISH_PANEL_HEIGHT_WITH_RESULT = 550;
 const TOOLS_PANEL_HEIGHT = 300;
 // 排队那层比格子高：输入框、轮数行、提示、状态、按钮都要摆下。
 const QUEUE_PANEL_HEIGHT = 420;
-const MAX_PANEL_HEIGHT = 560;
+// 面板高度上限。
+//
+// 2026-10-28 实测：小工具那页含页签真实需要 561px，而当时上限是 560——
+// 就差那 1px，底部还是有一条滚动。加高到 640 是为了给以后再加一行留余地，
+// 它不把任何页面拉高（各页高度各自算），只是不再拦住「装不下」的那个。
+const MAX_PANEL_HEIGHT = 640;
 // 面板现在有三页：推荐回复、小工具、帮我理顺。页签与页面一一对应，切页时一起换。
 const PANEL_PAGES = [
   { key: 'recommend', tab: recommendTab, page: recommendPage },
@@ -899,6 +904,28 @@ async function stopQueuePlan() {
 
 // 小工具那页的三层：格子（grid）、朗读（voice）、排队发送（queue）。
 // 切页签一律回到格子那层；里面各自管自己的退路（返回小工具）。
+// 量出小工具那页实际需要多高。
+//
+// 以前这页写死 300px。2026-10-28 我在关机格子下面加了一行保存提醒（实测 48px），
+// 内容底部跑到 320px，而 iframe 只给 300px：底下被切掉，得滞一下才看得全。
+// 写死高度这种事以后还会因为加一行字而重现，所以改成量真实高度。
+//
+// 量法（已在无头浏览器里对过真实数字）：
+//   内容底部 = 页面位置 + 页面高度
+//   再补上面板自己的下 padding（14px），否则最后一行会贴边被切半个字。
+function measureToolsPageHeight() {
+  const page = toolsPage || document.getElementById('tools-page') || toolsGrid;
+  if (!page) return TOOLS_PANEL_HEIGHT;
+  const rect = page.getBoundingClientRect();
+  const bottom = rect.bottom + (window.scrollY || 0);
+  const panel = document.querySelector('.panel');
+  const padBottom = panel ? (parseFloat(getComputedStyle(panel).paddingBottom) || 0) : 0;
+  const need = Math.ceil(bottom + padBottom + 2);
+  if (!Number.isFinite(need) || need <= 0) return TOOLS_PANEL_HEIGHT;
+  // 不小于原来那个值，也不超上限：只解决「装不下」，不把页面拉高。
+  return Math.max(TOOLS_PANEL_HEIGHT, Math.min(MAX_PANEL_HEIGHT, need));
+}
+
 async function showToolsView(sub = 'grid') {
   const next = sub === 'voice' ? 'voice' : sub === 'queue' ? 'queue' : 'grid';
   toolsSubView = next;
@@ -915,7 +942,10 @@ async function showToolsView(sub = 'grid') {
   }
   if (!inQueue) stopQueuePolling();
   if (next === 'grid') {
-    await setPanelHeight(TOOLS_PANEL_HEIGHT);
+    // 等一帧再量：刚切回格子时 hidden 刚拿掉，布局还没算完，
+    // 这时量到的高度会是 0，会白白把面板调矮。
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    await setPanelHeight(measureToolsPageHeight());
     void refreshShutdownState();
     void refreshBallState();
     return;
@@ -984,7 +1014,9 @@ function renderShutdownTile() {
   shutdownButton.dataset.armed = shutdownArmed ? '1' : '0';
   if (shutdownLabel) shutdownLabel.textContent = shutdownArmed ? '关机中' : '关机';
   if (shutdownHint) {
-    shutdownHint.textContent = shutdownArmed ? '点一下取消，不关了' : '只查 Hana 窗口，别的先存好';
+    // 提示只写「现在这个状态在干什么」，不把保存警告塞进小字里——
+    // 那句话在按钮下面单独有一行（.shutdown-warning），比这里显眼。
+    shutdownHint.textContent = shutdownArmed ? '点一下取消，不关了' : 'Hana 干完才关';
   }
 }
 
@@ -997,6 +1029,11 @@ async function refreshShutdownState() {
     // 读不到就维持现状，别把卡片弄成未知态。
   }
   renderShutdownTile();
+  // 文字长短会变（「关机」/「关机中」、提示语变了），行数一旦多一行就装不下。
+  // 量一次真实高度，不靠写死的数字。只在小工具页还在的时候量，别把别的页坑了。
+  if (!toolsPage?.hidden && toolsSubView === 'grid') {
+    void setPanelHeight(measureToolsPageHeight());
+  }
 }
 
 async function toggleShutdown() {
