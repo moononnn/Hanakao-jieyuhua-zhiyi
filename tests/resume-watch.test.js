@@ -197,7 +197,7 @@ test("卡住候选只报不记：复核通过才 markStuck，未复核前不动�
 test("会话索引：sessionId 和事件里的文件名都能落到同一条", () => {
   const index = buildSessionIndex([
     { sessionId: "sess_abc", path: PATH, title: "解语花为什么弹提醒", agentId: "hanako", agentName: "小花", modified: 1792212000000 },
-    { sessionId: "sess_def", path: "D:/x/agents/xiansheng/sessions/sess_def.jsonl", title: "另一个人", agentName: "星眠", modified: 1792211000 },
+    { sessionId: "sess_def", path: "D:/x/agents/agent-b/sessions/sess_def.jsonl", title: "另一个人", agentName: "伙伴乙", modified: 1792211000 },
   ]);
   assert.equal(lookupSession(index, { sessionId: "sess_abc" }).title, "解语花为什么弹提醒");
   assert.equal(lookupSession(index, { sessionPath: PATH }).sessionId, "sess_abc");

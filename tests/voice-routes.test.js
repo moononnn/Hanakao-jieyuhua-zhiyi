@@ -701,7 +701,7 @@ test("朗读列表按固定目标取，不再永远抓最近活跃的那段", as
     bus: {
       request: async () => ({ sessions: [
         { sessionId: "sess_new", path: "a.jsonl", agentId: "hanako", agentName: "小花", title: "最近活跃", modified: 200 },
-        { sessionId: "sess_pin", path: "b.jsonl", agentId: "xiansheng", agentName: "星眠", title: "被固定的", modified: 10 },
+        { sessionId: "sess_pin", path: "b.jsonl", agentId: "agent-b", agentName: "伙伴乙", title: "被固定的", modified: 10 },
       ] }),
     },
     sessions: {
@@ -712,7 +712,7 @@ test("朗读列表按固定目标取，不再永远抓最近活跃的那段", as
   };
   const pinned = await listSpeakableReplies(sdk, { sessionId: "sess_pin" });
   assert.equal(pinned.session.sessionId, "sess_pin");
-  assert.equal(pinned.session.agentName, "星眠");
+  assert.equal(pinned.session.agentName, "伙伴乙");
   assert.match(pinned.replies[0].text, /固定窗口/, "朗读前预览要用这段的字");
   assert.equal(pinned.replies[0].truncated, false);
 

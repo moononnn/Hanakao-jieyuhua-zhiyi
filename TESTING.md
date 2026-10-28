@@ -92,7 +92,7 @@
 - 范围：`manifest.json`（删 `contributes.ui.contextMenus` 与 `inputStatus` 里的 `read-aloud-status`）、`index.js`（删 `jiegehua.read_aloud` 工具与阶段状态写入整段）、`tests/app-tool.test.js`（删 5 条旧用例，换成 1 条反向断言）。
 - 命令与结果：`node --experimental-vm-modules --test tests/app-tool.test.js tests/voice-routes.test.js tests/voice-reader.test.js tests/suggest-panel-ui.test.js tests/suggest-panel.test.js tests/ball-bridge.test.js tests/voice.test.js` 142 通过 / 0 失败；`node --check index.js`、`node --check ui/assets/suggest-panel.js`、`node --check tests/app-tool.test.js` 与 manifest JSON 解析通过；`git diff --check` 对本轮改动的 `index.js` / `manifest.json` / `ui/assets/suggest-panel.js` 通过。
 - 已知噪声：`tests/app-tool.test.js` 整个文件是 CRLF，对它跑全文件 `git diff --check` 会把每一行都报成尾随空格（既有噪声，非本轮引入）；本轮只核了改动的 `index.js` / `manifest.json` / `ui/assets/suggest-panel.js`。
-- 验证边界：全为本地 mock，删除的是入口声明与工具注册，不涉及真实 TTS。App 已重载，inspect `host=on / agent=on (hanako)`；右键菜单与输入栏状态位在重载后应消失，需玥儿在界面上看一眼确认。manifest 版本、简介、README 未动。
+- 验证边界：全为本地 mock，删除的是入口声明与工具注册，不涉及真实 TTS。App 已重载，inspect `host=on / agent=on (hanako)`；右键菜单与输入栏状态位在重载后应消失，需本人在界面上看一眼确认。manifest 版本、简介、README 未动。
 
 ## 2026-10-21 朗读缓存与播放键状态
 
@@ -107,7 +107,7 @@
 
 - 范围：`ui/suggest-panel.html`、`ui/assets/suggest-panel.js`、`ui/assets/suggest-panel.css`、新增 `ui/assets/voice-reader.js`；`tests/voice-reader.test.js`、`tests/suggest-panel-ui.test.js`、`tests/voice-routes.test.js`。覆盖选中后独立阅读视图、自绘播放器控件、MiniMax 时间戳路由回传、词与原文标点对齐、标点/换行/表情不稀释时间戳覆盖率、缺少或覆盖不足时完整显示原文；并静态核对列表响应序号守卫、阅读区跟随高亮词滚动及音量滑条填充。
 - 命令与结果：`node --experimental-vm-modules --test --test-concurrency=1 tests/voice-reader.test.js tests/suggest-panel-ui.test.js tests/voice-routes.test.js` 31 通过 / 0 失败；分别对 `ui/assets/suggest-panel.js`、`ui/assets/voice-reader.js`、`tests/suggest-panel-ui.test.js`、`tests/voice-reader.test.js`、`tests/voice-routes.test.js` 运行 `node --check`，均通过；本轮源码与测试文件的 `git diff --check` 通过。
-- 验证边界：全部使用本地 mock，没有调用真实 TTS。App 已从当前磁盘代码重载，inspect 为 `host=on / agent=on (hanako)`；朗读页的实际布局与试听仍待玥儿在输入栏面板点验。版本、简介、README 未动。
+- 验证边界：全部使用本地 mock，没有调用真实 TTS。App 已从当前磁盘代码重载，inspect 为 `host=on / agent=on (hanako)`；朗读页的实际布局与试听仍待本人在输入栏面板点验。版本、简介、README 未动。
 
 ## 2026-10-21 朗读入口移入输入框多功能面板
 
@@ -119,7 +119,7 @@
 
 - 范围：`manifest.json` 的聊天选区右键菜单与纯显示朗读状态项；`index.js` 复用朗读工具，在输入栏显示准备、合成、结果阶段；修正 `sessionPath` 到稳定 `sessionId` 的映射（复用 `resolveSessionIdByPath()`）；加入缺失选区提示、状态写入失败/成功/过期跳过日志、音频字节数/时长估计/音频头标记诊断；`tests/app-tool.test.js` 覆盖菜单声明、选区优先与伙伴音色、消息行旧行为、成功/失败状态、空选区、缺失选区及路径映射到不同的稳定会话编号。
 - 命令与结果：`node --experimental-vm-modules --test --test-name-pattern='context-menu|chat selection|read-aloud reports synthesis failure|empty right-click' tests/app-tool.test.js` 5 通过 / 0 失败；`node --check index.js`、`node --check tests/app-tool.test.js` 与 manifest JSON 解析通过。
-- 验证边界：本地 mock 成功/失败响应，未由小花调用真实 TTS API。玥儿 19:20 的实测日志显示三阶段 `inputStatus.set` 均成功，TTS 回 18,132 字节、时长估算 2,267ms；19:48 重测仍无声，但状态三阶段仍全部成功，音频回 17,844 字节、`ID3` 头、时长估算 2,231ms。玥儿确认「语音服务」测试音频的播放器手动点击后能听见。代码对照发现 App 测试播放器使用 Blob URL，而宿主 ChatTranscript UI action helper 使用 `Audio(data:audio/mpeg;base64,...)`，并静默吞掉 `Audio.play()` 拒绝。桌面 `/desktop` 会重定向到 `/pad`；`pad.html` 加载的 CSP 设置 `default-src 'self'`，未声明 `media-src`，因此 `data:` 音频源被回退规则阻止。MDN 说明 `media-src` 缺失时会回退至 `default-src`（https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/media-src）。这是宿主 renderer 策略与播放实现的冲突，仍未捕获控制台 violation；App 本身不改宿主包。新增日志只记阶段、来源、序号、字节数、时长和安全头标记，不记正文、完整路径或原始音频。最新版已重载，inspect `host=on / agent=on`。版本、简介、README 未动。
+- 验证边界：本地 mock 成功/失败响应，未由小花调用真实 TTS API。本人 19:20 的实测日志显示三阶段 `inputStatus.set` 均成功，TTS 回 18,132 字节、时长估算 2,267ms；19:48 重测仍无声，但状态三阶段仍全部成功，音频回 17,844 字节、`ID3` 头、时长估算 2,231ms。本人确认「语音服务」测试音频的播放器手动点击后能听见。代码对照发现 App 测试播放器使用 Blob URL，而宿主 ChatTranscript UI action helper 使用 `Audio(data:audio/mpeg;base64,...)`，并静默吞掉 `Audio.play()` 拒绝。桌面 `/desktop` 会重定向到 `/pad`；`pad.html` 加载的 CSP 设置 `default-src 'self'`，未声明 `media-src`，因此 `data:` 音频源被回退规则阻止。MDN 说明 `media-src` 缺失时会回退至 `default-src`（https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/media-src）。这是宿主 renderer 策略与播放实现的冲突，仍未捕获控制台 violation；App 本身不改宿主包。新增日志只记阶段、来源、序号、字节数、时长和安全头标记，不记正文、完整路径或原始音频。最新版已重载，inspect `host=on / agent=on`。版本、简介、README 未动。
 
 ## 2026-10-20 Ask 卡片回传核验修正
 

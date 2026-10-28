@@ -60,7 +60,7 @@ test("朗读配置归一化：缺字段补默认，越界值夹回范围，掩�
 test("伙伴专属音色优先，其次默认音色", () => {
   const config = { ...readyConfig, defaultVoiceId: "female-yujie", voiceByAgent: { xiaohua: "qiaopi_mengmei" } };
   assert.equal(resolveVoiceIdForAgent(config, "xiaohua"), "qiaopi_mengmei");
-  assert.equal(resolveVoiceIdForAgent(config, "yumi"), "female-yujie");
+  assert.equal(resolveVoiceIdForAgent(config, "agent-other"), "female-yujie");
   assert.equal(voiceIsConfigured(config), true);
   assert.equal(voiceIsConfigured({ ...readyConfig, apiKey: "" }), false);
   assert.ok(voicesForProtocol("chat").some((item) => item.id === "mimo_default"));

@@ -1167,7 +1167,7 @@ test("面板里的排队发送：没会话、没内容都不往下走；状态�
 });
 
 test("关机提示条要挂到 Code 页的会话上（不能只认 session:list 里那几段）", async () => {
-  // 这是 2026-10-28 玥儿实机碰到的：她在 Code 页点了关机，
+  // 这是 2026-10-28 实机碰到的：在 Code 页点了关机，
   // 输入框上方一条提示都没出来，想反悔都看不到入口。
   //
   // 根因：提示条的候选名单只来自 session:list，而宿主给 v2 App 的 session:list
@@ -1208,7 +1208,7 @@ test("关机提示条要挂到 Code 页的会话上（不能只认 session:list 
 });
 
 test("取消关机后，记忆里挂过的横幅必须全部收掉（不能变成收不掉的孤儿）", async () => {
-  // 2026-10-28 玥儿截图：「关机早取消了，某个窗口里还挂着演练中、已开 3:48」。
+  // 2026-10-28 实机截图：「关机早取消了，某个窗口里还挂着演练中、已开 3:48」。
   //
   // 根因：已挂名单（shutdownBannerTexts）只在内存，App 重载就空了，
   // 而宿主上的横幅还在。App 不知道它存在，就不会去收。
@@ -1687,7 +1687,7 @@ test("子代理会话报错不进账本：事件没带路径时也要按 target 
   const SUB_PATH = "D:/hana/agents/hanako/subagent-sessions/direct/case.jsonl";
   const mock = createContext({
     sessionList: [{
-      path: SUB_PATH, sessionId: "sess_sub", agentId: "yuzuki", agentName: "柚月",
+      path: SUB_PATH, sessionId: "sess_sub", agentId: "agent-b", agentName: "伙伴乙",
       kind: "subagent_child", modified: START,
     }],
     storageSeed: { resumeConfig: { enabled: true, autoResume: true, maxConsecutive: 3, stuckTimeoutMs: 30_000 } },

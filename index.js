@@ -1395,7 +1395,7 @@ activeFusionServiceDispose = disposeFusionService;
   // 为什么：这张表原来只在内存里。App 一重载（升级、改代码、宿主重启）它就空了，
   // 可宿主上那几条提示条还在。App 不再知道它们存在，就不会去收，
   // 于是关机早取消了、横幅还一直挂在某个窗口上。
-  // 2026-10-28 玥儿截了个图问「为啥还挂着」，就是这个。
+  // 2026-10-28 实机截图问「为啥还挂着」，就是这个。
   const SHUTDOWN_BANNER_KEY = "shutdownBannerMounted";
   let shutdownBannerRestored = false;
 
@@ -3294,7 +3294,7 @@ activeFusionServiceDispose = disposeFusionService;
     app.get("/sleep-guard/banner-debug", async (c) => {
       // 排查专用：看关机提示条到底挂到了哪几段会话上。
       //
-      // 为什么需要它：2026-10-28 玥儿在 Code 页挂了关机，输入框上方一条提示都没出。
+      // 为什么需要它：2026-10-28 实机在 Code 页挂了关机，输入框上方一条提示都没出。
       // 根因是候选名单只看 session:list（它看不见 Code 页），但当时根本无从查起，
       // 只能读代码推。有了这个接口，下次一条命令就能看出名单里有没有那段会话。
       const candidates = await pickRecentSessionPaths();
