@@ -1,22 +1,57 @@
-# 输入框图片放大 · 安装助手
+﻿# Hana draft image zoom - installer helper.
 #
-# 为什么要有这个文件：知意 App 跑在 Hana 的受限环境里，读不到 ~/.hanako/artifacts
-# （ERR_ACCESS_DENIED）。安装要动 renderer 目录，所以交给这个独立进程去做。
+# WHY THIS FILE IS ASCII ONLY, UTF-8 WITH BOM, CRLF:
+# Windows PowerShell 5.1 (powershell.exe) decodes a BOM-less UTF-8 script with
+# the system ANSI codepage (GBK on zh-CN). A multi-byte character right before a
+# newline can swallow that newline, so the next line silently becomes part of a
+# comment. That destroyed the param block, every call fell through to "status",
+# and the UI reported "installed" while nothing had been written.
+# Rule: keep this file pure ASCII, save it as UTF-8 WITH BOM, keep CRLF endings,
+# and never depend on the param block alone to decide what to do.
 #
-# 用法：powershell -NoProfile -File install-input-zoom.ps1 status
-#       powershell -NoProfile -File install-input-zoom.ps1 install
-#       powershell -NoProfile -File install-input-zoom.ps1 uninstall
-# 输出：一行 JSON 到 stdout，字段 ok / found / installed / code / version / dir。
-param([string]$Action = "status")
+# Usage:
+#   powershell -NoProfile -File install-input-zoom.ps1 status
+#   powershell -NoProfile -File install-input-zoom.ps1 install
+#   powershell -NoProfile -File install-input-zoom.ps1 uninstall
+#
+# Optional switches:
+#   -Root <path>   renderer root to operate on (default: %USERPROFILE%\.hanako\artifacts\renderer)
+#
+# Environment fallbacks (used when a switch did not survive parsing):
+#   HDIZ_ACTION, HDIZ_ROOT
+#
+# Output: one JSON line on stdout.
+param(
+  [string]$Action = '',
+  [string]$Root = ''
+)
 
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $scriptName = 'draft-image-zoom.js'
 $scriptTag = '<script src="modules/draft-image-zoom.js" data-hdiz="1"></script>'
-$root = Join-Path $env:USERPROFILE '.hanako\artifacts\renderer'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $source = Join-Path $here 'input-zoom-script.js'
+
+function Resolve-Action {
+  param([string]$Arg)
+  $value = $Arg
+  if (-not $value) { $value = $env:HDIZ_ACTION }
+  if (-not $value) { $value = 'status' }
+  return $value.Trim().ToLowerInvariant()
+}
+
+function Resolve-Root {
+  param([string]$Arg)
+  $value = $Arg
+  if (-not $value) { $value = $env:HDIZ_ROOT }
+  if (-not $value) { $value = Join-Path $env:USERPROFILE '.hanako\artifacts\renderer' }
+  return $value
+}
+
+$action = Resolve-Action -Arg $Action
+$root = Resolve-Root -Arg $Root
 
 function Get-NewestRenderer {
   if (-not (Test-Path -LiteralPath $root)) { return $null }
@@ -39,7 +74,7 @@ function Write-Result($payload) {
 function Read-Status {
   $dir = Get-NewestRenderer
   if (-not $dir) {
-    return @{ ok = $true; found = $false; installed = $false; code = 'NO_DIR' }
+    return @{ ok = $true; found = $false; installed = $false; scriptPresent = $false; injected = $false; code = 'NO_DIR'; action = $action }
   }
   $index = Join-Path $dir.FullName 'index.html'
   $html = Get-Content -LiteralPath $index -Raw -Encoding UTF8
@@ -55,15 +90,16 @@ function Read-Status {
     version = (Get-Version $dir.Name)
     dir = $dir.FullName
     code = 'OK'
+    action = $action
   }
 }
 
 try {
-  switch ($Action) {
+  switch ($action) {
     'install' {
       $dir = Get-NewestRenderer
-      if (-not $dir) { Write-Result @{ ok = $false; code = 'NO_DIR' } }
-      if (-not (Test-Path -LiteralPath $source)) { Write-Result @{ ok = $false; code = 'NO_SOURCE' } }
+      if (-not $dir) { Write-Result @{ ok = $false; code = 'NO_DIR'; action = $action } }
+      if (-not (Test-Path -LiteralPath $source)) { Write-Result @{ ok = $false; code = 'NO_SOURCE'; action = $action } }
 
       $modulesDir = Join-Path $dir.FullName 'modules'
       if (-not (Test-Path -LiteralPath $modulesDir)) {
@@ -85,13 +121,22 @@ try {
         }
         [System.IO.File]::WriteAllText($index, $html, (New-Object System.Text.UTF8Encoding($false)))
       }
+
+      # Read the files back before claiming success. A false "installed" here is
+      # exactly the bug that made the button lie to the user.
       $status = Read-Status
+      if (-not $status.installed) {
+        $status['ok'] = $false
+        $status['code'] = 'INSTALL_FAILED'
+        $status['message'] = 'script or index.html injection was not found after writing'
+        Write-Result $status
+      }
       $status['justInstalled'] = $true
       Write-Result $status
     }
     'uninstall' {
       $dir = Get-NewestRenderer
-      if (-not $dir) { Write-Result @{ ok = $false; code = 'NO_DIR' } }
+      if (-not $dir) { Write-Result @{ ok = $false; code = 'NO_DIR'; action = $action } }
       $index = Join-Path $dir.FullName 'index.html'
       $html = Get-Content -LiteralPath $index -Raw -Encoding UTF8
       if ($html -match 'data-hdiz="1"') {
@@ -100,12 +145,22 @@ try {
       }
       $scriptPath = Join-Path $dir.FullName ('modules\' + $scriptName)
       if (Test-Path -LiteralPath $scriptPath) { Remove-Item -LiteralPath $scriptPath -Force }
+      $status = Read-Status
+      if ($status.installed) {
+        $status['ok'] = $false
+        $status['code'] = 'UNINSTALL_FAILED'
+        $status['message'] = 'still installed after removal'
+        Write-Result $status
+      }
+      Write-Result $status
+    }
+    'status' {
       Write-Result (Read-Status)
     }
     default {
-      Write-Result (Read-Status)
+      Write-Result @{ ok = $false; code = 'BAD_ACTION'; action = $action; message = "unknown action: $action" }
     }
   }
 } catch {
-  Write-Result @{ ok = $false; code = 'FAILED'; message = (String($_.Exception.Message)).Substring(0, [Math]::Min(160, (String($_.Exception.Message)).Length)) }
+  Write-Result @{ ok = $false; code = 'FAILED'; action = $action; message = (String($_.Exception.Message)).Substring(0, [Math]::Min(160, (String($_.Exception.Message)).Length)) }
 }

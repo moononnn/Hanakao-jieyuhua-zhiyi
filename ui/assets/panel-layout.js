@@ -194,15 +194,22 @@ let zoomInstalled = null;
 const ZOOM_CODE_TEXT = {
   NO_DIR: '还没找到 Hana 的界面目录，先启动一次 Hana 再来。',
   NO_SOURCE: '知意自带的放大脚本没找到，重装一次知意。',
+  INSTALL_FAILED: '写进去了但没验过，这次没算装上，再点一次。',
+  UNINSTALL_FAILED: '没卸干净，再点一次。',
+  BAD_ACTION: '安装助手没认出这次请求，再点一次。',
   FAILED: '这次没读完，点重试再来一次。',
 };
+
+function zoomErrorText(status) {
+  return status?.message || status?.error || ZOOM_CODE_TEXT[status?.code] || '读不到 Hana 的界面目录，稍后再看。';
+}
 
 function paintZoom(status) {
   if (!zoomRow || !zoomAction || !zoomDesc) return;
   if (!status || status.ok !== true) {
     zoomInstalled = null;
     zoomRow.classList.add('is-off');
-    zoomDesc.textContent = status?.error || ZOOM_CODE_TEXT[status?.code] || '读不到 Hana 的界面目录，稍后再看。';
+    zoomDesc.textContent = zoomErrorText(status);
     zoomAction.textContent = '重试';
     return;
   }
@@ -243,9 +250,15 @@ zoomAction?.addEventListener('click', async (event) => {
   try {
     const response = await hana.api.fetch('/input-zoom/install', { method: 'POST' });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没装成，再点一次。');
+    if (!response.ok || payload?.ok !== true) throw new Error(zoomErrorText(payload));
+    // 只认「文件确实在位」这一条：以前这里不看安装结果就把「装好了」写在脸上，
+    // 结果脚本其实什么都没写。现在装不上就照实说装不上。
+    if (payload.installed !== true) {
+      paintZoom(payload);
+      throw new Error(zoomErrorText(payload));
+    }
     paintZoom(payload);
-    zoomDesc.textContent = '装好了。完全退出 Hana 再启动，点输入框里的缩略图就能放大。';
+    zoomDesc.textContent = `装好了。完全退出 Hana 再启动（托盘也要退干净），点输入框里的缩略图就能放大。当前 Hana ${payload.version || ''}。`;
   } catch (error) {
     zoomAction.textContent = previous;
     zoomDesc.textContent = error?.message || '没装成，再点一次。';
