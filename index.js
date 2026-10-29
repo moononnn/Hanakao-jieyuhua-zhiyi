@@ -10,7 +10,7 @@ import { createBallBridge, RECOMMEND_POLL_MS } from "./lib/ball-bridge.js";
 import { createCardAskRegistry } from "./lib/card-handoff.js";
 import { appendAskGuidance } from "./lib/ask-guidance.js";
 // 「活干完帮我关」的守门人：采样在 lib/idle-watch.js，判定在 lib/sleep-guard.js。
-import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setActivityLedger, setRealEnabled } from "./lib/sleep-guard.js";
+import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeBannerText, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setActivityLedger, setRealEnabled } from "./lib/sleep-guard.js";
 // 开发期只读探针：连续拍忙闲快照，肉眼对时间线用。
 // 发布前连同 lib/idle-probe.js 与下面的工具注册一起删掉（见 PENDING_CHANGES），不影响守门功能。
 import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from "./lib/idle-probe.js";
@@ -1449,35 +1449,10 @@ activeFusionServiceDispose = disposeFusionService;
   }
 
   function describeShutdownBanner() {
-    const described = describeSleepGuard();
-    if (described.armed !== true) return "";
-    const state = described.state || {};
-    // 提醒尾巴：挂在输入框上方那条提示条是这个功能最长驻、最显眼的展示位。
-    // 宿主横幅 text 上限 200 字符，所以这句得短，不能把整段警告塞进来。
-    const saveTail = "· 别的内容请先存好";
-    if (state.status === "shutdown-issued") {
-      // 命令已经发出去了。这 30 秒里还能抢回来，所以提示条不能消失。
-      // 以前 armed 不包含这个状态，提示条会直接收掉，人以为没事了。
-      const left = Math.max(0, Math.round((described.abortLeftMs || 0) / 1000));
-      return left > 0
-        ? `关机已发出，约 ${left} 秒后关（还能撤）· 点一下取消`
-        : "关机已发出，可撤销窗口已过";
-    }
-    if (state.status === "countdown") {
-      const left = Math.max(0, Math.round((described.countdownLeftMs || 0) / 1000));
-      return state.dryRun === true
-        ? `${left} 秒后结束演练（不关机） ${saveTail}`
-        : `${left} 秒后关机 ${saveTail}`;
-    }
-    const idleMin = Math.max(1, Math.round((state.idleMs || 0) / 60_000));
-    // 尾巴上那个时间不只是给她看的：内容每次都在变，宿主不会因为“一模一样”跳过重画。
-    const totalSec = Math.max(0, Math.round((described.sinceArmedMs || 0) / 1000));
-    const mm = Math.floor(totalSec / 60);
-    const ss = String(totalSec % 60).padStart(2, "0");
-    if (state.dryRun === true) {
-      return `演练中（不会真关）：Hana 空满 ${idleMin} 分钟走一遍流程 ${saveTail} · 已开 ${mm}:${ss}`;
-    }
-    return `会自动关机：Hana 没动静满 ${idleMin} 分钟就开始倒数 ${saveTail} · 已开 ${mm}:${ss}`;
+    // 文案本体在 lib/sleep-guard.js 的 describeBannerText：那段能单测。
+    // 以前它写在这里，拿不到测试，于是那句「已开 0:03」一直没被发现——
+    // 那是挂上以后过了多久，不是还有多久关。
+    return describeBannerText(describeSleepGuard());
   }
 
   /** 最近用过的几段对话：先查索引，查不到就直接问宿主要名单。 */
@@ -3272,6 +3247,17 @@ activeFusionServiceDispose = disposeFusionService;
         cancelReason: state.cancelReason || null,
         note: state.note || "",
         realEnabled,
+        // 最近一条守门通知到底弹出去没。为 2026-10-29 「挂上了但没提醒」那个坑留的：
+        // 以前通知静默失败时，状态、日志、面板三处都看不出痕迹。
+        lastNotify: state.lastNotifyAt
+          ? {
+            at: state.lastNotifyAt,
+            ok: state.lastNotifyOk === true,
+            code: state.lastNotifyCode || null,
+            detail: state.lastNotifyDetail || null,
+            title: state.lastNotifyTitle || null,
+          }
+          : null,
         dryRun: state.armed ? state.dryRun !== false : null,
         config,
         log: (status.log || []).slice(-8),
@@ -4898,6 +4884,12 @@ activeFusionServiceDispose = disposeFusionService;
         // 实际上只是这一个查询字段没定义。（2026-10-28 演练时撞出来的）
         const realEnabled = await isRealEnabled(sdk).catch(() => null);
         const state = status.state || {};
+        // 演练标记得在下面所有用到它的地方之前取。
+        // 以前它声明在 idleLine 之后，而 idleLine 里就引用了 `dryRun`——
+        // 那里是 TDZ（暂时性死区），走到倒计时/已发出两个分支时会抛
+        // ReferenceError，被外层 catch 包成「守门没弄成」，看起来像功能坏了。
+        // 2026-10-29 顺手修掉。
+        const dryRun = state.dryRun === true;
         const labels = {
           idle: "没在守",
           watching: "正在守",
@@ -4928,7 +4920,6 @@ activeFusionServiceDispose = disposeFusionService;
         // 这一行必须按实际情况报。以前是写死的「现在是真关机」，
         // 演练挂上也会这么写——那就把「演练」说成了「真关机」，
         // 正是最不能错的那种谎。演练时人看到这句话会不敢测，也分不清到底会不会关。
-        const dryRun = state.dryRun === true;
         const switchLine = !status.armed
           ? "没在守门，不会做任何事。"
           : dryRun
@@ -4945,6 +4936,14 @@ activeFusionServiceDispose = disposeFusionService;
           if (entry.kind === "idle") return `${timeText(entry.at)} 全空`;
           return `${timeText(entry.at)} 忙 ${entry.count} 处：${who || "（没拿到明细）"}`;
         });
+        // 通知这一行必须单独说。挂上关机那一刻的弹窗是最后一道防线，
+        // 它没弹出来就等于人不知道已经挂上了。2026-10-29 就是因为这层失败后
+        // 一点痕迹都不留，才白查了半天。
+        const notifyLine = !state.lastNotifyAt
+          ? ""
+          : state.lastNotifyOk === true
+            ? `最近一条通知：已发出（${timeText(state.lastNotifyAt)}「${state.lastNotifyTitle || ""}」）`
+            : `⚠ 最近一条通知没发出去：${state.lastNotifyDetail || state.lastNotifyCode || "原因不明"}（${timeText(state.lastNotifyAt)}）`;
         return {
           content: [{
             type: "text",
@@ -4952,6 +4951,7 @@ activeFusionServiceDispose = disposeFusionService;
               line,
               idleLine,
               switchLine,
+              notifyLine,
               status.armed ? "" : `上一轮结果：${state.result || "无"}`,
               "",
               "最近事件：",

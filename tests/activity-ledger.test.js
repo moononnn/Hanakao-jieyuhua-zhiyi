@@ -79,6 +79,44 @@ test("账本满了先丢最旧的，不会无限长", () => {
   assert.equal(paths.includes("a.jsonl"), false, "最旧的那条被挤掉了");
 });
 
+test("横幅自己刷新不算动静：界面事件不能把「忙」永远顶着", () => {
+  // 2026-10-29 的真实事故：整晚没关机，日志状态一直是「忙 7 处」，
+  // 而会话层最近十分钟零动静、任务层零在跑。
+  // 原因就是知意自己每 12 秒刷一次关机提示条，宿主把它们广播成
+  // input_banner_set 事件，账本把它当成「有动静」刷新静默计时，
+  // 12 秒永远短于 90 秒宽限期，忙就再也没解脱过。
+  const ledger = createActivityLedger({ warmupMs: 0 });
+  const path = "D:/hana/agents/hanako/sessions/s1.jsonl";
+
+  // 先真的忙过一轮，然后收工。
+  ledger.note({ type: "turn_start" }, path, 1_000);
+  ledger.note({ type: "agent_end" }, path, 2_000);
+
+  // 之后 30 分钟里横幅每 12 秒刷一次。
+  for (let t = 3_000; t <= 30 * 60_000; t += 12_000) {
+    ledger.note({ type: "input_banner_set", bannerId: "zhiyi-shutdown" }, path, t);
+    ledger.note({ type: "plugin-v2:jiegehua-zhiyi:banner", kind: "button" }, path, t);
+  }
+
+  const afterGrace = 2_000 + IDLE_GRACE_MS + 1;
+  assert.equal(ledger.snapshot(afterGrace).busyCount, 0, "宽限期一过就该放行，横幅刷新不能续命");
+  assert.equal(ledger.snapshot(30 * 60_000).busyCount, 0, "刷了三十分钟横幅，也该是空的");
+});
+
+test("界面事件也不该凭空建一条账：没干过活的会话不因横幅出现", () => {
+  const ledger = createActivityLedger({ warmupMs: 0 });
+  ledger.note({ type: "input_banner_set" }, "only-banner.jsonl", 1_000);
+  assert.equal(ledger.size, 0, "只挂过横幅的会话不该进账本");
+  assert.equal(ledger.snapshot(1_000).busyCount, 0);
+});
+
+test("界面事件盖不住真正的忙：横幅刷得再勤，真在跑的还是忙", () => {
+  const ledger = createActivityLedger({ warmupMs: 0 });
+  ledger.note({ type: "turn_start" }, CODE_PATH, 1_000);
+  ledger.note({ type: "input_banner_set" }, CODE_PATH, 2_000);
+  assert.equal(ledger.snapshot(2_000).busyCount, 1, "一旦 turn_start 过，界面事件既不加也不减");
+});
+
 test("判定层：会话层读不到也按忙算（不再只看任务层）", () => {
   // 这条是补 2026-10-27 发现的第二个洞：judgeIdle 以前只校验 tasks.readable，
   // session:list 抛错时会话层整体瞎掉，只要任务层空着就往下走到关机。
