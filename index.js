@@ -3028,6 +3028,72 @@ activeFusionServiceDispose = disposeFusionService;
   const resumeTimer = setInterval(() => { void pumpResume(); }, 5_000);
   resumeTimer.unref?.();
   const cardAsks = createCardAskRegistry();
+  const nativeResults = new Map();
+  const nativeResultKey = (sessionPath) => `nativeAskResult:${sessionPath}`;
+  const nativeResultBanner = "zhiyi-native-ask-result";
+  async function showNativeResultNotice(receipt) {
+    try {
+      await sdk.inputBanner.set({ sessionPath: receipt.sessionPath, bannerId: nativeResultBanner,
+        text: receipt.persisted === false
+          ? "原生询问回传未确认，作答已保留在本次运行中；请勿重载。让伙伴找回上一题结果，不要重新作答。"
+          : "原生询问回传未确认，作答已保存。让伙伴找回上一题结果；若会话已经收到，请勿重复执行。",
+        buttons: [] });
+    } catch (error) {
+      await sdk.logger.warn("原生询问结果提示未能展示", { code: error?.code || "BANNER_FAILED" });
+    }
+  }
+  async function saveNativeResult(receipt) {
+    nativeResults.set(receipt.sessionPath, receipt);
+    receipt.persisted = true;
+    try { await sdk.storage.global.set(nativeResultKey(receipt.sessionPath), receipt); }
+    catch (error) {
+      receipt.persisted = false;
+      await sdk.logger.warn("原生询问作答仅保留在本次运行中", { code: error?.code || "SAVE_FAILED" });
+    }
+  }
+  async function clearNativeResult(sessionPath) {
+    // 删除失败不丢掉内存副本；下次仍可取回同一道题，不能因此重新发问。
+    await sdk.storage.global.delete(nativeResultKey(sessionPath));
+    nativeResults.delete(sessionPath);
+    try { await sdk.inputBanner.dismiss({ sessionPath, bannerId: nativeResultBanner }); }
+    catch { /* 答案已处理，提示清理失败不重发答案。 */ }
+  }
+  async function recoverNativeResult(sessionPath, askId = "") {
+    const receipt = nativeResults.get(sessionPath)
+      || await sdk.storage.global.get(nativeResultKey(sessionPath), null);
+    if (!receipt || receipt.sessionPath !== sessionPath || typeof receipt.text !== "string"
+      || (askId && receipt.askId !== askId)) return null;
+    if (receipt.status === "sent") {
+      try { await clearNativeResult(sessionPath); }
+      catch { /* 已确认送达，不因副本清理失败补送答案或阻塞新题。 */ }
+      return null;
+    }
+    if (receipt.status === "sending" && cardAsks.isNative(receipt.askId, sessionPath)) {
+      return { isError: true, content: [{ type: "text", text: "原题已经作答，正在回传结果，没有另发问题；请等待，不要重复发问或发送答案。" }] };
+    }
+    let cleanupNote = "";
+    try { await clearNativeResult(sessionPath); }
+    catch {
+      cleanupNote = "保存副本暂时无法清理，仍保留原题；不要重复执行或另起问题。\n";
+    }
+    cardAsks.finishNative({ askId: receipt.askId, sessionPath });
+    return { content: [{ type: "text", text: `已找回原题的保存回执（${receipt.askId}），本次没有生成新题，也没有重新发送消息。这是同一道题的结果，可能已送达；先核对原任务是否已处理，不得重复执行，更不能把它当成本次新问题的答案。\n${cleanupNote}${receipt.text}` }] };
+  }
+  try {
+    for (const [key, receipt] of Object.entries(await sdk.storage.global.getAll())) {
+      if (key.startsWith("nativeAskResult:") && receipt?.sessionPath && typeof receipt.text === "string") {
+        if (receipt.status === "sent") {
+          try { await clearNativeResult(receipt.sessionPath); } catch { /* 保留送达标记，不重新展示。 */ }
+          continue;
+        }
+        if (receipt.status === "sending") receipt.status = "unconfirmed";
+        nativeResults.set(receipt.sessionPath, receipt);
+        await showNativeResultNotice(receipt);
+      }
+    }
+  } catch (error) {
+    await sdk.logger.warn("原生询问保存结果恢复失败，未自动重发", { code: error?.code || "RESTORE_FAILED" });
+  }
   activeBallManager = ball;
   installBallShutdownHooks();
 
@@ -5021,10 +5087,14 @@ activeFusionServiceDispose = disposeFusionService;
         };
       }
 
-      const pendingChannel = cardAsks.pending(sessionPath);
-      if (pendingChannel) return { isError: true, content: [{ type: "text", text: pendingChannel === "native"
+      const recovered = await recoverNativeResult(sessionPath);
+      if (recovered) return recovered;
+      const pendingCard = cardAsks.pending(sessionPath);
+      if (pendingCard) return { isError: true, content: [{ type: "text", text: pendingCard.status === "native"
         ? "本会话已有原生询问在等待作答（最多十分钟），没有另发传音樱弹窗或 Ask 卡。先处理原题，不要替用户选择。"
-        : "本会话已有 Ask 卡在等待处理，没有另发传音樱弹窗或新卡。先处理原题，不要重复发问。" }] };
+        : pendingCard.status === "prepared"
+          ? `本会话已有待发卡或尚未绑定的问题（askId: ${pendingCard.askId}），不能据此认定卡片已展示。沿用原题完成发卡与绑定；明确失败才回退，不得重调 Ask 改题。`
+          : "本会话已有已绑定 Ask 卡在等待处理，没有另发传音樱弹窗或新卡。先处理原题，不要重复发问。" }] };
 
       try {
         // 球桌面可用：把题送上去，送到就结束这次工具调用，不等作答。
@@ -5116,7 +5186,7 @@ activeFusionServiceDispose = disposeFusionService;
 
   await sdk.tools.register({
     name: CARD_FALLBACK_TOOL,
-    description: "三级回退的最后一级：仅在配方卡展示/绑定明确失败、自检报告渲染失败或用户明确反馈不可用时调用。不是等用户作答的超时机制。已发卡须先写宿主数据 {askId,ready:false,fallback:true} 停用旧卡，并传原 cardInstanceId；接管后旧卡答案永久拒绝。原生询问发出即返回，答案另发原会话，禁止再次发卡或重调 Ask。",
+    description: "三级回退的最后一级：仅在配方卡展示/绑定明确失败、自检报告渲染失败或用户明确反馈不可用时调用。不是等用户作答的超时机制。已发卡须先写宿主数据 {askId,ready:false,fallback:true} 停用旧卡，并传原 cardInstanceId；接管后旧卡答案永久拒绝。登记原生询问后立即返回，答案另发原会话；回传失败保留原题结果，使用原 askId 调本工具可找回保存回执，不会重新提问。禁止再次发卡或重调 Ask 改题。",
     sessionPermission: { readOnly: true },
     parameters: { type: "object", additionalProperties: false, required: ["askId", "failure"], properties: {
       askId: { type: "string" }, cardInstanceId: { type: "string" },
@@ -5124,32 +5194,62 @@ activeFusionServiceDispose = disposeFusionService;
     } },
     execute: async (args) => {
       const sessionPath = args.context?.sessionPath;
+      if (typeof sessionPath !== "string" || !sessionPath.trim()) return { isError: true,
+        content: [{ type: "text", text: "没有原会话地址，没有启动或找回原生询问。" }] };
+      const recovered = await recoverNativeResult(sessionPath, args.askId);
+      if (recovered) return recovered;
       const target = await resolveResumeTarget({ sessionPath });
       if (!target?.sessionId) return { isError: true, content: [{ type: "text", text: "未找到原会话回传地址，没有启动原生询问。" }] };
       const request = cardAsks.beginNative({ askId: args.askId, sessionPath,
         cardId: args.cardInstanceId, failure: args.failure });
       if (!request) return { isError: true, content: [{ type: "text", text: "缺少明确故障、卡片不匹配、题目已处理或已过期，不能重复回退。" }] };
-      // 与球上问答一样异步回传，避免工具 RPC 的 30 秒限制误伤慢慢作答的人。
-      void (async () => {
-        let text;
-        try {
-          const rawAnswer = await sdk.userInteraction.ask({ sessionPath, title: request.title,
-            message: buildAskMessage(request), requestedSchema: buildRequestedSchema(request), timeoutMs: 10 * 60 * 1000 });
-          text = formatAskAnswer(normalizeNativeAskAnswer(rawAnswer, request), request).text;
-        } catch {
-          text = "原生询问未能确认结果，没有收到有效决定；暂停依赖这次选择的操作，不要自动重复发问。";
-        }
-        if (!cardAsks.finishNative({ askId: args.askId, sessionPath })) return;
-        try {
-          // 这是完整问答回执，不走面板草稿的 500 字限长与空白压缩。
-          const delivered = await sdk.bus.request("session:send", { sessionId: target.sessionId,
-            scope: "all", text: `知意原生询问结果\n问题：${request.question}\n${text}`, deliverAs: "steer" }, { timeoutMs: 12_000 });
-          if (delivered?.ok === false || delivered?.accepted === false) throw new Error("SEND_REJECTED");
-        } catch (error) {
-          await sdk.logger.warn("原生询问结果回传失败", { code: error?.code || "SEND_FAILED" });
-        }
-      })();
-      return { content: [{ type: "text", text: "已转入原生询问通道，旧 Ask 卡已失效；现在还没有收到决定。停下等待回传，不要再次发卡或替用户选择。" }] };
+      // 宿主在工具回包前 drain 所有在飞 RPC。微任务或 void async 都不够；
+      // 下一轮 timer 才发起长等待 ask，让当前工具先通过 drain 正常回包。
+      const timer = setTimeout(() => {
+        if (!cardAsks.isNative(args.askId, sessionPath)) return;
+        void (async () => {
+          let text;
+          try {
+            const rawAnswer = await sdk.userInteraction.ask({ sessionPath, title: request.title,
+              message: buildAskMessage(request), requestedSchema: buildRequestedSchema(request), timeoutMs: 10 * 60 * 1000 });
+            text = formatAskAnswer(normalizeNativeAskAnswer(rawAnswer, request), request).text;
+          } catch {
+            text = "原生询问未能确认结果，没有收到有效决定；暂停依赖这次选择的操作，不要自动重复发问。";
+          }
+          if (!cardAsks.isNative(args.askId, sessionPath)) return;
+          // 先留恢复副本再发送。完整回执不走草稿的 500 字限长和空白压缩。
+          const receipt = { askId: args.askId, sessionPath, status: "sending",
+            text: `知意原生询问结果\n问题：${request.question}\n${text}` };
+          await saveNativeResult(receipt);
+          try {
+            const delivered = await sdk.bus.request("session:send", { sessionId: target.sessionId,
+              scope: "all", text: receipt.text, deliverAs: "steer" }, { timeoutMs: 12_000 });
+            if (delivered?.ok === false || delivered?.accepted === false) throw Object.assign(new Error("SEND_REJECTED"), { code: "SEND_REJECTED" });
+            if (delivered?.accepted !== true && delivered?.ok !== true) throw Object.assign(new Error("SEND_UNCONFIRMED"), { code: "SEND_UNCONFIRMED" });
+            // 已收到明确回执，副本清理失败不能再改称“发送未确认”。
+            receipt.status = "sent";
+            try { await sdk.storage.global.set(nativeResultKey(sessionPath), receipt); }
+            catch { /* 尽力留下送达标记，仍继续清理旧副本。 */ }
+            try { await clearNativeResult(sessionPath); }
+            catch (error) {
+              await sdk.logger.warn("原生询问结果已送达，保存副本清理失败，未重发", { code: error?.code || "CLEANUP_FAILED" });
+            }
+          } catch (error) {
+            // session:send 无幂等键。超时也可能已受理，绝不自动重发。
+            receipt.status = error?.code === "SEND_REJECTED" ? "failed" : "unconfirmed";
+            await saveNativeResult(receipt);
+            await showNativeResultNotice(receipt);
+            await sdk.logger.warn("原生询问结果回传未确认，作答已保留且未重发", { code: error?.code || "SEND_FAILED" });
+          } finally {
+            cardAsks.finishNative({ askId: args.askId, sessionPath });
+          }
+        })().catch(async (error) => {
+          try { await sdk.logger.warn("原生询问后台处理失败", { code: error?.code || "NATIVE_FAILED" }); }
+          catch { /* 宿主已停止时不产生未处理拒绝。 */ }
+        });
+      }, 0);
+      timer.unref?.();
+      return { content: [{ type: "text", text: "已登记，正在打开原生询问，旧 Ask 卡已失效；现在还没有收到决定。停下等待回传，不要再次发卡或替用户选择。" }] };
     },
   });
   } else {

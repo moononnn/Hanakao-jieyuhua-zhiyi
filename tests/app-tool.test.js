@@ -6,7 +6,7 @@ import vm from "node:vm";
 import app from "../index.js";
 import { permissionPresentation } from "../ui/assets/permission-status.js";
 
-function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, sessionGetError = null, updateError = null, sendError = null, historyMessages = null, storageError = null } = {}) {
+function createContext({ answer, askError, capabilityError, modelText = '{"mustAsk":false,"reason":""}', storageSeed = {}, sessionList = null, sessionGetError = null, updateError = null, sendError = null, sendReply = { ok: true, accepted: true }, historyMessages = null, storageError = null, deleteError = null } = {}) {
   const registrations = new Map();
   const hooks = new Map();
   const routes = new Map();
@@ -67,7 +67,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
       if (type === "session:send") {
         sendCalls.push(input);
         if (sendError) throw sendError;
-        return { ok: true, accepted: true, sessionId: input?.sessionId };
+        return sendReply;
       }
       return null;
     } },
@@ -156,6 +156,13 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
           const failure = typeof storageError === "function" ? storageError() : storageError;
           if (failure) throw failure;
           storage.set(key, value);
+        },
+        getAll: () => Object.fromEntries(storage),
+        delete: (key) => {
+          const failure = typeof storageError === "function" ? storageError() : storageError;
+          if (failure) throw failure;
+          if (deleteError) throw deleteError;
+          return storage.delete(key);
         },
       },
       agent: () => ({}),
@@ -1465,6 +1472,144 @@ test("no-ball multi-select handoff resolves a validated choice array", async () 
   assert.match(resolved.content[0].text, /- 先做校验\n- 先改界面/);
 });
 
+test("native fallback returns before starting the host's inflight ask RPC", async () => {
+  let answer;
+  const pending = new Promise((resolve) => { answer = resolve; });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: args.context.sessionPath }], answer: pending });
+  const inflight = new Set();
+  const ask = mock.context.userInteraction.ask;
+  mock.context.userInteraction.ask = (request) => {
+    const result = ask(request);
+    inflight.add(result);
+    void result.finally(() => inflight.delete(result));
+    return result;
+  };
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  try {
+    const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+    assert.equal(inflight.size, 0, '宿主此时 drain 必须为空，不能等用户作答才回包');
+    await Promise.allSettled([...inflight]);
+    assert.match(result.content[0].text, /正在打开|正在转入/);
+    await drainAsyncWork();
+    assert.equal(mock.questions.length, 1);
+    assert.equal(inflight.size, 1, '回包之后才允许原生询问等待作答');
+  } finally {
+    answer({ action: 'rejected' });
+    await drainAsyncWork();
+  }
+});
+
+test("native delivery timeout preserves the answer and recovers it without another question or send", async () => {
+  const error = Object.assign(new Error('private transport detail'), { code: 'RPC_TIMEOUT' });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: args.context.sessionPath }], sendError: error });
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const input = { askId: handoff.askId, failure: 'show_failed', context: args.context };
+  await mock.tool('jiegehua_zhiyi_native_fallback').execute(input);
+  await drainAsyncWork();
+  const saved = mock.stored(`nativeAskResult:${args.context.sessionPath}`);
+  assert.match(saved.text, /用户选择：先做校验/);
+  assert.equal(saved.status, 'unconfirmed');
+  assert.equal(mock.sendCalls.length, 1, '发送可能已经受理，模糊超时不能自动重发');
+  assert.ok(mock.inputBannerCalls.some((row) => row.kind === 'set' && /已保存|已保留/.test(row.text)));
+  const recovered = await mock.tool('jiegehua_zhiyi_native_fallback').execute(input);
+  assert.match(recovered.content[0].text, /用户选择：先做校验/);
+  assert.match(recovered.content[0].text, /原题|同一道题/);
+  assert.doesNotMatch(recovered.content[0].text, /private transport detail/);
+  assert.equal(mock.questions.length, 1);
+  assert.equal(mock.sendCalls.length, 1);
+  assert.equal(mock.stored(`nativeAskResult:${args.context.sessionPath}`), undefined);
+});
+
+test("saved native answer survives reload and is recovered before creating a new Ask", async () => {
+  const key = `nativeAskResult:${args.context.sessionPath}`;
+  const saved = { askId: 'ask_saved', sessionPath: args.context.sessionPath, status: 'sending', text: '知意原生询问结果\n问题：先处理哪项？\n用户选择：先做校验' };
+  const mock = createContext({ storageSeed: { [key]: saved } });
+  const tool = await registeredTool(mock);
+  assert.ok(mock.inputBannerCalls.some((row) => row.kind === 'set' && /已保存|已保留/.test(row.text)));
+  const result = await tool.execute(args);
+  assert.match(result.content[0].text, /用户选择：先做校验/);
+  assert.doesNotMatch(result.content[0].text, /知意待发卡/);
+  assert.equal(mock.questions.length, 0);
+  assert.equal(mock.sendCalls.length, 0);
+  assert.equal(mock.stored(key), undefined);
+  assert.match((await tool.execute(args)).content[0].text, /知意待发卡/);
+});
+
+test("a rejected native delivery retains its receipt; wrong IDs and sessions cannot recover it", async () => {
+  const sessionList = [{ sessionId: 'sess_native', path: args.context.sessionPath }, { sessionId: 'sess_other', path: 'sessions/other.jsonl' }];
+  const mock = createContext({ sessionList, sendReply: { ok: false, accepted: false } });
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const fallback = mock.tool('jiegehua_zhiyi_native_fallback');
+  const input = { askId: handoff.askId, failure: 'show_failed', context: args.context };
+  await fallback.execute(input);
+  await drainAsyncWork();
+  assert.equal(mock.stored(`nativeAskResult:${args.context.sessionPath}`).status, 'failed');
+  for (const bad of [{ ...input, askId: 'wrong-ask' }, { ...input, context: { sessionPath: 'sessions/other.jsonl' } }]) {
+    const result = await fallback.execute(bad);
+    assert.equal(result.isError, true);
+    assert.doesNotMatch(result.content[0].text, /用户选择/);
+  }
+  const result = await tool.execute(args);
+  assert.match(result.content[0].text, /用户选择：先做校验/);
+  assert.doesNotMatch(result.content[0].text, /知意待发卡/);
+  assert.equal(mock.questions.length, 1);
+  assert.equal(mock.sendCalls.length, 1);
+});
+
+test("native recovery keeps the in-memory answer when persistence and cleanup are unavailable", async () => {
+  let failStorage = false;
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: args.context.sessionPath }],
+    sendError: Object.assign(new Error('transport unavailable'), { code: 'RPC_TIMEOUT' }),
+    storageError: () => failStorage ? new Error('storage unavailable') : null });
+  const ask = mock.context.userInteraction.ask;
+  mock.context.userInteraction.ask = async (question) => {
+    const result = await ask(question);
+    failStorage = true;
+    return result;
+  };
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const fallback = mock.tool('jiegehua_zhiyi_native_fallback');
+  const input = { askId: handoff.askId, failure: 'show_failed', context: args.context };
+  await fallback.execute(input);
+  await drainAsyncWork();
+  assert.ok(mock.inputBannerCalls.some((row) => row.kind === 'set' && /本次运行|请勿重载/.test(row.text)));
+  const result = await fallback.execute(input);
+  assert.match(result.content[0].text, /用户选择：先做校验/);
+  assert.match(result.content[0].text, /无法清理/);
+  assert.equal(mock.questions.length, 1);
+  assert.equal(mock.sendCalls.length, 1);
+});
+
+test("receipt cleanup failure cannot relabel an acknowledged native answer as undelivered", async () => {
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: args.context.sessionPath }], deleteError: new Error('cleanup unavailable') });
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  await drainAsyncWork();
+  const saved = mock.stored(`nativeAskResult:${args.context.sessionPath}`);
+  assert.equal(saved.status, 'sent');
+  assert.equal(mock.inputBannerCalls.some((row) => row.kind === 'set' && row.bannerId === 'zhiyi-native-ask-result'), false);
+  const next = await tool.execute(args);
+  assert.match(next.content[0].text, /知意待发卡/);
+  assert.doesNotMatch(next.content[0].text, /已找回/);
+  assert.equal(mock.sendCalls.length, 1);
+});
+
+test("pending Ask distinguishes an unshown handoff from a bound card", async () => {
+  const mock = createContext();
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const prepared = await tool.execute(args);
+  assert.match(prepared.content[0].text, /待发|未.*绑定/);
+  assert.match(prepared.content[0].text, new RegExp(handoff.askId));
+  await mock.tool('jiegehua_zhiyi_bind_card').execute({ askId: handoff.askId, cardInstanceId: 'c_pending_ready_1', context: args.context });
+  assert.match((await tool.execute(args)).content[0].text, /已绑定/);
+});
+
 test("card display failure can cancel the pending handoff and use native confirmation", async () => {
   const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }], answer: { action: 'confirmed', value: { choice: '先做校验', note: '先检查 CSV' } } });
   const tool = await registeredTool(mock);
@@ -1479,6 +1624,7 @@ test("card display failure can cancel the pending handoff and use native confirm
   assert.equal(mock.sendCalls.length, 1);
   assert.equal(mock.sendCalls[0].sessionId, 'sess_native');
   assert.match(mock.sendCalls[0].text, /用户选择：先做校验/);
+  assert.equal(mock.stored(`nativeAskResult:${args.context.sessionPath}`), undefined, '确认送达后清除保存的作答');
 });
 
 test("bound but unusable card transfers once without waiting for the native answer", async () => {
@@ -1499,6 +1645,7 @@ test("bound but unusable card transfers once without waiting for the native answ
   assert.equal(duplicateAsk.isError, true);
   assert.match(duplicateAsk.content[0].text, /已有原生询问/);
   assert.equal((await fallback.execute({ ...input, failure: 'render_failed' })).isError, true);
+  await drainAsyncWork();
   assert.equal(mock.questions.length, 1);
   const late = await mock.tool('jiegehua_zhiyi_resolve_card').execute({ ...input, action: 'confirmed', choice: '先做校验' });
   assert.equal(late.isError, true);
@@ -1575,6 +1722,7 @@ function resumeCaseHarness(sessionList) {
 }
 
 async function drainAsyncWork(times = 12) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
   for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
