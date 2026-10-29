@@ -1901,9 +1901,11 @@ class ZhujianBall(QWidget):
     ask_ready = pyqtSignal(object)
     speak_ready = pyqtSignal(object)
 
-    def __init__(self):
+    def __init__(self, bridge=None):
         super().__init__(None)
         self._closed = False
+        # 桥就在这个进程里，窗口状态只能从主线程写给它，App 侧才查得到。
+        self._bridge = bridge
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -2209,6 +2211,35 @@ class ZhujianBall(QWidget):
         if APP_ONLY_ASK and app is not None:
             QTimer.singleShot(0, app.quit)
 
+    def _publish_ball_view(self):
+        """把「球在桌面上看不看得见」刷给桥。
+
+        借已有的提问轮询当心跳（主线程，1.5 秒一次）：不新开定时器，
+        也不从网络线程读 Qt 窗口状态。
+        visible 只说窗口自己，askable 还要过掉全屏挡帘：popupOnTop 关着时
+        前台全屏会把球和面板一起压住，这种时候题发上去也没人看得见。
+        """
+        bridge = getattr(self, "_bridge", None)
+        if bridge is None:
+            return
+        try:
+            visible = bool(self.isVisible())
+            hidden = bool(getattr(self, "_hidden_for_fullscreen", False))
+            try:
+                fullscreen = bool(self._foreground_is_fullscreen())
+            except Exception:
+                fullscreen = False
+            fullscreen_busy = fullscreen and not self.popup_on_top
+            bridge.set_ball_view({
+                "visible": visible,
+                "askable": visible and not hidden and not fullscreen_busy,
+                "hiddenForFullscreen": hidden,
+                "fullscreenBusy": fullscreen_busy,
+            })
+        except Exception:
+            # 采集失败就让上一份记录自然过期，不能因此打断轮询。
+            pass
+
     # ── 提问轮询：网络在线程，界面回主线程 ──
     def _poll_ask_async(self):
         if self._ask_poll_inflight:
@@ -2335,6 +2366,9 @@ class ZhujianBall(QWidget):
         if isinstance(settings, dict):
             self.popup_on_top = settings.get("popupOnTop") is True
             self._apply_theme_from_ui(settings.get("themeMode"))
+        # 轮询每轮回一次主线程，正好拿来当心跳：球看不看得见，此刻就能写进桥里。
+        # 放在 settings 之后，popupOnTop 用的是这一轮刚读到的值。
+        self._publish_ball_view()
         if payload.get("ask_flower_enabled") is not None:
             self._apply_ask_flower_config(payload["ask_flower_enabled"])
         # 冷启动兼底：桥上有提醒就把面板叫出来，并把它自己的续接轮询接上。
@@ -10499,7 +10533,7 @@ def main():
         shutdown_after_parent_ack(control_stdout, control_stdin, bridge)
 
     app.aboutToQuit.connect(close_bridge)
-    ball = ZhujianBall()
+    ball = ZhujianBall(bridge=bridge)
     ball.start_speak_polling()
     if ball.menu is not None:
         ball.menu.start_sleep_polling()

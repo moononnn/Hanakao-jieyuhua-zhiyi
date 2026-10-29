@@ -102,7 +102,8 @@ async function answerCard(selectionMode, { fail = false, minSelections = 1 } = {
     .find(([tag]) => !tag.includes('type="application/json"'))[1];
   const state = { askId: 'combined', selectionMode, minSelections, maxSelections: 2,
     options: [{ label: '同步' }, { label: '加密' }], expiresAt: Date.now() + 60_000 };
-  const elements = new Map(), emitted = [];
+  const elements = new Map(), emitted = [], reports = [];
+  let hostData = { askId: 'combined', ready: true }, changeHandler;
   const document = {
     querySelector: () => ({ textContent: JSON.stringify(state) }),
     getElementById: (id) => { if (!elements.has(id)) elements.set(id, new FakeElement()); return elements.get(id); },
@@ -110,15 +111,37 @@ async function answerCard(selectionMode, { fail = false, minSelections = 1 } = {
   };
   const window = { card: {
     capabilities: async () => ({ ok: true, result: { capabilities: { emit: 'available' } } }),
-    data: { get: async () => ({ ok: true, result: { data: { askId: 'combined', ready: true } } }), onChange() {} },
-    state: { get: async () => ({ ok: true, result: { value: false } }), set: async () => ({ ok: true }) },
+    data: { get: async () => ({ ok: true, result: { data: hostData } }), onChange(handler) { changeHandler = handler; } },
+    state: { get: async () => ({ ok: true, result: { value: false } }), set: async (key, value) => { reports.push({ key, value }); return { ok: true }; } },
     emit: async (...args) => { emitted.push(args); return { ok: !fail }; },
   } };
   new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise });
   await new Promise((resolve) => setImmediate(resolve));
-  return { elements, emitted, buttons: elements.get('options').children,
+  return { elements, emitted, reports, buttons: elements.get('options').children,
+    async hostUpdate(data) { hostData = data; changeHandler?.(); await new Promise((resolve) => setImmediate(resolve)); },
     fill(text) { const note = elements.get('note'); note.value = text; note.listeners.get('input')?.(); } };
 }
+
+test('card reports render readiness quietly and disables itself permanently on native takeover', async () => {
+  const h = await answerCard('single');
+  assert.equal(h.emitted.length, 0, 'render diagnostics must not emit a chat message');
+  assert.ok(h.reports.some(({ key, value }) => key === 'zhiyiRender' && value.status === 'ready' && value.askId === 'combined'));
+  h.buttons[0].click();
+  await h.hostUpdate({ askId: 'combined', ready: false, fallback: true });
+  assert.equal(h.buttons[0].disabled, true);
+  assert.equal(h.elements.get('confirm').disabled, true);
+  assert.match(h.elements.get('status').textContent, /已转入原生询问/);
+  h.elements.get('confirm').click();
+  assert.equal(h.emitted.length, 0);
+  await h.hostUpdate({ askId: 'combined', ready: true });
+  assert.equal(h.buttons[0].disabled, true, 'late ready data cannot reopen a transferred card');
+});
+
+test('another question cannot revoke a healthy card', async () => {
+  const h = await answerCard('single');
+  await h.hostUpdate({ askId: 'other', ready: false, fallback: true });
+  assert.equal(h.buttons[0].disabled, false);
+});
 
 for (const mode of ['single', 'multiple']) {
   test(`${mode} card sends selected options together with supplementary text after confirmation`, async () => {

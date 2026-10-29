@@ -28,6 +28,37 @@ STOP_ACK = "zhiyi-ball-stopping-ack"
 PARENT_ACK_TIMEOUT_SECONDS = 1.0
 
 
+def describe_ball_view(payload, *, now=None, previous=None):
+    """把球主线程报上来的窗口状态整理成一条能查的记录。
+
+    进程活着不等于球在桌面上有位置：全屏挡帘会把球收起来，面板也可能被压住。
+    判定只写在这一处，免得 App 侧和球侧各猜一套。
+
+    payload 由球侧主线程采集：
+      visible             窗口 isVisible()
+      hiddenForFullscreen 被全屏挡帘收起来了
+      fullscreenBusy      前台全屏且 popupOnTop 关着，面板弹不出来
+      askable             球侧算好的综合结论
+
+    返回 None 表示这份 payload 不能用（调用方保留上一份，等它自然过期）。
+    """
+    if not isinstance(payload, dict):
+        return None
+    stamp = time.time() if now is None else float(now)
+    seq = int((previous or {}).get("seq") or 0) + 1
+    visible = payload.get("visible") is True
+    hidden = payload.get("hiddenForFullscreen") is True
+    busy = payload.get("fullscreenBusy") is True
+    return {
+        "visible": visible,
+        "askable": bool(payload.get("askable") is True and visible and not hidden and not busy),
+        "hiddenForFullscreen": hidden,
+        "fullscreenBusy": busy,
+        "updatedAt": stamp,
+        "seq": seq,
+    }
+
+
 def shutdown_after_parent_ack(
     control_stdout,
     control_stdin,
@@ -68,6 +99,16 @@ class AppBallBridge:
         self.token = secrets.token_urlsafe(32)
         self._lock = threading.RLock()
         self._asks = {}
+        # 球在桌面上看不看得见。还没报过的时候一律当成看不见：
+        # 先走配方卡，也强过把题发到一个没人看得见的地方。
+        self._ballView = {
+            "visible": False,
+            "askable": False,
+            "hiddenForFullscreen": False,
+            "fullscreenBusy": False,
+            "updatedAt": 0.0,
+            "seq": 0,
+        }
         # 朗读链路：球不能回调 App，只能轮询这个桥。App 主动下发，球取。
         self._voice = {
             "readOpen": False,
@@ -244,6 +285,22 @@ class AppBallBridge:
                 item["updatedAt"] = now
             if item["status"] != "pending" and now - item["updatedAt"] > ASK_TTL_SECONDS:
                 self._asks.pop(ask_id, None)
+
+    def set_ball_view(self, payload):
+        """球侧主线程每隔一轮把窗口状态写进来。
+
+        写坏了就当没收到，保留上一份等它过期；不从别的线程读 Qt。
+        """
+        with self._lock:
+            record = describe_ball_view(payload, previous=self._ballView)
+            if record is None:
+                return False
+            self._ballView = record
+            return True
+
+    def ball_view(self):
+        with self._lock:
+            return dict(self._ballView)
 
     def _get(self, path, query):
         with self._lock:
@@ -468,7 +525,9 @@ class AppBallBridge:
                     "expiresAt": now + ASK_TTL_SECONDS,
                     "updatedAt": now,
                 }
-                return 200, {"ok": True, "askId": ask_id}
+                # 顺手把球的窗口状态带回去：App 侧靠它决定这道题要不要留
+                # （球在桌上看不见时会立刻撤回，改用配方卡）。
+                return 200, {"ok": True, "askId": ask_id, "view": self.ball_view()}
 
             if path in ("/ask/respond", "/ask/dismiss"):
                 ask_id = body.get("askId")

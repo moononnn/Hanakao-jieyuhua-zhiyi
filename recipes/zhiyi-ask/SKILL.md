@@ -16,12 +16,16 @@ default-enabled: true
 用户在 Ask 卡里选了一个方案，只表示作出该选择，不自动授权执行未明确说明的外部或不可逆操作。作答后先检查是否已有针对具体动作及后果的明确授权；只有缺少授权时，才在普通权限与确认边界内另行确认，不要机械地对每个选择重复发问。已发出的卡片不得重调工具改题；若发现描述有误，停止依赖该选择，向用户说明并另行处理。
 
 1. 调用 `jiegehua_zhiyi_ask` 时必须先按选项语义明确填写 `selectionMode`：答案互斥用 `single`，能同时成立的项目用 `multiple`；它只表示答案形式，不代表执行授权，不能省略。无球返回待发卡后不可重调 Ask 工具修改本题。用 `show_card` 的 `template: "zhiyi-ask/assets/ask.card.html"`，`title` 为该题标题，`state` **完整传入**工具给的 JSON（`askId`、`expiresAt`、问题、选项、`selectionMode`、数量限制、推荐与理由）。不要改写或省略选项。不用 `card.emit` 在页面加载时自动发话。单选、多选均先点选，可填写补充说明，最后点「确认发送」一次提交，不能点选后即时发送。所选项与补充说明必须同时回传，填写说明不替代所选项；不选任何项、只写自己的答案也允许提交。有选项时仍须满足该题数量限制，不能靠填写说明绕过。
-2. 从 `show_card` 返回值取得宿主铸造的 `cardInstanceId` 与 `cardEntityId`。先调用 `jiegehua_zhiyi_bind_card({askId,cardInstanceId})`；成功后调用 `update_card_data({cardEntityId, data:{askId,ready:true}})`；拿到当前会话编号时一并带上 `homeSessionId`。卡片只有收到这个宿主数据才开放点击。二者任何一步失败，不要声称已完成发问；若尚未绑定可调用 `jiegehua_zhiyi_native_fallback({askId})`，已绑定但未开卡则明确告诉用户当前卡不能作答，避免重复弹问。
+2. 从 `show_card` 返回值取得宿主铸造的 `cardInstanceId` 与 `cardEntityId`。先调用 `jiegehua_zhiyi_bind_card({askId,cardInstanceId})`；成功后调用 `update_card_data({cardEntityId, data:{askId,ready:true}})`；拿到当前会话编号时一并带上 `homeSessionId`。卡片只有收到这个宿主数据才开放点击。二者任何一步失败，不要声称已完成发问。三级顺序固定为：传音樱桌面可用时弹窗；不可用时本配方卡；配方卡明确不可用时才原生询问。不要同时启动两个通道，也不要重调 Ask 另起一题。
+
+   **卡片故障回退**：`show_card` 明确失败用 `failure:"show_failed"`；绑定明确失败用 `"bind_failed"`；卡片自检 `zhiyiRender.status === "failed"` 用 `"render_failed"`；用户明确反馈卡片不能用用 `"user_reported_unusable"`。已绑定的卡也允许回退，但必须传原 `cardInstanceId`。对已有 `cardEntityId` 先调用 `update_card_data({cardEntityId,data:{askId,ready:false,fallback:true}})` 停用旧卡，再调用 `jiegehua_zhiyi_native_fallback({askId,cardInstanceId,failure})`。该工具接管后旧卡答案会被拒绝，原生询问结果另开新回合回到原会话，工具返回不等于已有决定。若宿主数据写入失败，要说明旧卡未能在视觉上停用，不能声称只剩一个界面；服务端接管仍会拒绝旧卡提交。原生询问失败、关闭或超时都不算同意，不得自动重复提问。
+
+   **故障判定边界**：卡片没有进入视口时宿主可能根本不启动它；`ui_inspect` 不在 open instances、`frame not ready` 单次结果、缺少自检状态、`awaiting_binding`、用户尚未作答或等了几秒，均不能单独判为渲染失败。可用 `ui_action.read_state` 查看 `zhiyiRender` 的 `askId/status/error`；`ready` 表示该卡已完成自身初始化并拿到绑定数据，不证明用户已经看见或选择。自检不靠 `emit` 自动唤醒伙伴。无法判断时说明状态，等用户反馈，不凭计时器乱弹原生框。
 
    **注意**：`show_card` 不返回 `sessionId`，`homeSessionId` 是可选的（本目录的 `assets/ask.card.html` 已改成不把它当必填）。模板与全局安装的那份是两份文件，改一份不同步另一份；已发出的旧卡不热更新，修完必须发新卡验证。
    - 模板保留对字符串数值、`options:{item:[...]}` 和缺失 `state.title` 的兼容。这些形状曾在生成物中出现，不能由个别样本外推为宿主必然这样序列化；调用时仍完整传入工具原始 JSON，选项保持数组、数值保持数值，不主动套包装或漏选项。
    - 2026-10-18 撤回当日未验收的 280/170px 限高滚动布局，恢复原平铺外观；兼容和回传逻辑不回滚。长内容裁切与聊天流滑动仍须新卡实机验证，不能把恢复排版当作它们已修复的证据。
-   - 更新已安装 Recipe 走扩展管理工具与界面确认，不直接编辑全局托管文件；源码模板改变后，须重新安装验证，新旧卡不热更新。
+   - 更新已安装 Recipe 走平台管理工具或正式 Recipe 资源入口，不直接编辑全局托管文件；资源保存不等于旧卡更新，须用新卡验证，新旧卡不热更新。
 3. 发完卡先停下，**不要自己选，也不要继续依赖这次选择的任务**。给用户一句简短说明即可。
    **发卡到收到事件之间，绝不重载知意 App、不重装 Recipe、不重启宿主。** 待发卡表（`lib/card-handoff.js` 里的内存 `Map`）只活在 App 进程里，一重载就清空，用户点完回来的选择会被 `resolve_card` 按「已过期或所属会话不符」拒掉——用户白点一次，链路也查不出真相。确需清理挂着的旧题，走 `jiegehua_zhiyi_native_fallback` 释放状态，不要用重载当清题手段。
 4. 收到 `zhiyi_ask_answer` 事件时，事件本身就是宿主投递的真实用户点击，来源可信：把事件 `askId`、`action`、`choice`（单选为字符串，多选为选项字符串数组）、`note` 和事件里的 `cardInstanceId` 原样传给 `jiegehua_zhiyi_resolve_card`。**`resolve_card` 是本次选择是否有效的唯一裁判**：它自己核 askId 是否绑在这张卡上、是否本会话、是否过期或重复、选项是否合法，只有它回报有效选择，才按用户选择续上此前任务。

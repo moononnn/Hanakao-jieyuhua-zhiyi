@@ -82,10 +82,11 @@
     });
     $('options').append(button);buttons.push(button);
   });
-  let home='',ready=false,sent=false;
+  let home='',ready=false,sent=false,transferred=false;
+  function renderStatus(status,error=''){try{void Promise.resolve(window.card?.state.set('zhiyiRender',{askId:snapshot.askId,status,error})).catch(()=>{})}catch{}}
   const status=$('status'),note=$('note'),confirm=$('confirm'),selectionHint=$('selection-hint');
   const controls=[...buttons,confirm,$('decline'),note];
-  function isUsable(){return ready&&!sent&&Number.isFinite(expiresAt)&&Date.now()<expiresAt}
+  function isUsable(){return ready&&!sent&&!transferred&&Number.isFinite(expiresAt)&&Date.now()<expiresAt}
   function updateSelection(){
     buttons.forEach((button,index)=>{
       const checked=selected.has(index);
@@ -103,10 +104,11 @@
   }
   function refresh(){
     const expired=!Number.isFinite(expiresAt)||Date.now()>=expiresAt;
-    const usable=ready&&!sent&&!expired;
+    const usable=ready&&!sent&&!transferred&&!expired;
     controls.forEach(item=>item.disabled=!usable);
     updateSelection();
-    if(expired)status.textContent='这道题已过期，请在对话里重新发问。';
+    if(transferred)status.textContent='已转入原生询问，请在输入框上方作答。';
+    else if(expired)status.textContent='这道题已过期，请在对话里重新发问。';
     else if(sent)status.textContent='已送达原对话，等伙伴接话。';
     else if(!ready)status.textContent='正在与原对话绑定，暂不能作答。';
     else status.textContent='选好后点「确认发送」；关闭卡片不算作答。';
@@ -129,12 +131,14 @@
   });
   note.addEventListener('input',updateSelection);
   $('decline').addEventListener('click',()=>void send('rejected',''));
-  function applyData(data){if(!data||data.askId!==snapshot.askId||!yes(data.ready))return;
+  function applyData(data){
+    if(data&&yes(data.fallback)&&data.askId===snapshot.askId){transferred=true;ready=false;renderStatus('fallback');refresh();return}
+    if(transferred||!data||data.askId!==snapshot.askId||!yes(data.ready))return;
     // homeSessionId 是可选的：卡片就嵌在原对话里，emit 不带目标时会发给嵌它的那个对话。
     // 旧版把它当成必填，调用方一旦没传就永远不解锁，所有选项 disabled——整张卡点不动。
     // 现在：有就用来定向，没有就交给默认路由。
     home=typeof data.homeSessionId==='string'?data.homeSessionId:'';
-    ready=true;refresh()}
+    ready=true;renderStatus('ready');refresh()}
   // 绑定数据是宿主后写的，卡片启动得早还是晚全看运气：卡若先启动，它读到的是空数据，
   // 之后宿主写入也不会把它推过来（onChange 未必带完整数据），卡片就永远停在「正在绑定」。
   // 所以每次收到变化提示都自己重新拉一次，拉到 ready 为止；启动时也主动拉。
@@ -150,8 +154,9 @@
   async function markSent(){try{await window.card.state.set('zhiyiAnswerSent',true)}catch{}}
   refresh();
   if(!window.card){status.textContent='这张卡需要 Hana 才能送回选择。';return}
+  renderStatus('awaiting_binding');
   Promise.all([window.card.capabilities(),window.card.data.get(),window.card.state.get('zhiyiAnswerSent')]).then(([caps,doc,previous])=>{
-    if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){status.textContent='卡片回传不可用；请在对话里说明。';return}
+    if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){renderStatus('failed','host_unavailable');status.textContent='卡片回传不可用；请在对话里说明。';return}
     sent=previous?.ok===true&&previous.result?.value===true;
     applyData(doc.result?.data);
     window.card.data.onChange(()=>{void pullData()});
@@ -159,11 +164,11 @@
     if(!ready){
       let tries=0;
       const timer=setInterval(()=>{
-        if(ready||++tries>40){clearInterval(timer);return}
+        if(ready||transferred||++tries>40){clearInterval(timer);return}
         void pullData();
       },500);
     }
-  }).catch(()=>{status.textContent='卡片连接失败，请在对话里说明。'});
+  }).catch(()=>{renderStatus('failed','connection_failed');status.textContent='卡片连接失败，请在对话里说明。'});
 })();
 </script>
 </body>

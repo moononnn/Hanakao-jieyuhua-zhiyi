@@ -57,6 +57,35 @@ test('expiry, cancellation and restart fail closed; no default choice', () => {
   assert.equal(createCardAskRegistry().resolve({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId, choice: '先做 A' }).ok, false);
 });
 
+test('native takeover needs a concrete failure and the bound card identity; old answers are refused', () => {
+  const { registry, advance } = fixture();
+  const pending = registry.prepare(request, 'sessions/a.jsonl');
+  registry.bind({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId });
+  const input = { askId: pending.askId, sessionPath: 'sessions/a.jsonl', cardId };
+  assert.equal(registry.beginNative({ ...input, failure: 'timeout' }), null);
+  assert.equal(registry.beginNative({ ...input, sessionPath: 'sessions/b.jsonl', failure: 'render_failed' }), null);
+  assert.equal(registry.beginNative({ ...input, cardId: 'c_wrong_abcd', failure: 'render_failed' }), null);
+  assert.deepEqual(registry.beginNative({ ...input, failure: 'render_failed' }), request);
+  assert.equal(registry.beginNative({ ...input, failure: 'render_failed' }), null);
+  assert.equal(registry.resolve({ ...input, choice: '先做 A' }).ok, false);
+  advance(600_001);
+  assert.throws(() => registry.prepare(request, 'sessions/a.jsonl'), /已有一题/);
+  assert.equal(registry.finishNative(input), true);
+  assert.equal(registry.finishNative(input), false);
+  assert.equal(registry.resolve({ ...input, choice: '先做 A' }).ok, false);
+  assert.ok(registry.prepare(request, 'sessions/a.jsonl').askId);
+});
+
+test('unbound display failure can transfer, but expired or answered cards cannot', () => {
+  const { registry, advance } = fixture();
+  const pending = registry.prepare(request, 'sessions/a.jsonl');
+  assert.deepEqual(registry.beginNative({ askId: pending.askId, sessionPath: 'sessions/a.jsonl', failure: 'show_failed' }), request);
+  registry.finishNative({ askId: pending.askId, sessionPath: 'sessions/a.jsonl' });
+  const next = registry.prepare(request, 'sessions/a.jsonl');
+  advance(600_000);
+  assert.equal(registry.beginNative({ askId: next.askId, sessionPath: 'sessions/a.jsonl', failure: 'show_failed' }), null);
+});
+
 test('custom answer is distinct; rejection and duplicate never authorize a choice', () => {
   const { registry } = fixture();
   const first = registry.prepare(request, 'sessions/a.jsonl');

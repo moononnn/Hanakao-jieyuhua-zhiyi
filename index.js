@@ -5021,8 +5021,13 @@ activeFusionServiceDispose = disposeFusionService;
         };
       }
 
+      const pendingChannel = cardAsks.pending(sessionPath);
+      if (pendingChannel) return { isError: true, content: [{ type: "text", text: pendingChannel === "native"
+        ? "本会话已有原生询问在等待作答（最多十分钟），没有另发传音樱弹窗或 Ask 卡。先处理原题，不要替用户选择。"
+        : "本会话已有 Ask 卡在等待处理，没有另发传音樱弹窗或新卡。先处理原题，不要重复发问。" }] };
+
       try {
-        // 球开着：把题送上去，送到就结束这次工具调用，不等作答。
+        // 球桌面可用：把题送上去，送到就结束这次工具调用，不等作答。
         // 以前这里一直等到用户点完（最长十分钟），而宿主给工具执行的 RPC 只有 30 秒，
         // 两头尺度对不上，用户稍一犹豫工具就先报 timed out，球上的题还挂着。
         // 现在答案由 ballAsks 轮询接收，作为一条新消息补回这段对话，那边会再开一轮接着做。
@@ -5033,6 +5038,9 @@ activeFusionServiceDispose = disposeFusionService;
             sessionTitle: target?.title || "",
             agentName: target?.agentName || "",
           });
+          if (sent?.unavailable) {
+            await sdk.logger.info("Ask 改用配方卡：传音樱在桌面上不可用", { reason: sent.reason });
+          }
           if (sent?.busy) {
             return {
               isError: true,
@@ -5053,10 +5061,10 @@ activeFusionServiceDispose = disposeFusionService;
             };
           }
         }
-        // 没有球（或刚启动失败、或正在退出）：走配方卡交接，跟以前一样。
+        // 球未运行、不可见或无法展示提问：交给配方卡，不同时启动原生询问。
         const handoff = cardAsks.prepare(request, sessionPath);
         return {
-          content: [{ type: "text", text: `知意待发卡（还没有收到用户决定；不要继续依赖这个选择的操作）：${JSON.stringify(handoff)}\n下一步用已安装的知意 Ask 配方 show_card 发到当前会话，拿到宿主卡片实例编号后调用 ${CARD_BIND_TOOL}。若配方不可用，调用 ${CARD_FALLBACK_TOOL} 回退原生确认卡，绝不能假称已发卡。` }],
+          content: [{ type: "text", text: `知意待发卡（还没有收到用户决定；不要继续依赖这个选择的操作）：${JSON.stringify(handoff)}\n下一步用已安装的知意 Ask 配方 show_card 发到当前会话，拿到宿主卡片实例编号后调用 ${CARD_BIND_TOOL}，再写宿主数据 ready:true。只有 show_card/绑定明确失败、卡片自检报告失败，或用户明确反馈卡不能用时，才调用 ${CARD_FALLBACK_TOOL}，携带 failure 及已发卡的 cardInstanceId；回退前对该卡写 {askId,ready:false,fallback:true} 停用旧入口。没出现在 open instances、尚未加载、用户尚未作答均不能作为渲染失败。已能作答的卡禁止重复回退，不能重调 Ask 另起一题。` }],
         };
       } catch (error) {
         await sdk.logger.warn("Ask interaction failed", {
@@ -5064,7 +5072,9 @@ activeFusionServiceDispose = disposeFusionService;
         });
         return {
           isError: true,
-          content: [{ type: "text", text: "这次 Ask 的回答结果无法确认。不要把工具错误当作用户决定，也不要继续依赖该选择执行；向用户说明状态未确认，并等待明确处理。" }],
+          content: [{ type: "text", text: error?.code === "ASK_WITHDRAW_UNCONFIRMED"
+            ? "传音樱上的题未能确认已撤回，这次没有另发卡片。不要另开配方卡或原生询问，避免重复提问；先说明状态未确认，等待处理。"
+            : "这次 Ask 的回答结果无法确认。不要把工具错误当作用户决定，也不要继续依赖该选择执行；向用户说明状态未确认，并等待明确处理。" }],
         };
       }
     },
@@ -5106,22 +5116,40 @@ activeFusionServiceDispose = disposeFusionService;
 
   await sdk.tools.register({
     name: CARD_FALLBACK_TOOL,
-    description: "知意配方卡无法展示或绑定时，释放待发卡状态并在同一原会话使用 Hana 原生确认卡。卡片已绑定时禁止调用。",
+    description: "三级回退的最后一级：仅在配方卡展示/绑定明确失败、自检报告渲染失败或用户明确反馈不可用时调用。不是等用户作答的超时机制。已发卡须先写宿主数据 {askId,ready:false,fallback:true} 停用旧卡，并传原 cardInstanceId；接管后旧卡答案永久拒绝。原生询问发出即返回，答案另发原会话，禁止再次发卡或重调 Ask。",
     sessionPermission: { readOnly: true },
-    parameters: { type: "object", additionalProperties: false, required: ["askId"], properties: { askId: { type: "string" } } },
+    parameters: { type: "object", additionalProperties: false, required: ["askId", "failure"], properties: {
+      askId: { type: "string" }, cardInstanceId: { type: "string" },
+      failure: { type: "string", enum: ["show_failed", "bind_failed", "render_failed", "user_reported_unusable"] },
+    } },
     execute: async (args) => {
       const sessionPath = args.context?.sessionPath;
-      const request = cardAsks.cancel({ askId: args.askId, sessionPath });
-      if (!request) return { isError: true, content: [{ type: "text", text: "这道题已经展示、过期或不属于本会话，不能重复回退。" }] };
-      try {
-        const rawAnswer = await sdk.userInteraction.ask({ sessionPath, title: request.title,
-          message: buildAskMessage(request), requestedSchema: buildRequestedSchema(request) });
-        const answer = normalizeNativeAskAnswer(rawAnswer, request);
-        const result = formatAskAnswer(answer, request);
-        return { isError: result.isError, content: [{ type: "text", text: result.text }] };
-      } catch {
-        return { isError: true, content: [{ type: "text", text: "原生确认卡也未能确认结果；不要把这次失败当作用户决定。" }] };
-      }
+      const target = await resolveResumeTarget({ sessionPath });
+      if (!target?.sessionId) return { isError: true, content: [{ type: "text", text: "未找到原会话回传地址，没有启动原生询问。" }] };
+      const request = cardAsks.beginNative({ askId: args.askId, sessionPath,
+        cardId: args.cardInstanceId, failure: args.failure });
+      if (!request) return { isError: true, content: [{ type: "text", text: "缺少明确故障、卡片不匹配、题目已处理或已过期，不能重复回退。" }] };
+      // 与球上问答一样异步回传，避免工具 RPC 的 30 秒限制误伤慢慢作答的人。
+      void (async () => {
+        let text;
+        try {
+          const rawAnswer = await sdk.userInteraction.ask({ sessionPath, title: request.title,
+            message: buildAskMessage(request), requestedSchema: buildRequestedSchema(request), timeoutMs: 10 * 60 * 1000 });
+          text = formatAskAnswer(normalizeNativeAskAnswer(rawAnswer, request), request).text;
+        } catch {
+          text = "原生询问未能确认结果，没有收到有效决定；暂停依赖这次选择的操作，不要自动重复发问。";
+        }
+        if (!cardAsks.finishNative({ askId: args.askId, sessionPath })) return;
+        try {
+          // 这是完整问答回执，不走面板草稿的 500 字限长与空白压缩。
+          const delivered = await sdk.bus.request("session:send", { sessionId: target.sessionId,
+            scope: "all", text: `知意原生询问结果\n问题：${request.question}\n${text}`, deliverAs: "steer" }, { timeoutMs: 12_000 });
+          if (delivered?.ok === false || delivered?.accepted === false) throw new Error("SEND_REJECTED");
+        } catch (error) {
+          await sdk.logger.warn("原生询问结果回传失败", { code: error?.code || "SEND_FAILED" });
+        }
+      })();
+      return { content: [{ type: "text", text: "已转入原生询问通道，旧 Ask 卡已失效；现在还没有收到决定。停下等待回传，不要再次发卡或替用户选择。" }] };
     },
   });
   } else {

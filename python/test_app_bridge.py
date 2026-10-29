@@ -6,7 +6,7 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from app_bridge import AppBallBridge, STOP_ACK, shutdown_after_parent_ack
+from app_bridge import AppBallBridge, STOP_ACK, describe_ball_view, shutdown_after_parent_ack
 
 
 class AppBallBridgeTests(unittest.TestCase):
@@ -41,6 +41,49 @@ class AppBallBridgeTests(unittest.TestCase):
         self.assertEqual(pending["pending"][0]["sessionTitle"], "来源对话标题")
         self.assertEqual(pending["pending"][0]["agentName"], "测试伙伴")
         self.assertEqual(pending["pending"][0]["header"], request["title"])
+
+    def test_enqueue_carries_the_ball_view_so_the_app_can_withdraw(self):
+        """球还没报过窗口状态时，回包必须说「看不见」：App 侧据此改走配方卡。"""
+        status, payload = self.bridge._post("/ask/enqueue", self.request("a-view"))
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            payload["view"],
+            {
+                "visible": False,
+                "askable": False,
+                "hiddenForFullscreen": False,
+                "fullscreenBusy": False,
+                "updatedAt": 0.0,
+                "seq": 0,
+            },
+        )
+
+    def test_ball_view_reaches_the_enqueue_reply(self):
+        self.assertTrue(self.bridge.set_ball_view({"visible": True, "askable": True}))
+        status, payload = self.bridge._post("/ask/enqueue", self.request("a-view-2"))
+        self.assertEqual(status, 200)
+        view = payload["view"]
+        self.assertTrue(view["visible"])
+        self.assertTrue(view["askable"])
+        self.assertGreater(view["updatedAt"], 0)
+        self.assertEqual(view["seq"], 1)
+
+    def test_ball_view_only_counts_when_the_window_is_really_usable(self):
+        for payload in (
+            {"visible": False, "askable": True},
+            {"visible": True, "askable": True, "hiddenForFullscreen": True},
+            {"visible": True, "askable": True, "fullscreenBusy": True},
+        ):
+            self.assertFalse(describe_ball_view(payload, now=10.0)["askable"], payload)
+        self.assertTrue(describe_ball_view({"visible": True, "askable": True}, now=10.0)["askable"])
+        self.assertEqual(describe_ball_view({"visible": True, "askable": True}, now=10.0)["updatedAt"], 10.0)
+        self.assertIsNone(describe_ball_view("bad", now=10.0))
+
+    def test_bad_ball_view_keeps_the_previous_record(self):
+        self.assertTrue(self.bridge.set_ball_view({"visible": True, "askable": True}))
+        before = self.bridge.ball_view()
+        self.assertFalse(self.bridge.set_ball_view("nonsense"))
+        self.assertEqual(self.bridge.ball_view(), before)
 
     def test_enqueue_without_session_id_still_works_but_leaves_it_empty(self):
         status, _ = self.bridge._post("/ask/enqueue", self.request())

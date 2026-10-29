@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { createBallManager } from "../lib/ball.js";
+import { createBallManager, ballViewStatus } from "../lib/ball.js";
 
 class FakeChild extends EventEmitter {
   constructor(killDelayMs = 0) {
@@ -114,6 +114,9 @@ const ask = {
     { label: "重写界面", detail: "使用 App 原生 UI" },
   ],
 };
+
+// 桥回包里必须带一份新鲜的窗口状态：缺了它 App 会当场把题撤回（见 enqueueAsk）。
+const visibleView = () => ({ visible: true, askable: true, updatedAt: Date.now() / 1000 });
 
 test("starts the copied ball with App-owned data and waits for its ready handshake", async () => {
   const { manager, spawned } = createHarness(async () => response({ ok: true }));
@@ -249,7 +252,7 @@ test("sends the question to the ball and returns an id without waiting for an an
     assert.equal(init.headers["X-Zhiyi-Token"], "x".repeat(48));
     if (parsed.pathname === "/ask/enqueue") {
       posted = JSON.parse(init.body);
-      return response({ ok: true, askId: posted.askId });
+      return response({ ok: true, askId: posted.askId, view: visibleView() });
     }
     throw new Error(`unexpected route: ${parsed.pathname}`);
   });
@@ -274,7 +277,7 @@ test("forwards multiple-selection mode and reads the ball selection array back",
     const parsed = new URL(url);
     if (parsed.pathname === "/ask/enqueue") {
       posted = JSON.parse(init.body);
-      return response({ ok: true, askId: posted.askId });
+      return response({ ok: true, askId: posted.askId, view: visibleView() });
     }
     if (parsed.pathname === "/ask/result") {
       return response({ ok: true, status: "answered", answer: { action: "confirmed", value: { choice: ["直接迁移", "重写界面"] } } });
@@ -295,7 +298,7 @@ test("reads pending first, then the answer once the user picks", async () => {
   let answered = false;
   const { manager } = createHarness(async (url) => {
     const parsed = new URL(url);
-    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted" });
+    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted", view: visibleView() });
     if (parsed.pathname === "/ask/result") {
       return answered
         ? response({ ok: true, status: "answered", answer: { action: "confirmed", value: { choice: "直接迁移" } } })
@@ -316,7 +319,7 @@ test("reads pending first, then the answer once the user picks", async () => {
 test("closing the ball turns a pending question into aborted, never consent", async () => {
   const { manager } = createHarness(async (url) => {
     const parsed = new URL(url);
-    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted" });
+    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted", view: visibleView() });
     if (parsed.pathname === "/ask/result") return response({ ok: true, status: "pending" });
     throw new Error(`unexpected route: ${parsed.pathname}`);
   });
@@ -331,7 +334,7 @@ test("closing the ball turns a pending question into aborted, never consent", as
 test("direct PyQt close handshake also turns a pending question into aborted", async () => {
   const { manager, spawned } = createHarness((url) => {
     const parsed = new URL(url);
-    if (parsed.pathname === "/ask/enqueue") return Promise.resolve(response({ ok: true, askId: "accepted" }));
+    if (parsed.pathname === "/ask/enqueue") return Promise.resolve(response({ ok: true, askId: "accepted", view: visibleView() }));
     if (parsed.pathname === "/ask/result") return Promise.resolve(response({ ok: true, status: "pending" }));
     throw new Error(`unexpected route: ${parsed.pathname}`);
   });
@@ -358,7 +361,7 @@ test("direct PyQt close handshake also turns a pending question into aborted", a
 test("a bridge transport error while the ball is alive stays a failure, not consent", async () => {
   const { manager } = createHarness(async (url) => {
     const parsed = new URL(url);
-    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted" });
+    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "accepted", view: visibleView() });
     if (parsed.pathname === "/ask/result") throw new Error("temporary bridge failure");
     throw new Error(`unexpected route: ${parsed.pathname}`);
   });
@@ -426,4 +429,152 @@ test("球退出时分得清三种情况：用户关、App 卸载、意外", asyn
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(exits.at(-1).intentional, "unexpected");
   assert.equal(exits.at(-1).code, 9);
+});
+
+test("球的窗口状态：过期、隐藏、被全屏压住都不算可用", () => {
+  const now = 1_700_000_000_000;
+  const fresh = (patch) => ({ visible: true, askable: true, updatedAt: now / 1000, ...patch });
+
+  assert.deepEqual(ballViewStatus(fresh(), now), { usable: true, reason: "ok" });
+  assert.equal(ballViewStatus(fresh({ visible: false }), now).reason, "hidden");
+  assert.equal(ballViewStatus(fresh({ askable: false }), now).reason, "blocked");
+  assert.equal(ballViewStatus(fresh({ updatedAt: (now - 60_000) / 1000 }), now).reason, "stale");
+  // 时间戳跑到未来一样不可信：时钟被改过就不谈新鲜度。
+  assert.equal(ballViewStatus(fresh({ updatedAt: (now + 60_000) / 1000 }), now).reason, "stale");
+  assert.equal(ballViewStatus(undefined, now).reason, "not-reported");
+  assert.equal(ballViewStatus(undefined, now).usable, false, "旧版桥没报状态，不能当可用");
+});
+
+test("球活着但桌面上看不见时，题立刻撤回，交给配方卡", async () => {
+  const calls = [];
+  const { manager } = createHarness(async (url, init) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/ask/enqueue") {
+      return response({
+        ok: true,
+        askId: JSON.parse(init.body).askId,
+        view: { visible: false, askable: false, updatedAt: Date.now() / 1000 },
+      });
+    }
+    if (parsed.pathname === "/ask/dismiss") return response({ ok: true });
+    throw new Error(`unexpected route: ${parsed.pathname}`);
+  });
+  await manager.start();
+  const sent = await manager.enqueueAsk(ask);
+  assert.equal(sent.askId, undefined, "看不清就不该让调用方以为题发出去了");
+  assert.equal(sent.unavailable, true);
+  assert.equal(sent.reason, "hidden");
+  assert.deepEqual(calls, ["/ask/enqueue", "/ask/dismiss"]);
+  await manager.stop();
+});
+
+test("球的状态太久没更新，也不发题", async () => {
+  const calls = [];
+  const { manager } = createHarness(async (url) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/ask/enqueue") {
+      return response({
+        ok: true,
+        askId: "stale-1",
+        view: { visible: true, askable: true, updatedAt: (Date.now() - 60_000) / 1000 },
+      });
+    }
+    if (parsed.pathname === "/ask/dismiss") return response({ ok: true });
+    throw new Error(`unexpected route: ${parsed.pathname}`);
+  });
+  await manager.start();
+  const sent = await manager.enqueueAsk(ask);
+  assert.equal(sent.reason, "stale");
+  assert.deepEqual(calls, ["/ask/enqueue", "/ask/dismiss"]);
+  await manager.stop();
+});
+
+test("旧桥不报窗口状态时同样不发题，改走卡片", async () => {
+  const calls = [];
+  const { manager } = createHarness(async (url) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/ask/enqueue") return response({ ok: true, askId: "legacy" });
+    if (parsed.pathname === "/ask/dismiss") return response({ ok: true });
+    throw new Error(`unexpected route: ${parsed.pathname}`);
+  });
+  await manager.start();
+  assert.deepEqual(await manager.enqueueAsk(ask), { unavailable: true, reason: "not-reported" });
+  assert.deepEqual(calls, ["/ask/enqueue", "/ask/dismiss"], "旧球也要先撤回，再交给配方卡");
+  await manager.stop();
+});
+
+test("撤回撞上 409 但人已经答完：交出原题号，不追着再问一遍", async () => {
+  const calls = [];
+  const { manager } = createHarness(async (url) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/ask/enqueue") {
+      return response({ ok: true, askId: "raced", view: { visible: false, askable: false, updatedAt: Date.now() / 1000 } });
+    }
+    if (parsed.pathname === "/ask/dismiss") return response({ ok: false, error: "提问不存在、已作答或已过期" }, 409);
+    if (parsed.pathname === "/ask/result") {
+      return response({ ok: true, status: "answered", answer: { action: "confirmed", value: { choice: "直接迁移" } } });
+    }
+    throw new Error(`unexpected route: ${parsed.pathname}`);
+  });
+  await manager.start();
+  const sent = await manager.enqueueAsk(ask);
+  assert.ok(sent.askId, "真有结果就把题号交回给球上的 watcher");
+  assert.equal(sent.unavailable, undefined, "不能改成配方卡，那就是追着人重问");
+  assert.deepEqual(calls, ["/ask/enqueue", "/ask/dismiss", "/ask/result"]);
+  assert.equal((await manager.readAskResult(sent.askId)).status, "answered");
+  await manager.stop();
+});
+
+test("409 之后查不到终态就不许回退", async () => {
+  for (const mode of ["pending", "lookup-failed"]) {
+    const { manager } = createHarness(async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/ask/enqueue") {
+        return response({ ok: true, askId: "unknown", view: { visible: false, askable: false, updatedAt: Date.now() / 1000 } });
+      }
+      if (parsed.pathname === "/ask/dismiss") return response({ ok: false, error: "已作答或已过期" }, 409);
+      if (parsed.pathname === "/ask/result") {
+        if (mode === "lookup-failed") throw new Error("bridge down");
+        return response({ ok: true, status: "pending" });
+      }
+      throw new Error(`unexpected route: ${parsed.pathname}`);
+    });
+    await manager.start();
+    await assert.rejects(
+      () => manager.enqueueAsk(ask),
+      (error) => {
+        assert.equal(error.code, "ASK_WITHDRAW_UNCONFIRMED", mode);
+        assert.equal(error.reason, "hidden");
+        return true;
+      },
+    );
+    await manager.stop();
+  }
+});
+
+test("撤回失败就不算发出去了：报未确认，不退化成两套入口", async () => {
+  let sentAskId = "";
+  const { manager } = createHarness(async (url, init) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/ask/enqueue") {
+      sentAskId = JSON.parse(init.body).askId;
+      return response({ ok: true, askId: sentAskId, view: { visible: false, askable: false, updatedAt: Date.now() / 1000 } });
+    }
+    if (parsed.pathname === "/ask/dismiss") return response({ ok: false, error: "桥超时" }, 504);
+    throw new Error(`unexpected route: ${parsed.pathname}`);
+  });
+  await manager.start();
+  await assert.rejects(
+    () => manager.enqueueAsk(ask),
+    (error) => {
+      assert.equal(error.code, "ASK_WITHDRAW_UNCONFIRMED");
+      assert.equal(error.askId, sentAskId, "至少把题号带出去，人能去球上看那题还在不在");
+      return true;
+    },
+  );
+  await manager.stop();
 });

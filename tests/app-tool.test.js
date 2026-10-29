@@ -1466,24 +1466,83 @@ test("no-ball multi-select handoff resolves a validated choice array", async () 
 });
 
 test("card display failure can cancel the pending handoff and use native confirmation", async () => {
-  const mock = createContext({ answer: { action: 'confirmed', value: { choice: '先做校验', note: '先检查 CSV' } } });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }], answer: { action: 'confirmed', value: { choice: '先做校验', note: '先检查 CSV' } } });
   const tool = await registeredTool(mock);
   const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
-  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, context: args.context });
+  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  await drainAsyncWork();
+  assert.match(result.content[0].text, /还没有收到决定/);
   assert.equal(mock.questions.length, 1);
   assert.equal(mock.questions[0].sessionPath, 'sessions/current.jsonl');
+  assert.equal(mock.questions[0].timeoutMs, 600_000);
   assert.deepEqual(mock.questions[0].requestedSchema.properties.choice.enum, ['先做校验', '先改界面']);
-  assert.match(result.content[0].text, /用户选择：先做校验/);
+  assert.equal(mock.sendCalls.length, 1);
+  assert.equal(mock.sendCalls[0].sessionId, 'sess_native');
+  assert.match(mock.sendCalls[0].text, /用户选择：先做校验/);
+});
+
+test("bound but unusable card transfers once without waiting for the native answer", async () => {
+  let answer;
+  const pending = new Promise((resolve) => { answer = resolve; });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }], answer: pending });
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const input = { askId: handoff.askId, cardInstanceId: 'c_native_transfer_1', context: args.context };
+  await mock.tool('jiegehua_zhiyi_bind_card').execute(input);
+  const fallback = mock.tool('jiegehua_zhiyi_native_fallback');
+  assert.equal((await fallback.execute({ ...input, failure: 'timeout' })).isError, true);
+  assert.equal(mock.questions.length, 0);
+  const started = await fallback.execute({ ...input, failure: 'user_reported_unusable' });
+  assert.match(started.content[0].text, /旧 Ask 卡已失效/);
+  assert.equal(mock.sendCalls.length, 0, '尚未作答不能回传默认选择');
+  const duplicateAsk = await tool.execute(args);
+  assert.equal(duplicateAsk.isError, true);
+  assert.match(duplicateAsk.content[0].text, /已有原生询问/);
+  assert.equal((await fallback.execute({ ...input, failure: 'render_failed' })).isError, true);
+  assert.equal(mock.questions.length, 1);
+  const late = await mock.tool('jiegehua_zhiyi_resolve_card').execute({ ...input, action: 'confirmed', choice: '先做校验' });
+  assert.equal(late.isError, true);
+  answer({ action: 'rejected' });
+  await drainAsyncWork();
+  assert.equal(mock.sendCalls.length, 1);
+  assert.match(mock.sendCalls[0].text, /暂不作此选择/);
+  assert.match((await tool.execute(args)).content[0].text, /知意待发卡/, '原生询问结束后应释放本会话');
+});
+
+test("native results preserve long supplementary text rather than using the draft 500-character limit", async () => {
+  const note = '补充'.repeat(220);
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }],
+    answer: { action: 'confirmed', value: { choice: '先做校验', note } } });
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  await drainAsyncWork();
+  assert.equal(mock.sendCalls.length, 1);
+  assert.ok(mock.sendCalls[0].text.length > 500);
+  assert.ok(mock.sendCalls[0].text.includes(note));
+  assert.equal(mock.sendCalls[0].deliverAs, 'steer');
+});
+
+test("native fallback refuses a missing return address without consuming the card", async () => {
+  const mock = createContext();
+  const tool = await registeredTool(mock);
+  const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
+  const failed = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  assert.equal(failed.isError, true);
+  assert.equal(mock.questions.length, 0);
+  assert.equal((await mock.tool('jiegehua_zhiyi_bind_card').execute({ askId: handoff.askId, cardInstanceId: 'c_still_available_1', context: args.context })).isError, false);
 });
 
 test("native fallback renders multi-select as bounded checkbox fields", async () => {
-  const mock = createContext({ answer: { action: 'confirmed', value: { option_1: true, option_2: true, note: '都要' } } });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }], answer: { action: 'confirmed', value: { option_1: true, option_2: true, note: '都要' } } });
   const tool = await registeredTool(mock);
   const handoff = JSON.parse((await tool.execute(multipleArgs)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
-  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, context: args.context });
+  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  await drainAsyncWork();
+  assert.match(result.content[0].text, /还没有收到决定/);
   assert.equal(mock.questions[0].requestedSchema.properties.option_1.type, 'boolean');
   assert.equal(mock.questions[0].requestedSchema.properties.option_2.type, 'boolean');
-  assert.match(result.content[0].text, /- 先做校验\n- 先改界面/);
+  assert.match(mock.sendCalls[0].text, /- 先做校验\n- 先改界面/);
 });
 
 test("does not ask without an originating session", async () => {
@@ -1496,13 +1555,14 @@ test("does not ask without an originating session", async () => {
 });
 
 test("does not treat a host display failure as consent and avoids echoing the error", async () => {
-  const mock = createContext({ askError: new Error("private session details") });
+  const mock = createContext({ sessionList: [{ sessionId: 'sess_native', path: 'sessions/current.jsonl' }], askError: new Error("private session details") });
   const tool = await registeredTool(mock);
   const handoff = JSON.parse((await tool.execute(args)).content[0].text.match(/知意待发卡[^：]*：(\{[^\n]+\})/)[1]);
-  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, context: args.context });
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /原生确认卡也未能确认结果/);
-  assert.doesNotMatch(result.content[0].text, /private session details/);
+  const result = await mock.tool('jiegehua_zhiyi_native_fallback').execute({ askId: handoff.askId, failure: 'show_failed', context: args.context });
+  await drainAsyncWork();
+  assert.match(result.content[0].text, /还没有收到决定/);
+  assert.match(mock.sendCalls[0].text, /没有收到有效决定/);
+  assert.doesNotMatch(mock.sendCalls[0].text, /private session details/);
 });
 
 // 下面两条走完整的 App 装配（registeredTool），把 hook、定时器、名单读取和状态机串起来跑。
