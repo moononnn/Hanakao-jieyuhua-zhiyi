@@ -1,5 +1,13 @@
 # 测试
 
+## 2026-10-30 发布 0.1.48（Ask 三级回退与原生回包修复）
+
+- 全量：`node --test` 550 项 548 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 0 失败 / 1 跳过（跳过项为原有）。发布小工坊 verify 与最终副本测试均以同一组命令复跑通过（副本 548 项）。
+- 本轮新增一条发布链路回归：`.gitattributes` 声明 `assets/install-input-zoom.ps1 -text`。发布副本默认会把 `.ps1` 规范成 LF，而该脚本要求 BOM+CRLF+纯 ASCII，否则 Windows PowerShell 5.1 按 ANSI 代码页解码时吞掉换行；副本测试先红（`tests/input-zoom-install.test.js:49` 报 46 !== 13），修复后包内副本与工作树逐字节相同（6445 字节、166 CRLF、带 BOM）。
+- 独立审包（只读、带执行权限）实际解包 411 条目并复核：ZIP 与 entry 双指纹一致；403 个文件逐字节相同、8 个仅行尾规范化、0 个内容差异；两个配方文件与仓库源码 SHA-256 相同；隐私扫描无真名、无本机路径、无未授权邮箱（`moononnn@qq.com` 4 处逐行对上公开授权，`sdk/components.css` 的 `yUmI` 为已知假阳性）。
+- 发布证据：CI run 40981798907 在 `3f1c1f8` 上 completed/success；回下载 Release 附件实测 SHA-256 与本地包一致（`5af1595e…bd634b2`）；市场 PR #142 当前 head `173ce1d` 的 validate-pr success。
+- 未做：安装/升级实机验证、多屏与全屏切换、原生询问十分钟超时取消、旧卡迟到提交、同一宿主内多道原生询问并发的边界。
+
 ## 2026-10-30 原生 Ask 工具回包与失败恢复（0.1.47-dev.2）
 
 - 定向命令：`node --experimental-vm-modules --test tests/app-tool.test.js tests/card-handoff.test.js`，**91 通过 / 0 失败 / 0 跳过**。`node --check index.js`、`node --check lib/card-handoff.js` 均通过；未运行全量测试。
