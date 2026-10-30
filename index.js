@@ -44,6 +44,7 @@ import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, tes
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
+import { readRuntimeState, writeRuntimeState } from "./lib/runtime-state.js";
 import { inputZoomStatus, installInputZoom, uninstallInputZoom } from "./lib/input-zoom.js";
 import { encryptionAvailable, encryptionStatus, protectKey } from "./lib/crypto.js";
 import {
@@ -1420,10 +1421,7 @@ activeFusionServiceDispose = disposeFusionService;
       raw = await sdk.storage.global.get(SHUTDOWN_BANNER_KEY, null);
     } catch (error) {
       // 这次没读到就下次再试，不置标记。
-      void sdk.storage.global.set("shutdownBannerRestoreDebug", {
-        at: new Date().toISOString(), step: "get-failed",
-        error: String(error?.message || error).slice(0, 120),
-      }).catch?.(() => {});
+      void sdk.logger.debug?.("关机横幅没读回来", { error: String(error?.message || error).slice(0, 120) });
       return;
     }
     const paths = Array.isArray(raw?.paths) ? raw.paths : [];
@@ -1438,10 +1436,7 @@ activeFusionServiceDispose = disposeFusionService;
       if (!shutdownBannerTexts.has(value)) shutdownBannerTexts.set(value, "");
       restored += 1;
     }
-    void sdk.storage.global.set("shutdownBannerRestoreDebug", {
-      at: new Date().toISOString(), step: "ok",
-      rawIsNull: raw === null, rawPaths: paths.length, restored,
-    }).catch?.(() => {});
+    void sdk.logger.debug?.("关机横幅已恢复", { rawIsNull: raw === null, rawPaths: paths.length, restored });
     // 只有真读成功才标记完成。
     // 以前这行写在 try 外面，于是「启动时存储还没就绪、读抛错」
     // 也会把标记置上，之后永远不再重试——旧横幅就永远收不掉了。
@@ -1460,8 +1455,7 @@ activeFusionServiceDispose = disposeFusionService;
   async function recordBannerRound(text, paths) {
     try {
       const mounted = [...shutdownBannerTexts.keys()];
-      await sdk.storage.global.set("shutdownBannerDebug", {
-        at: new Date().toISOString(),
+      void sdk.logger.debug?.("关机横幅这一轮", {
         text: String(text || "").slice(0, 200),
         candidates: Array.isArray(paths) ? paths.map((p) => String(p)) : [],
         mounted,
@@ -1540,12 +1534,11 @@ activeFusionServiceDispose = disposeFusionService;
     await restoreMountedBanners();
     const text = describeShutdownBanner();
     // 把每次同步的轨迹落一笔（只记阶段与数量，不记正文）。
-    void sdk.storage.global.set("shutdownBannerTrace", {
-      at: new Date().toISOString(),
+    void sdk.logger.debug?.("关机横幅同步", {
       step: text ? "has-text" : "no-text",
       known: shutdownBannerTexts.size,
       armed: describeSleepGuard().armed === true,
-    }).catch?.(() => {});
+    });
     // 先把“这一轮之前挂了什么”拍个快照：下面循环里会改这张表，
     // 改完再比就看不出变化了，名单就落不成盘。
     const before = shutdownBannerTexts.size;
@@ -4284,12 +4277,12 @@ activeFusionServiceDispose = disposeFusionService;
     // 我们自己再给一个清楚的按钮，把这块面板撤掉。
     app.post("/suggest-panel/dismiss", async (c) => {
       try {
-        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
         const state = readPanelState(raw);
         if (state.sessionId) {
           await sdk.userInteraction.dismiss({ sessionId: state.sessionId, id: SUGGEST_PANEL_ID });
         }
-        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({ sessionId: state.sessionId }));
+        await writeRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, buildPanelState({ sessionId: state.sessionId }));
         return c.json({ ok: true });
       } catch (error) {
         await sdk.logger.warn("面板收起失败", { code: error?.code || "PANEL_DISMISS_ERROR" });
@@ -4307,7 +4300,7 @@ activeFusionServiceDispose = disposeFusionService;
     // 面板页读候选：输入框上那块板子自己来问，不等谁推给它。
     app.get("/suggest-panel/state", async (c) => {
       try {
-        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
         const state = readPanelState(raw);
         // 常用回复实时读配置：她在设置里改了，面板里立刻就是新的。
         const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
@@ -4402,7 +4395,7 @@ activeFusionServiceDispose = disposeFusionService;
     // 面板里点「生成推荐回复」：这时才调模型（这一下才花钱），生成完把面板调高。
     app.post("/suggest-panel/generate", async (c) => {
       try {
-        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
         const state = readPanelState(raw);
         const sessionId = state.sessionId;
         if (!sessionId) {
@@ -4422,7 +4415,7 @@ activeFusionServiceDispose = disposeFusionService;
           text: item.text,
           direction: chosenDirections[index] || item.direction || "",
         }));
-        await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, {
+        await writeRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {
           ...state,
           suggestions: labeled,
           quickReplies: recConfig.quickReplies,
@@ -4465,7 +4458,7 @@ activeFusionServiceDispose = disposeFusionService;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "请求读不出来。" }, 400); }
       const index = Number(body?.index);
       try {
-        const raw = await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {});
+        const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
         const state = readPanelState(raw);
         const edited = pickEditableText(body?.text);
         const picked = Number.isInteger(index) ? state.suggestions[index] : null;
@@ -4573,7 +4566,7 @@ activeFusionServiceDispose = disposeFusionService;
         // 面板要用的状态先落到存储（面板 iframe 要读）；写入失败就算了，
         // 面板仍然照开，里面读不到状态只是这一轮没有推荐句。
         try {
-          await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, buildPanelState({
+          await writeRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, buildPanelState({
             sessionId,
             suggestions: [],
           }));
@@ -4602,8 +4595,8 @@ activeFusionServiceDispose = disposeFusionService;
         // 以下全是记账，一律失败不响：面板已经出来了，不能因为记不上一个 panelId
         // 就回一句报错。panelId 只用于生成后调高度，丢了最多是那一轮高度不变。
         try {
-          const state = readPanelState(await sdk.storage.global.get(SUGGEST_PANEL_STATE_KEY, {}));
-          await sdk.storage.global.set(SUGGEST_PANEL_STATE_KEY, { ...state, panelId: shown?.panelId || "" });
+          const state = readPanelState(await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {}));
+          await writeRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, { ...state, panelId: shown?.panelId || "" });
         } catch {}
         try {
           await sdk.logger.info("输入栏面板已挂上", { sessionPath, quick: quickCount });

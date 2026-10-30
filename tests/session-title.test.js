@@ -3,6 +3,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   applySessionTitle,
   buildTitleContext,
@@ -127,20 +130,24 @@ test("选过内容模型就用选的那条，没选则跟随当前模型", async
 test("写入标题要把旧值记下来，否则「还原」永远报没改过", async () => {
   // 实机（2026-10-22）：起过名之后点还原，永远得到「这段对话没有改过标题」。
   // 病根：记账那段的条件写反了，只有「没传旧标题」才记，而两个真入口都会传。
-  const store = new Map();
+  const dataDir = mkdtempSync(path.join(tmpdir(), "zhiyi-title-test-"));
   const sdk = {
+    dataDir,
     storage: { global: {
-      get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback),
-      set: async (key, value) => { store.set(key, value); },
+      get: async () => null,
+      set: async () => {},
     } },
     bus: { request: async () => ({ ok: true, sessionId: "sess_1" }) },
   };
+  // 撤回记录 2026-10-30 起落在 dataDir/runtime-state.json，不再进全局账本。
+  const readUndo = () => JSON.parse(readFileSync(path.join(dataDir, "runtime-state.json"), "utf8")).titleUndo;
+
   await applySessionTitle(sdk, { sessionId: "sess_1", title: "新名字", previousTitle: "旧名字" });
-  const record = store.get("titleUndo");
+  const record = readUndo();
   assert.equal(record.sess_1.previousTitle, "旧名字");
   assert.equal(record.sess_1.currentTitle, "新名字");
 
   // 确实没有旧标题时记 null（表示从没起过），不能因此就不记。
   await applySessionTitle(sdk, { sessionId: "sess_2", title: "另一段", previousTitle: "" });
-  assert.equal(store.get("titleUndo").sess_2.previousTitle, "");
+  assert.equal(readUndo().sess_2.previousTitle, "");
 });

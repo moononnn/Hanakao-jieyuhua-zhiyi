@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import app from "../index.js";
@@ -10,6 +12,9 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   const registrations = new Map();
   const hooks = new Map();
   const routes = new Map();
+  // 瞬态（面板状态、标题撤回）2026-10-30 起落在 dataDir/runtime-state.json，
+  // 每次造一份新目录，避免用例之间串味。
+  const dataDir = mkdtempSync(path.join(tmpdir(), "zhiyi-app-test-"));
   const storage = new Map(Object.entries(storageSeed));
   const modelCalls = [];
   const questions = [];
@@ -27,7 +32,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   const logs = { info: [], warn: [], debug: [] };
   let busHandler = null;
   const context = {
-    dataDir: "C:/isolated-test/app-data",
+    dataDir,
     bus: {
       subscribe: async (handler) => { busHandler = handler; return { ready: Promise.resolve(), dispose() {} }; },
       request: async (type, input) => {
@@ -193,6 +198,12 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     hook(word) { return hooks.get(word); },
     route(method, path) { return routes.get(`${method} ${path}`); },
     stored(key) { return storage.get(key); },
+    runtimeStored(key) {
+      try {
+        const all = JSON.parse(readFileSync(path.join(dataDir, "runtime-state.json"), "utf8"));
+        return Object.prototype.hasOwnProperty.call(all, key) ? all[key] : undefined;
+      } catch { return undefined; }
+    },
   };
 }
 
@@ -1127,7 +1138,7 @@ test("面板「起名」只改面板所在那段对话，不用「最近活跃�
   assert.deepEqual(mock.updateCalls, [{ sessionId: "sess_this", scope: "all", title: "给面板起个名字" }]);
   assert.equal(mock.historyCalls[0].sessionId, "sess_this");
   // 旧标题要落在撤回记录里，不然「还原」只能退回「未命名对话」。
-  assert.equal(mock.stored("titleUndo").sess_this.previousTitle, "旧名字");
+  assert.equal(mock.runtimeStored("titleUndo").sess_this.previousTitle, "旧名字");
 
   // 没带会话编号时一次都不该去动宿主。
   const guardMock = createContext({ sessionList: [] });
