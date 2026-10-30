@@ -1,0 +1,6 @@
+# assets/install-input-zoom.ps1 要被 Windows PowerShell 5.1 执行：
+# 必须是 UTF-8 BOM + CRLF + 纯 ASCII，否则 5.1 按 ANSI 代码页解码时会吞掉换行，
+# 参数块消失，安装助手悄悄退化成「只读状态」。
+# 发布副本的行尾规范化默认会把 .ps1 改成 LF，这里声明不参与任何文本转换，
+# 由 tests/input-zoom-install.test.js 锁住这条约定。
+assets/install-input-zoom.ps1 -text
