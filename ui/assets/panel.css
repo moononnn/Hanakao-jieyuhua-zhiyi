@@ -125,13 +125,16 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .model-trigger:hover, .model-trigger[aria-expanded="true"] { border-color: var(--mint-deep); background: var(--mint); }
 .model-trigger:disabled { cursor: not-allowed; opacity: .62; }
 .model-trigger:focus-visible, .model-test:focus-visible, .model-save:focus-visible, .model-option:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
-.model-options { position: absolute; top: calc(100% + 5px); right: 0; left: 0; z-index: 30; max-height: 240px; overflow: auto; padding: 5px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 12px 28px #45504424; }
+.model-options { position: absolute; top: calc(100% + 5px); right: 0; left: 0; z-index: 30; max-height: 320px; overflow: auto; padding: 5px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 12px 28px #45504424; }
 .model-options[hidden] { display: none; }
 .model-option { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .model-option:hover, .model-option[aria-selected="true"] { background: var(--mint); color: var(--mint-deep); }
 .model-option-mark { width: 14px; flex: 0 0 auto; color: var(--mint-deep); visibility: hidden; }
 .model-option[aria-selected="true"] .model-option-mark { visibility: visible; }
 .model-option-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.model-group-title { padding: 9px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.model-group-title:first-child { padding-top: 4px; }
+.model-option-channel { margin-left: auto; flex: 0 0 auto; padding-left: 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .model-test, .model-save { flex: 0 0 auto; min-height: 38px; padding: 8px 12px; border-radius: 10px; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .model-test { border: 1px solid var(--line); background: var(--surface); color: var(--mint-deep); }
 .model-test:hover:not(:disabled) { border-color: var(--mint-deep); background: var(--mint); }

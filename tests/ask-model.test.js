@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatModelOptions, hasDecisionCue, parseAskReview, readModelText, resolveAskModel } from "../lib/ask-model.js";
+import { chatModelOptions, hasDecisionCue, parseAskReview, providerChannelInfo, readModelText, resolveAskModel } from "../lib/ask-model.js";
 
 const CATALOG = [
   { provider: "p1", model: "slow-chat", name: "常用模型" },
@@ -11,6 +11,23 @@ const CATALOG = [
 test("model options keep chat models only and put Hana's current model first", () => {
   const options = chatModelOptions(CATALOG);
   assert.deepEqual(options.map((item) => item.key), ["p2/small-chat", "p1/slow-chat"]);
+});
+
+test("each option carries the vendor it belongs to", () => {
+  const options = chatModelOptions([
+    { provider: "deepseek", model: "deepseek-flash", name: "DeepSeek Flash" },
+    { provider: "openai-codex", model: "gpt-5.4", name: "GPT-5.4" },
+    { provider: "我的自建通道", model: "my-model", name: "自建模型" },
+  ]);
+  assert.deepEqual(options.map((item) => item.providerLabel), ["DeepSeek", "OpenAI", "我的自建通道"]);
+  assert.deepEqual(options.map((item) => item.providerChannel), ["", "Codex 通道", ""]);
+});
+
+test("unknown providers keep their own name instead of a guessed one", () => {
+  assert.deepEqual(providerChannelInfo("some-new-provider"), {
+    family: "some-new-provider", channel: "", provider: "some-new-provider",
+  });
+  assert.deepEqual(providerChannelInfo(""), { family: "其他", channel: "", provider: "" });
 });
 
 test("selected model wins, missing selection falls back to Hana's current model", () => {

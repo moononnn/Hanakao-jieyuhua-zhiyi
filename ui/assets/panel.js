@@ -1,6 +1,7 @@
 import { hana } from './sdk.js';
 import { initPermissionStatus } from './permission-status.js';
 import { followHostTheme } from './theme-report.js';
+import { groupModelChoices } from './model-groups.js';
 
 // 深浅跟着宿主走，顺手报给 App（它再转给传音樱）。
 followHostTheme();
@@ -377,6 +378,48 @@ void Promise.resolve().then(() => {
   void refreshResumeStatus();
 });
 
+// ── 模型下拉：按模型商分组 ──
+// 同一个模型名可能挂在好几家名下（各家转发的同名模型、官方 API 与订阅通道并存），
+// 光看模型名挑不出是哪家，选下去才发现走错了通道。三个模型下拉共用这套渲染：
+// 顶上放「跟随 / 不设」这类特殊项，下面按模型商分组列模型。
+function modelOptionButton(choice, onPick) {
+  const option = document.createElement('button');
+  option.type = 'button';
+  option.className = 'model-option';
+  option.setAttribute('role', 'option');
+  option.setAttribute('aria-selected', String(Boolean(choice.selected)));
+  const mark = document.createElement('span');
+  mark.className = 'model-option-mark';
+  mark.textContent = '✓';
+  const label = document.createElement('span');
+  label.className = 'model-option-label';
+  label.textContent = choice.label;
+  option.append(mark, label);
+  if (choice.channel) {
+    const channel = document.createElement('span');
+    channel.className = 'model-option-channel';
+    channel.textContent = choice.channel;
+    option.append(channel);
+  }
+  option.addEventListener('click', () => onPick(choice.key));
+  return option;
+}
+
+function renderModelChoices(host, choices, onPick) {
+  host.replaceChildren();
+  const { head, groups, tail } = groupModelChoices(choices);
+  for (const choice of head) host.appendChild(modelOptionButton(choice, onPick));
+  for (const group of groups) {
+    const title = document.createElement('div');
+    title.className = 'model-group-title';
+    title.setAttribute('role', 'presentation');
+    title.textContent = group.label;
+    host.appendChild(title);
+    for (const choice of group.items) host.appendChild(modelOptionButton(choice, onPick));
+  }
+  for (const choice of tail) host.appendChild(modelOptionButton(choice, onPick));
+}
+
 // ── 内容模型 ──
 // 推荐回复、Ask 判断、长回复速览共用这一条：选一次，三个调用点都用它。
 // 不选就跟随发起那一轮的当前模型，所以多数时候根本不用管。
@@ -399,7 +442,9 @@ function contentModelLabel(key) {
     return current ? `跟随 Hana 当前模型（${current.name}）` : '跟随 Hana 当前模型';
   }
   const found = contentModels.find((item) => item.key === key);
-  return found ? `${found.name}${found.isCurrent ? '（当前）' : ''}` : `${key}（已不在列表，需重新选）`;
+  if (!found) return `${key}（已不在列表，需重新选）`;
+  const vendor = found.providerLabel ? `${found.providerLabel} · ` : '';
+  return `${vendor}${found.name}${found.isCurrent ? '（当前）' : ''}`;
 }
 
 function closeContentModelOptions() {
@@ -420,35 +465,24 @@ function syncContentModelControls() {
 
 function renderContentModelOptions() {
   if (!contentModelOptionsHost || !contentModelTrigger) return;
-  contentModelOptionsHost.replaceChildren();
-  const choices = [{ key: 'follow', label: contentModelLabel('follow') }, ...contentModels.map((item) => ({
-    key: item.key,
-    label: contentModelLabel(item.key),
-  }))];
+  const choices = [{ key: 'follow', label: contentModelLabel('follow'), order: 0, selected: pendingContentModelKey === 'follow' },
+    ...contentModels.map((item) => ({
+      key: item.key,
+      label: item.name + (item.isCurrent ? '（当前）' : ''),
+      group: item.providerLabel,
+      provider: item.provider,
+      channel: item.providerChannel,
+      selected: item.key === pendingContentModelKey,
+    }))];
   if (originalContentModelKey !== 'follow' && !contentModels.some((item) => item.key === originalContentModelKey)) {
-    choices.push({ key: originalContentModelKey, label: contentModelLabel(originalContentModelKey) });
+    choices.push({ key: originalContentModelKey, label: contentModelLabel(originalContentModelKey), order: 1, selected: pendingContentModelKey === originalContentModelKey });
   }
-  for (const choice of choices) {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.className = 'model-option';
-    option.setAttribute('role', 'option');
-    option.setAttribute('aria-selected', String(choice.key === pendingContentModelKey));
-    const mark = document.createElement('span');
-    mark.className = 'model-option-mark';
-    mark.textContent = '✓';
-    const label = document.createElement('span');
-    label.className = 'model-option-label';
-    label.textContent = choice.label;
-    option.append(mark, label);
-    option.addEventListener('click', () => {
-      pendingContentModelKey = choice.key;
-      closeContentModelOptions();
-      renderContentModelOptions();
-      syncContentModelControls();
-    });
-    contentModelOptionsHost.appendChild(option);
-  }
+  renderModelChoices(contentModelOptionsHost, choices, (key) => {
+    pendingContentModelKey = key;
+    closeContentModelOptions();
+    renderContentModelOptions();
+    syncContentModelControls();
+  });
   contentModelTrigger.textContent = contentModelLabel(pendingContentModelKey);
 }
 
@@ -589,7 +623,9 @@ function fallbackKeyOf(ref) {
 function fallbackLabel(key) {
   if (key === 'none') return '不设备用（撞不动就报错）';
   const found = fallbackModels.find((item) => item.key === key);
-  return found ? `${found.name}${found.isCurrent ? '（当前）' : ''}` : `${key}（已不在列表，需重新选）`;
+  if (!found) return `${key}（已不在列表，需重新选）`;
+  const vendor = found.providerLabel ? `${found.providerLabel} · ` : '';
+  return `${vendor}${found.name}${found.isCurrent ? '（当前）' : ''}`;
 }
 
 function closeFallbackOptions() {
@@ -608,35 +644,24 @@ function syncFallbackControls() {
 
 function renderFallbackOptions() {
   if (!fallbackOptionsHost || !fallbackTrigger) return;
-  fallbackOptionsHost.replaceChildren();
-  const choices = [{ key: 'none', label: fallbackLabel('none') }, ...fallbackModels.map((item) => ({
-    key: item.key,
-    label: fallbackLabel(item.key),
-  }))];
+  const choices = [{ key: 'none', label: fallbackLabel('none'), order: 0, selected: pendingFallbackKey === 'none' },
+    ...fallbackModels.map((item) => ({
+      key: item.key,
+      label: item.name + (item.isCurrent ? '（当前）' : ''),
+      group: item.providerLabel,
+      provider: item.provider,
+      channel: item.providerChannel,
+      selected: item.key === pendingFallbackKey,
+    }))];
   if (originalFallbackKey !== 'none' && !fallbackModels.some((item) => item.key === originalFallbackKey)) {
-    choices.push({ key: originalFallbackKey, label: fallbackLabel(originalFallbackKey) });
+    choices.push({ key: originalFallbackKey, label: fallbackLabel(originalFallbackKey), order: 1, selected: pendingFallbackKey === originalFallbackKey });
   }
-  for (const choice of choices) {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.className = 'model-option';
-    option.setAttribute('role', 'option');
-    option.setAttribute('aria-selected', String(choice.key === pendingFallbackKey));
-    const mark = document.createElement('span');
-    mark.className = 'model-option-mark';
-    mark.textContent = '✓';
-    const label = document.createElement('span');
-    label.className = 'model-option-label';
-    label.textContent = choice.label;
-    option.append(mark, label);
-    option.addEventListener('click', () => {
-      pendingFallbackKey = choice.key;
-      closeFallbackOptions();
-      renderFallbackOptions();
-      syncFallbackControls();
-    });
-    fallbackOptionsHost.appendChild(option);
-  }
+  renderModelChoices(fallbackOptionsHost, choices, (key) => {
+    pendingFallbackKey = key;
+    closeFallbackOptions();
+    renderFallbackOptions();
+    syncFallbackControls();
+  });
   fallbackTrigger.textContent = fallbackLabel(pendingFallbackKey);
 }
 
@@ -742,7 +767,9 @@ const fastModel = (() => {
   const labelOf = (key) => {
     if (key === 'follow') return '跟随内容模型（推荐、Ask 判断用的那条）';
     const found = models.find((item) => item.key === key);
-    return found ? `${found.name}${found.isCurrent ? '（当前）' : ''}` : `${key}（已不在列表，需重新选）`;
+    if (!found) return `${key}（已不在列表，需重新选）`;
+    const vendor = found.providerLabel ? `${found.providerLabel} · ` : '';
+    return `${vendor}${found.name}${found.isCurrent ? '（当前）' : ''}`;
   };
   const refOf = (key) => {
     if (key === 'follow') return null;
@@ -764,33 +791,24 @@ const fastModel = (() => {
     if (testButton) testButton.disabled = !valid;
   };
   const render = () => {
-    optionsHost.replaceChildren();
-    const choices = [{ key: 'follow', label: labelOf('follow') },
-      ...models.map((item) => ({ key: item.key, label: labelOf(item.key) }))];
+    const choices = [{ key: 'follow', label: labelOf('follow'), order: 0, selected: pendingKey === 'follow' },
+      ...models.map((item) => ({
+        key: item.key,
+        label: item.name + (item.isCurrent ? '（当前）' : ''),
+        group: item.providerLabel,
+        provider: item.provider,
+        channel: item.providerChannel,
+        selected: item.key === pendingKey,
+      }))];
     if (savedKey !== 'follow' && !models.some((item) => item.key === savedKey)) {
-      choices.push({ key: savedKey, label: labelOf(savedKey) });
+      choices.push({ key: savedKey, label: labelOf(savedKey), order: 1, selected: pendingKey === savedKey });
     }
-    for (const choice of choices) {
-      const option = document.createElement('button');
-      option.type = 'button';
-      option.className = 'model-option';
-      option.setAttribute('role', 'option');
-      option.setAttribute('aria-selected', String(choice.key === pendingKey));
-      const mark = document.createElement('span');
-      mark.className = 'model-option-mark';
-      mark.textContent = '✓';
-      const label = document.createElement('span');
-      label.className = 'model-option-label';
-      label.textContent = choice.label;
-      option.append(mark, label);
-      option.addEventListener('click', () => {
-        pendingKey = choice.key;
-        closeOptions();
-        render();
-        sync();
-      });
-      optionsHost.appendChild(option);
-    }
+    renderModelChoices(optionsHost, choices, (key) => {
+      pendingKey = key;
+      closeOptions();
+      render();
+      sync();
+    });
     trigger.textContent = labelOf(pendingKey);
   };
   const request = async (method, body, path) => {
