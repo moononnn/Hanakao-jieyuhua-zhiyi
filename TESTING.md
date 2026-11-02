@@ -1,5 +1,15 @@
 # 测试
 
+## 2026-11-02 发布 0.2.1（Hana 更新手记）
+
+- 全量：`node --test` 767 项 765 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；发布小工坊 verify 与最终副本测试以同一组命令复跑通过（副本 765 项）。
+- 独立审包（另一位审查者，带执行权限、只读审查、解包只放临时目录）：解包 432 条目，ZIP `26e51004…46b02` 与 entry `f7347a73…60ed8c` 自算一致，5,728,838 字节与 `archive.size` 相符；包与暂存目录 432 个文件逐字节全等（行尾差异 0、内容差异 0）；禁止项除 `python/test_*.py` 6 个（上一版既有遗留）外零命中；隐私词表 0 命中；142 个 js/mjs/cjs `node --check` 全过；配方 3/3 与 `v0.2.0` blob 一致；更新手记路由与五处口吻调用点接线完整。结论可发。
+- 审包提出的第三方 MIT 版权邮箱（`sdk/THIRD_PARTY_NOTICES.txt:1395`，clsx@2.1.1，随宿主 SDK 整份目录入包、不在仓库跟踪范围）：按「第三方原始版权署名不删改」判非阻断。本机 `publicCopyrightNotices` 的逐行登记留到下一次打包周期——改配置会改变 `privacySha256`、使已审的包必须重打重审，与本版内容无关。
+- 发布证据：CI run 41464312236 在提交 `c0698a6` 上 completed/success；回下载 Release 附件实测 SHA-256 与本地包一致（`26e51004…46b02` / 5,728,838 字节）；市场 PR #174 当前 head `e117e03` 的 validate-pr success（run 41465500947）。
+- 流程缺口（待以后修工具）：本地 `pack` 不写 `bundle.sourceCommit`，`evidence -RunIds` 会报「sourceCommit 未未知」。本轮先实算包树哈希（432 文件）与 `bundle.sourceTreeSha256` 相同，确认包内容与提交 `c0698a6` 一致，再向 state 补写 sourceCommit，然后才能登记 CI；未重打包、未改包内任何字节。
+- 未做：本版页面与深色态的逐屏实机验收、模型真实语气复验、干净环境的卸载 → 重装。
+- 配方对账：本次未改 `recipes/**` 与 `skills/zhiyi-ask-handoff/**`。
+
 ## 2026-11-02 等待卡只留三点（0.2.1-dev.12）
 
 - 改动：`ui/assets/handbook.js` 的 `showTyping` 不再拼那句文字；`ui/assets/market.js` 的 `typingNode` 同样去掉文案；两边 `.is-typing` 改成 `display: flex; align-items: center; gap: 10px`，名头 `margin-bottom: 0`；删掉 `.hb-typing-copy` / `.typing-copy`。
