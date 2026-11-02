@@ -439,26 +439,28 @@ function quickActions(item) {
   // 只有「已上架的应用递了新版」才有旧版可比；首次申请问「更新了什么」只会得到一个空答案。
   const firstTime = item.source === 'pending' && !item.listedVersion;
   const rows = [];
+  // 这些问题是代替玥儿打出去的字，所以按她自己的口气写：短句、说「啥」「咋」，
+  // 不摆「用大白话说清它是干什么的、第一次上手要做什么、有什么地方得先留意」这种三段式公文。
   if (installed && version && installed !== version) {
     rows.push({
       id: 'diff', label: '比已装版多什么', title: '对比本机版本与这一版',
-      question: `我本机装的是 ${installed}，${target}是 ${version}。用大白话说清多了什么、改了什么，哪几处值得注意。`,
+      question: `我装的是 ${installed}，${target}是 ${version}。多了啥、改了啥？哪几处得留意？`,
     });
   }
   rows.push({
     id: 'risk', label: '权限与风险', title: '看它要什么权限、会不会外发数据',
-    question: '它要用哪些权限？会不会读我的聊天、读我的文件，或者把东西发到网上去？用大白话说清什么时候会碰到，别讲代码。',
+    question: '它要啥权限？会不会翻我聊天、读我文件，或者把东西发到网上去？用大白话说清啥时候会碰到，别讲代码。',
   });
-  rows.push({ id: 'howto', label: '怎么用', title: '第一次上手做哪几步', question: '它怎么用？第一次装上要做哪几步，一步一步说，别讲代码。' });
+  rows.push({ id: 'howto', label: '怎么用', title: '第一次上手做哪几步', question: '第一次装要弄哪几步？一步一步说，别讲代码。' });
   if (firstTime) {
     rows.push({
       id: 'features', label: '它能干什么', title: '这个应用有哪些功能',
-      question: '它都能干什么？用大白话说，我会在哪儿看到它、点进去能做什么。',
+      question: '它都能干啥？我在哪儿能看到它，点进去能弄啥？别讲代码。',
     });
   } else {
     rows.push({
       id: 'whatsnew', label: '这版更新了什么', title: '看这一版改了什么',
-      question: version ? `这版（${version}）更新了什么？用大白话说改了啥、对我有什么影响。` : '它最近更新了什么？用大白话说改了啥。',
+      question: version ? `这版（${version}）改了啥？跟我有关系吗？` : '它最近改了啥？',
     });
   }
   return rows;

@@ -471,6 +471,26 @@ test('quick question sends through the chat route and reuses the bound snapshot'
   assert.match(sent.body.text, /权限/);
 });
 
+test('快捷问题按玥儿自己的口气写，不摆三段式公文', async () => {
+  // 这几句话是代替她打出去的，会原样存在聊天记录里。写成「用大白话说清它是干什么的、
+  // 第一次上手要做什么、有什么地方得先留意」这种模板，她翻记录时会认不出是自己说的。
+  const entry = { ...item(1), installed: true, installedVersion: '0.9.0' };
+  const app = await mount(async (r) => (r.operation === 'catalog' ? catalog([entry])
+    : { ok: true, session: snapshotSession(entry.key) }));
+  await app.open(0);
+  const sent = [];
+  for (const id of ['diff', 'risk', 'howto', 'whatsnew']) {
+    const chip = app.el('market-quick').children.find((node) => node.dataset?.chip === id);
+    assert.ok(chip, `缺了 ${id} 这颗问题按钮`);
+    chip.emit('click'); await tick();
+    sent.push(app.httpRequests.at(-1).body.text);
+  }
+  for (const text of sent) {
+    assert.doesNotMatch(text, /用大白话说清它是|第一次上手要做|有什么地方得先留意|对我有什么影响/, `这句还是公文腔：${text}`);
+    assert.ok(text.length <= 60, `这句太长，不像人打字：${text}`);
+  }
+});
+
 test('installed version comparison becomes a real quick question', async () => {
   const entry = { ...item(1), installed: true, installedVersion: '0.9.0' };
   const app = await mount(async (r) => (r.operation === 'catalog' ? catalog([entry])
