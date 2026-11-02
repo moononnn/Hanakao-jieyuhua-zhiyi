@@ -487,10 +487,11 @@ function typingNode() {
   const li = node('li', undefined, 'market-message is-typing');
   li.dataset.role = 'assistant';
   li.append(nameRow('知意', true));
+  // 三个点就够了：页面顶上那行状态已经在说正在读源码还是等回答。
   const row = node('div', undefined, 'typing-row');
   const dots = node('span', undefined, 'typing-dots');
   dots.append(node('i'), node('i'), node('i'));
-  row.append(dots, node('span', state.mutation?.kind === 'inspect' ? '正在看源码…' : '正在想…', 'typing-copy'));
+  row.append(dots);
   li.append(row);
   return li;
 }

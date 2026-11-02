@@ -751,7 +751,7 @@ test('null session allows first question via chat, binds snapshot and supports r
   assert.equal(app.el('market-send').disabled, true);
   assert.equal(app.el('market-question').value, '', '发出去就清空，不等回答回来');
   assert.match(app.el('market-messages').textContent, /这次更新需要哪些权限/, '自己那句要立刻上屏');
-  assert.match(app.el('market-messages').textContent, /正在想/, '同时把知意标成在想');
+  assert.match(String(app.el('market-messages').children.at(-1).className), /is-typing/, '同时把知意标成在想（三点动画）');
   app.el('market-chat').emit('submit'); await tick();
   assert.equal(chats, 1);
   first.resolve({ ok: true, session: snapshotSession(key) }); await tick();

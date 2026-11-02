@@ -425,7 +425,13 @@ test("同一个市场提交再打开只问一次主分支，不再重下三份�
   assert.equal(calls.filter(({ url }) => url.startsWith(RAW)).length, 3);
 
   // 等写盘落地，再用新实例模拟「下次打开」：内存缓存也是空的。
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // 不用固定睡 50ms——写盘快慢看机器，慢一点就会误以为缓存没命中，随机红。改成等文件到位，最多 2 秒。
+  const metaFile = path.join(dataDir, "market-cache", "meta.json");
+  const deadline = Date.now() + 2000;
+  while (!fs.existsSync(metaFile)) {
+    if (Date.now() > deadline) throw new Error("缓存写了 2 秒还没落盘");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   const before = calls.length;
   const second = await createMarketCatalog(sdk).catalog({ includePending: false });
   assert.equal(second.items.length, 1);

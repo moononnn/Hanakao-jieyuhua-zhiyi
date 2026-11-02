@@ -219,9 +219,10 @@ html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 
   background: var(--hb-surface); border: 1px solid var(--hb-line);
   border-radius: 16px; padding: 11px 14px 13px;
 }
-/* 等待动画那张卡只包住它自己：里面就一行「名头 + 三个点」，
-   铺满整幅宽度就成了一个里面空空的横条，跟应用雷达对齐也不好看。 */
-.hb-msg.is-typing { width: fit-content; max-width: 100%; }
+/* 等待动画那张卡只包住它自己，且名头与三点并成一行：
+   一排「头像 + 知意 + ●●●」就完了。铺满宽度、或者下面再挂一行点，都显得空。 */
+.hb-msg.is-typing { width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 10px; }
+.hb-msg.is-typing .hb-name { margin-bottom: 0; }
 .hb-name { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .hb-name span { color: var(--hb-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
 .hb-avatar { flex: none; width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
@@ -231,7 +232,6 @@ html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 
 .hb-typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--hb-primary); animation: hb-typing 1.1s ease-in-out infinite; }
 .hb-typing-dots i:nth-child(2) { animation-delay: .18s; }
 .hb-typing-dots i:nth-child(3) { animation-delay: .36s; }
-.hb-typing-copy { color: var(--hb-muted); font-size: 12.5px; }
 @keyframes hb-typing {
   0%, 100% { opacity: .3; transform: translateY(0); }
   50% { opacity: 1; transform: translateY(-2px); }

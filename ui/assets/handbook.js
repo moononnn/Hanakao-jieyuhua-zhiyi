@@ -328,7 +328,8 @@ function assistantMessage(text) {
   return wrap;
 }
 
-// 「正在想…」：三点动画，跟应用雷达一样，等模型的时候别让人对着空白。
+// 等模型的三点动画，跟应用雷达同一套：名头与三点并在一排，只动不写字。
+// 旁逸再挂一行说明字是同一件事说两道，而且字一出现，卡就又被撞宽了。
 function showTyping() {
   removeTyping();
   const wrap = document.createElement('div');
@@ -350,10 +351,7 @@ function showTyping() {
   const dots = document.createElement('span');
   dots.className = 'hb-typing-dots';
   dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
-  const copy = document.createElement('span');
-  copy.className = 'hb-typing-copy';
-  copy.textContent = '正在想…';
-  row.append(dots, copy);
+  row.append(dots);
   wrap.append(name, row);
   $('hb-thread').appendChild(wrap);
   scrollToThread();

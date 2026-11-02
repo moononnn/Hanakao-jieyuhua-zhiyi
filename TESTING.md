@@ -1,5 +1,14 @@
 # 测试
 
+## 2026-11-02 等待卡只留三点（0.2.1-dev.12）
+
+- 改动：`ui/assets/handbook.js` 的 `showTyping` 不再拼那句文字；`ui/assets/market.js` 的 `typingNode` 同样去掉文案；两边 `.is-typing` 改成 `display: flex; align-items: center; gap: 10px`，名头 `margin-bottom: 0`；删掉 `.hb-typing-copy` / `.typing-copy`。
+- 沙盘量宽：更新手记 112×46，雷达 114×44（之前铺满 714、下面还多一行字）。
+- 测试：`tests/handbook-ui.test.js` 两项改成盯新形态；`tests/market-ui.test.js` 一处改成查 `is-typing`。
+- 时序测试：`tests/market-catalog.test.js` 的「同一个提交再打开只问一次主分支」从 `setTimeout 50` 换成轮询 `market-cache/meta.json` 落盘（上限 2 秒），单跑 4 遍全绿。
+- 全量 `node --test` 767 项：765 通过 / 0 失败 / 2 跳过（既有）。
+- 未做：真机未验（已重载）。
+
 ## 2026-11-02 等待动画收窄 + 输入框里的字居中（0.2.1-dev.11）
 
 - 改动：`ui/assets/handbook.css` 加 `.hb-msg.is-typing { width: fit-content }`、`.hb-box textarea` 改行高 22px / padding 8px 0 / 高度 38px、`.hb-field` 上下留白都 8px；`ui/assets/market.css` 加 `.market-message[data-role="assistant"].is-typing { width: fit-content }`。

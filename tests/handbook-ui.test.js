@@ -100,11 +100,11 @@ test('点开卡片有知意的开场白，不是一个空窗口', () => {
   assert.match(js, /openChat\(card, \(\) => \{ void send\(\); \}\)/, '发送时先上开场白，再上你的话');
 });
 
-test('对话窗照应用雷达：知意名头 + 「正在想…」三点', () => {
+test('对话窗照应用雷达：知意名头 + 三点动画', () => {
   assert.match(js, /function assistantMessage/, '知意这一侧的消息要有名头');
   assert.match(js, /label\.textContent = '知意'/, '名头写「知意」');
   assert.match(js, /function showTyping/, '等模型的时候要有状态提示');
-  assert.match(js, /copy\.textContent = '正在想…'/, '状态文案跟雷达一致');
+  assert.doesNotMatch(js, /正在想/, '只留三点，不写「正在想…」：点自己就在说这件事');
   assert.match(js, /removeTyping\(\);/, '答完要把状态撤掉');
   assert.match(css, /\.hb-typing-dots i \{/, '三点动画');
   assert.match(css, /@keyframes hb-typing/, '三点要动');
@@ -134,9 +134,12 @@ test('动效：入场淡入上浮，翻页也淡入，减弱动效时让位', ()
   assert.match(css, /prefers-reduced-motion[\s\S]*?\.hb-composer, \.hb-list, \.hb-chat \{ animation: none; \}/, '关掉动效偏好时要让位');
 });
 
-test('「正在想…」那张卡只包住自己，不铺满一整幅', () => {
-  // 里面就一行「名头 + 三个点」，铺满宽度就变成一个空滋滋的横条。
-  assert.match(block('.hb-msg.is-typing'), /width: fit-content/, '等待卡要收成自己的宽度');
+test('「正在想…」那张卡只包住自己，名头与三点在一排', () => {
+  // 里面就「头像 + 知意 + 三个点」，铺满宽度、或者三点另起一行，都显得空。
+  const rule = block('.hb-msg.is-typing');
+  assert.match(rule, /width: fit-content/, '等待卡要收成自己的宽度');
+  assert.match(rule, /display: flex; align-items: center/, '名头与三点要并成一行');
+  assert.ok(!rule.includes('flex-direction: column'), '不能改成上下两行');
   assert.match(js, /className = 'hb-msg is-typing'/, '等待卡得带 is-typing，样式才认得它');
 });
 
