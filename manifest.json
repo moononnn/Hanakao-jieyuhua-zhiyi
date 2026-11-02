@@ -86,6 +86,19 @@
         },
         "cardForm": "flush",
         "titlebar": "solid"
+      },
+      {
+        "id": "handbook",
+        "title": "Hana 更新手记",
+        "route": "/handbook.html",
+        "face": {
+          "image": "assets/cover.png"
+        },
+        "pageIcon": "assets/nav-icon-adaptive.svg",
+        "realization": "page",
+        "siteNavEntry": true,
+        "cardForm": "flush",
+        "titlebar": "solid"
       }
     ]
   },

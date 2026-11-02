@@ -80,6 +80,8 @@ import { buildShowStyleCardInput, buildShowStyleCardInstruction, buildStyleRefin
 import { chatFeedback, FEEDBACK_LIMITS } from "./lib/feedback-chat.js";
 import { createMarketCatalog } from "./lib/market-catalog.js";
 import { registerMarketRoutes } from "./lib/market-review.js";
+// Hana 更新手记：只读官方 release 说明，挑成卡片，能追问。不读宿主应用文件、不下载安装包。
+import { registerHandbookRoutes } from "./lib/handbook-routes.js";
 import {
   maskCustomModelConfig,
   mergeCustomModelConfig,
@@ -3111,6 +3113,7 @@ activeFusionServiceDispose = disposeFusionService;
     });
 
     registerMarketRoutes(app, sdk, createMarketCatalog(sdk));
+    registerHandbookRoutes(app, sdk);
 
     app.get("/input-zoom", async (c) => {
       try {
