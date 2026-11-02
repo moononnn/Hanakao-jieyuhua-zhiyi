@@ -7,6 +7,7 @@
   --hb-muted: #5b6b61;
   --hb-faint: #96a29a;
   --hb-line: #eae5d9;
+  --hb-page: var(--paper, #f5f8f3);
   --hb-mint: #eef4ee;
   --hb-mint-deep: #d5e7da;
   --hb-primary: #376650;
@@ -22,6 +23,7 @@ html[data-appearance="dark"] {
   --hb-muted: #b3c0b6;
   --hb-faint: #8b978d;
   --hb-line: #3a423a;
+  --hb-page: var(--paper, #202923);
   --hb-mint: #2d3a31;
   --hb-mint-deep: #3c4c42;
   --hb-primary: #a8d5ba;
@@ -154,22 +156,32 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
 .hb-empty { margin: 40px 0; text-align: center; color: var(--hb-muted); font-size: 14px; }
 .hb-empty b { display: block; font-size: 16px; color: var(--hb-ink); margin-bottom: 6px; }
 
-/* ── 常驻输入：明确浮在内容之上。
-   之前是一整条贴边的白带，跟下面的白内容几乎一个颜色，看着就是页面的一部分。
-   现在收成一块内缩的浮板：圆角、实边、压得住的投影，滚上来的内容从四周绕过去，
-   一眼就看出这块是搭在页面上的。 */
+/* ── 常驻输入：浮起来的是「输入台」这一件东西，不是一整块板子压下来。
+   台面自己圆角、细边、一层很软的投影；页面从它四周穿过去，
+   滚上来的清单在它上方那条同色渐隐里化掉，不被硬边切断。
+   上一版做的那块内缩白板像一块贴上去的板子，这一版拆回一件家具。 */
 .hb-composer {
   position: sticky; bottom: 0; z-index: 6;
   margin: 20px 0 14px;
-  padding: 14px 16px 12px;
+  animation: hb-rise .42s cubic-bezier(.22, 1.06, .36, 1) both;
+}
+@keyframes hb-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+/* 渐隐条：跟页底同色。清单滚到这里淡出，像沉进纸里，不是被一刀切掉。 */
+.hb-composer::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -28px; height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--hb-page));
+  pointer-events: none;
+}
+.hb-field {
   background: var(--hb-surface);
   border: 1px solid var(--hb-line);
-  border-radius: 18px;
-  box-shadow: 0 26px 48px -22px #35493e80, 0 2px 10px -6px #35493e29;
+  border-radius: 20px;
+  padding: 8px 10px 10px 15px;
+  box-shadow: inset 0 1px 0 #fffdf8, 0 1px 2px #35493e0f, 0 12px 28px -16px #35493e38;
+  transition: border-color .16s ease, box-shadow .16s ease;
 }
-html[data-appearance="dark"] .hb-composer {
-  box-shadow: 0 26px 48px -20px #0000008c, 0 2px 10px -6px #0006;
-}
+.hb-field:focus-within { border-color: var(--hb-mint-deep); box-shadow: 0 1px 2px #35493e0f, 0 14px 30px -16px #35493e45; }
+html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 1px 2px #0000004d, 0 14px 30px -16px #000000a6; }
 .hb-stream { margin: 0 0 8px; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
 .hb-bub { max-width: 80%; padding: 7px 13px; border-radius: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 .hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); }
@@ -179,21 +191,20 @@ html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-ref.on { display: inline-flex; }
 .hb-ref b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
 .hb-ref button { flex: none; border: 0; background: #ffffffb0; color: var(--hb-primary); width: 21px; height: 21px; border-radius: 999px; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
-.hb-box { display: flex; align-items: flex-end; gap: 10px; background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 16px; padding: 8px 10px 8px 15px; box-shadow: var(--hb-shadow); transition: border-color .16s; }
-.hb-box:focus-within { border-color: var(--hb-mint-deep); }
-.hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 1.6; padding: 8px 0; height: 38px; max-height: 120px; }
+.hb-box { display: flex; align-items: flex-end; gap: 10px; }
+.hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 1.6; padding: 5px 0; height: 38px; max-height: 120px; }
 .hb-box textarea::placeholder { color: #9aa79e; }
 .hb-send { flex: none; width: 38px; height: 38px; border-radius: 13px; border: 0; background: var(--hb-primary); color: #fffdf8; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: background .14s; }
 .hb-send:hover { background: #2b5240; }
 .hb-send:disabled { opacity: .5; cursor: default; }
 html[data-appearance="dark"] .hb-send { color: #20251f; }
-.hb-foot { margin: 8px 0 0; font-size: 11.5px; color: #a9b3ab; }
+.hb-foot { margin: 7px 0 0; font-size: 11.5px; color: #a9b3ab; }
 
 @media (max-width: 720px) {
   .hb-page { padding: 18px 16px; }
   .hb-head h1 { font-size: 21px; }
   .hb-top3 { grid-template-columns: 1fr; gap: 8px; }
-  .hb-composer { margin: 16px 0 12px; padding: 12px 14px 12px; }
+  .hb-composer { margin: 16px 0 12px; }
   .hb-row-h { padding: 10px 6px 10px 8px; gap: 8px; }
 }
 
@@ -206,4 +217,5 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
 
 @media (prefers-reduced-motion: reduce) {
   .hb-lead, .hb-status.is-busy::before { transition: none; animation: none; }
+  .hb-composer { animation: none; }
 }
