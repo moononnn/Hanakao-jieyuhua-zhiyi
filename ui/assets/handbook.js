@@ -266,18 +266,24 @@ function onLeadClick(event) {
   const card = findCard(lead.dataset.card);
   if (!card) return;
   const host = $('hb-lead-open');
-  const already = host && host.dataset.card === card.id && !host.hidden;
-  if (host) host.remove();
+  // 一次点击可能被两个监听器都接到（容器换过、脚本装过两遍）。
+  // 只认「上一次点开的」才算收起，否则点一下等于开了又关，看上去就是没反应。
+  const sameEvent = host && host.dataset.stamp === String(event.timeStamp);
+  const already = host && !sameEvent && host.dataset.card === card.id && !host.hidden;
+  if (host && !sameEvent) host.remove();
   if (already) return;
   const box = document.createElement('div');
   box.id = 'hb-lead-open';
   box.dataset.card = card.id;
+  box.dataset.stamp = String(event.timeStamp);
   box.style.marginTop = '12px';
   box.innerHTML = `<div class="hb-lead-open"><div class="hb-row open" style="border:0;border-radius:0;background:transparent">${detailHtml(card)}</div></div>`;
-  // 头条展开块跟着它那张卡走：本版速览里的卡就展开在本版速览下面。
+  // 展开块跟着它那张卡走：本版速览里的卡就展开在本版速览下面。
   const container = lead.closest('.hb-ov-cards') || $('hb-top3');
   container.parentElement.insertAdjacentElement('afterend', box);
   cite(card);
+  // 展开在下面，别让人以为没反应：把它滚到眼前。
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function onRowClick(event) {
@@ -300,25 +306,73 @@ function onRowClick(event) {
   cite(open ? findCard(row.dataset.card) : null);
 }
 
+// 知意那一侧的每条消息：名头（头像 + 名字） + 正文，跟应用雷达的对话窗一个样。
+function assistantMessage(text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'hb-msg';
+  const name = document.createElement('div');
+  name.className = 'hb-name';
+  const avatar = document.createElement('img');
+  avatar.className = 'hb-avatar';
+  avatar.setAttribute('src', 'assets/market-avatar.png');
+  avatar.setAttribute('alt', '');
+  avatar.setAttribute('width', '20');
+  avatar.setAttribute('height', '20');
+  const label = document.createElement('span');
+  label.textContent = '知意';
+  name.append(avatar, label);
+  const body = document.createElement('div');
+  body.className = 'hb-bub sys';
+  body.textContent = text;
+  wrap.append(name, body);
+  return wrap;
+}
+
+// 「正在想…」：三点动画，跟应用雷达一样，等模型的时候别让人对着空白。
+function showTyping() {
+  removeTyping();
+  const wrap = document.createElement('div');
+  wrap.className = 'hb-msg is-typing';
+  wrap.id = 'hb-typing';
+  const name = document.createElement('div');
+  name.className = 'hb-name';
+  const avatar = document.createElement('img');
+  avatar.className = 'hb-avatar';
+  avatar.setAttribute('src', 'assets/market-avatar.png');
+  avatar.setAttribute('alt', '');
+  avatar.setAttribute('width', '20');
+  avatar.setAttribute('height', '20');
+  const label = document.createElement('span');
+  label.textContent = '知意';
+  name.append(avatar, label);
+  const row = document.createElement('div');
+  row.className = 'hb-typing-row';
+  const dots = document.createElement('span');
+  dots.className = 'hb-typing-dots';
+  dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+  const copy = document.createElement('span');
+  copy.className = 'hb-typing-copy';
+  copy.textContent = '正在想…';
+  row.append(dots, copy);
+  wrap.append(name, row);
+  $('hb-thread').appendChild(wrap);
+  scrollToThread();
+}
+
+function removeTyping() {
+  const node = $('hb-typing');
+  if (node) node.remove();
+}
+
 function pushBubble(kind, text) {
+  if (kind === 'sys') {
+    $('hb-thread').appendChild(assistantMessage(text));
+    scrollToThread();
+    return null;
+  }
   const bubble = document.createElement('div');
   bubble.className = `hb-bub ${kind}`;
   bubble.textContent = text;
-  if (kind === 'sys') {
-    // 知意这一侧带头像，跟应用雷达的对话窗一个样：看得出哪句是她说的。
-    const row = document.createElement('div');
-    row.className = 'hb-bub-row';
-    const avatar = document.createElement('img');
-    avatar.className = 'hb-avatar';
-    avatar.setAttribute('src', 'assets/market-avatar.png');
-    avatar.setAttribute('alt', '');
-    avatar.setAttribute('width', '20');
-    avatar.setAttribute('height', '20');
-    row.append(avatar, bubble);
-    $('hb-thread').appendChild(row);
-    scrollToThread();
-    return bubble;
-  }
   $('hb-thread').appendChild(bubble);
   scrollToThread();
   return bubble;
@@ -411,6 +465,7 @@ async function ask() {
   setStatus('正在翻原文…', { busy: true });
   const send = async () => {
     pushBubble('me', text);
+    showTyping();
     try {
       const payload = await request('/handbook/ask', {
         question,
@@ -418,10 +473,12 @@ async function ask() {
         tags: state.tags,
         history: state.history.slice(-8),
       }, ASK_TIMEOUT);
+      removeTyping();
       pushBubble('sys', payload.content);
       state.history.push({ role: 'assistant', content: payload.content });
       setStatus('');
     } catch (error) {
+      removeTyping();
       pushBubble('sys', error?.message || '这次没答上来，再问一次。');
       setStatus('');
     } finally {
@@ -456,10 +513,11 @@ async function loadWall({ rebuild = false } = {}) {
 }
 
 function bind() {
-  $('hb-top3').addEventListener('click', onLeadClick);
-  $('hb-overview').addEventListener('click', onLeadClick);
-  $('hb-overview').addEventListener('click', onRowClick);
-  $('hb-groups').addEventListener('click', onRowClick);
+  // 事件委托：卡片装在哪个容器里都算。
+  // 展开块是插到容器外面去的（「接着问这条」按钮就在里面），所以监听必须挂在整页上，
+  // 否则展开块里的按钮点了没反应。
+  $('hb-page').addEventListener('click', onLeadClick);
+  $('hb-page').addEventListener('click', onRowClick);
   $('hb-groups').addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     if (!event.target.closest('.hb-row-h')) return;

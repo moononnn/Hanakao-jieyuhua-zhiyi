@@ -1,5 +1,16 @@
 # 测试
 
+## 2026-11-02 对话窗照雷达 + 修展开块按钮失灵（0.2.1-dev.8）
+
+- 复现方式：本机起一个静态服务（`_tmp/hbtest`），把真 `handbook.js`/`handbook.css` 配一份假 SDK 跑在真 DOM 里，探针自动点卡、点「接着问这条」、发一条问题，截屏看结果。
+  - 复现出来的真因：展开块插在 `#hb-top3` / `.hb-ov-cards` 之外，里面的「接着问这条」按钮不在 `#hb-groups` / `#hb-overview` 里，监听接不到 → 点了没反应。展开块本身能开（`opened=YES`，高度 132px）。
+  - 修法：监听挂到 `#hb-page` 上的事件委托（`onLeadClick` + `onRowClick` 都挂整页）；展开块记 `event.timeStamp`，同一次点击不会被当成「再点一次收起」；展开后 `scrollIntoView` 滚到眼前。
+- 对话窗：知意消息改成「卡片 + 名头（头像 + 知意）+ 正文」，新增 `showTyping`/`removeTyping` 的「正在想…」三点（`@keyframes hb-typing`，与雷达的 `radar-typing` 同一套参数）。
+- `tests/handbook-ui.test.js` 加 2 项（雷达式名头与正在想、点卡展开与追问按钮都要有反应），改了一条旧断言（监听从容器改成整页）。
+- 全量 `node --test` 762 项：760 通过 / 0 失败 / 2 跳过（既有）。
+- 界面检查：沙盘截屏确认（点卡 → 展开块出现；点「接着问这条」→ 追问页打开且有开场白；发问题 → 先出「正在想…」，答完撤掉）。
+- 未做：App 未重载；真机里的手感（滚动静位、动画节奏）未验。
+
 ## 2026-11-02 追问页有开场白（0.2.1-dev.7）
 
 - 改动：`ui/assets/handbook.js` 加 `cardIntro`（用卡片自己的话拼开场白）与 `greeted` 集合（同一条不重复打招呼）；`openChat` 多一个 `afterTurn` 回调，`ask()` 第一次发送改成「先翻页 → 先开场白 → 再上你的话 → 最后回答」。

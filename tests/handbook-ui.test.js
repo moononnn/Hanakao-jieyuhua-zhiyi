@@ -100,6 +100,23 @@ test('点开卡片有知意的开场白，不是一个空窗口', () => {
   assert.match(js, /openChat\(card, \(\) => \{ void send\(\); \}\)/, '发送时先上开场白，再上你的话');
 });
 
+test('对话窗照应用雷达：知意名头 + 「正在想…」三点', () => {
+  assert.match(js, /function assistantMessage/, '知意这一侧的消息要有名头');
+  assert.match(js, /label\.textContent = '知意'/, '名头写「知意」');
+  assert.match(js, /function showTyping/, '等模型的时候要有状态提示');
+  assert.match(js, /copy\.textContent = '正在想…'/, '状态文案跟雷达一致');
+  assert.match(js, /removeTyping\(\);/, '答完要把状态撤掉');
+  assert.match(css, /\.hb-typing-dots i \{/, '三点动画');
+  assert.match(css, /@keyframes hb-typing/, '三点要动');
+});
+
+test('点卡展开与展开块里的「接着问这条」都得有反应', () => {
+  assert.match(js, /\$\('hb-page'\)\.addEventListener\('click', onLeadClick\)/, '展开监听挂整页');
+  assert.match(js, /\$\('hb-page'\)\.addEventListener\('click', onRowClick\)/, '追问按钮的监听也挂整页：展开块是插到容器外面的');
+  assert.match(js, /box\.dataset\.stamp = String\(event\.timeStamp\)/, '同一次点击不能开了又关');
+  assert.match(js, /scrollIntoView/, '展开后要滚到眼前，不然像没反应');
+});
+
 test('追问按钮和发送按钮都不贴着边框，留出呼吸空间', () => {
   assert.match(block('.hb-actions'), /margin:/, '追问按钮这一行要留白');
   assert.match(block('.hb-body-in'), /padding:[^;]*\d+px[^;]*\d+px/, '正文块要留出上下左右余量');
