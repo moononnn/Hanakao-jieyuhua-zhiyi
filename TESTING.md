@@ -1,5 +1,13 @@
 # 测试
 
+## 2026-11-02 本版速览改成卡片式（0.2.1-dev.6）
+
+- 改动：撕掉上一版那个「把官网原文列成长清单」的总览块；`lib/handbook-service.js` 改成 `buildVersionOverview`（只挑最新一版的卡片），最新一版的卡片从墙里分出来进速览块，更早的版本归「再往前几版」；`ui/assets/handbook.js` 速览块改用 `leadHtml`/`rowHtml`（还是卡片），三张先摆、其余收在「还有 N 张，展开」；`handbook-cards` 提示词加一条「改名/入口改名这类要挑出来」，`CARD_PROMPT_VERSION` 提到 3。
+- 调整 `tests/handbook-service.test.js` 两项断言（最新一版的卡片现在在 `overview.cards`，不在墙里）；`tests/handbook-overview.test.js` 改成 3 项（只摆本版卡片、摆的是卡片不是原文、没牌就空着）。
+- 全量 `node --test` 759 项：757 通过 / 0 失败 / 2 跳过（既有）。
+- 界面检查：本机 Edge 无头渲染静态页，确认速览块只占一张卡片的高度，其余收在展开后面。
+- 未做：App 未重载；改名条目能不能真的被模型挑出来，得等卡片重算后看一眼。
+
 ## 2026-11-02 翻页更丝滑 + 本版总览 + 全局口吻（0.2.1-dev.5）
 
 - 改动：`ui/assets/handbook.js` 加 `turnPage`（整页淡出下沉再淡回来）、`renderVersionLine`、`renderOverview`；回答气泡带知意头像（`assets/market-avatar.png`）。`ui/assets/handbook.css` 加版本号胶囊、本版总览块（`<details>` 分组）、头像与翻页样式。`lib/handbook-service.js` 新增 `buildOverview`，`loadWall` 返回 `overview`。新建 `lib/voice-style.js`（共享口吻），六个调用点统一引用；`handbook-cards` 的 `CARD_PROMPT_VERSION` 提到 2。

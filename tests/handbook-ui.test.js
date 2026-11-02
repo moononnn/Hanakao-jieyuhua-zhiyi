@@ -68,12 +68,14 @@ test('开头就写明当前版本号', () => {
   assert.match(js, /hb-ver-tag/, '版本号要真的写进页面');
 });
 
-test('有一块专门讲这一版更新了啥，不按「跟你有没有关系」筛', () => {
-  assert.match(html, /id="hb-overview"/, '要有本版总览这一块');
-  assert.match(js, /function renderOverview/, '要渲染本版总览');
-  assert.match(js, /这一版更新了啥/, '标题里要点明这是本版总览');
-  assert.match(css, /\.hb-ov-item \{/, '总览里的条目要有样式');
-  assert.match(css, /\.hb-ov-g/, '总览要能折叠');
+test('有一块专门讲这一版更新了啥，但还是卡片，不是原文长文', () => {
+  assert.match(html, /id="hb-overview"/, '要有本版速览这一块');
+  assert.match(js, /function renderOverview/, '要渲染本版速览');
+  assert.match(js, /cards\.slice\(0, 3\)\.map\(\(card, index\) => leadHtml/, '速览里摆的是卡片');
+  assert.match(js, /这一版还有 \$\{rest\.length\} 张，展开/, '其余的卡片收在展开后面，不铺开占地方');
+  assert.match(css, /\.hb-ov-cards \{/, '速览里的卡片要有栅格');
+  assert.doesNotMatch(css, /hb-ov-item/, '不再摆原文条目长列表');
+  assert.doesNotMatch(html, /hb-ov-list/, '页面里也没有原文清单');
 });
 
 test('知意这一侧带头像，跟应用雷达一个样', () => {

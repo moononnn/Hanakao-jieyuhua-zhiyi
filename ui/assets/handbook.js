@@ -11,7 +11,7 @@ const WALL_TIMEOUT = 120000;
 const ASK_TIMEOUT = 90000;
 const VISIBLE_ROWS = 8;
 
-const state = { data: null, tags: [], current: null, history: [], showAll: false, chat: false };
+const state = { data: null, tags: [], current: null, history: [], showAll: false, chat: false, ovAll: false };
 
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -123,35 +123,35 @@ function renderVersionLine(data, overview) {
 }
 
 /**
- * 这一版的总览：按原文摆，不按「你摸得到」筛。
- * 分组可折叠：新功能默认展开，问题修复先收着。
+ * 最新一版的速览：还是卡片，不是原文长文。
+ * 三张头条先摆着，其余的收在「还有 N 张」后面，点开才铺开。
  */
 function renderOverview(overview) {
   const box = $('hb-overview');
-  if (!overview || !overview.groups.length) {
+  const cards = Array.isArray(overview?.cards) ? overview.cards : [];
+  if (!cards.length) {
     box.hidden = true;
     box.innerHTML = '';
     return;
   }
-  const shown = overview.groups.reduce((sum, group) => sum + group.items.length, 0);
-  const groups = overview.groups.map((group, index) => {
-    const items = group.items.map((item) => {
-      const detail = item.detail && item.detail.length > 110 ? `${item.detail.slice(0, 110)}…` : item.detail;
-      const source = [item.section, item.group].filter(Boolean).join(' · ');
-      return `<li class="hb-ov-item">
-        <span class="hb-ov-t">${esc(item.title)}</span>
-        ${detail ? `<span class="hb-ov-d">${esc(detail)}</span>` : ''}
-        ${source ? `<span class="hb-ov-src">${esc(source)}</span>` : ''}
-      </li>`;
-    }).join('');
-    const open = index === 0 ? ' open' : '';
-    return `<details class="hb-ov-g"${open}>
-      <summary class="hb-ov-h"><span class="hb-ov-n">${esc(group.title)}</span><span class="hb-ov-c">${group.total} 条</span></summary>
-      <ul class="hb-ov-list">${items}</ul>
-    </details>`;
-  }).join('');
-  box.innerHTML = `<header class="hb-ov-head"><h2>${esc(overview.version)} 这一版更新了啥</h2><span class="n">原文共 ${overview.totalItems} 条，这里摆 ${shown} 条</span></header>${groups}`;
+  const rest = cards.slice(3);
+  const expanded = state.ovAll;
+  const rows = expanded ? rest.map(rowHtml).join('') : '';
+  const more = rest.length
+    ? `<div class="hb-more"><button type="button" id="hb-ov-more-btn"${expanded ? ' disabled' : ''}>${expanded ? '已经全展开了' : `这一版还有 ${rest.length} 张，展开`}</button><span>${expanded ? `共 ${cards.length} 张` : `已展开 ${Math.min(3, cards.length)}/${cards.length}`}</span></div>`
+    : '';
+  box.innerHTML = `<header class="hb-ov-head"><h2>${esc(overview.version)} 这一版更新了啥</h2><span class="n">${cards.length} 张卡</span></header>
+    <div class="hb-ov-cards" id="hb-ov-cards">${cards.slice(0, 3).map((card, index) => leadHtml(card, index)).join('')}</div>
+    <div class="hb-ov-rest" id="hb-ov-rest">${rows}</div>
+    ${more}`;
   box.hidden = false;
+  const moreBtn = $('hb-ov-more-btn');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', () => {
+      state.ovAll = true;
+      renderOverview(state.data?.overview);
+    });
+  }
 }
 
 function render() {
@@ -161,9 +161,13 @@ function render() {
   const staleOpen = $('hb-lead-open');
   if (staleOpen) staleOpen.remove();
 
-  if (!data || (!data.wall.highlights.length && !data.wall.rest.length)) {
+  // 本版速览有卡片就算有东西看：墙空了（已是最新）也不该摆空态。
+  const hasOverview = Boolean(data?.overview?.cards?.length);
+  const hasWall = Boolean(data && (data.wall.highlights.length || data.wall.rest.length));
+  if (!data || (!hasWall && !hasOverview)) {
     $('hb-top3').hidden = true;
     $('hb-groups').hidden = true;
+    $('hb-wall-h').hidden = true;
     $('hb-empty').hidden = false;
     renderVersionLine(data || {}, data?.overview);
     renderOverview(data?.overview);
@@ -192,6 +196,7 @@ function render() {
   const highlights = data.wall.highlights.slice(0, 3);
   $('hb-top3').innerHTML = highlights.map(leadHtml).join('');
   $('hb-top3').hidden = highlights.length === 0;
+  $('hb-wall-h').hidden = !(highlights.length || data.wall.rest.length);
 
   // 清单：头条之外的部分按主题分组，顺序跟常量一致，没人看的话题自然消失。
   const order = ['聊天与对话', '卡片与市场', 'Code 与工具', '界面与手感', '其他'];
@@ -238,7 +243,8 @@ function render() {
 
 function findCard(id) {
   if (!state.data) return null;
-  return [...state.data.wall.highlights, ...state.data.wall.rest].find((card) => card.id === id) || null;
+  const all = [...(state.data.overview?.cards || []), ...state.data.wall.highlights, ...state.data.wall.rest];
+  return all.find((card) => card.id === id) || null;
 }
 
 function cite(card) {
@@ -266,7 +272,9 @@ function onLeadClick(event) {
   box.dataset.card = card.id;
   box.style.marginTop = '12px';
   box.innerHTML = `<div class="hb-lead-open"><div class="hb-row open" style="border:0;border-radius:0;background:transparent">${detailHtml(card)}</div></div>`;
-  $('hb-top3').insertAdjacentElement('afterend', box);
+  // 头条展开块跟着它那张卡走：本版速览里的卡就展开在本版速览下面。
+  const container = lead.closest('.hb-ov-cards') || $('hb-top3');
+  container.parentElement.insertAdjacentElement('afterend', box);
   cite(card);
 }
 
@@ -408,6 +416,7 @@ async function loadWall({ rebuild = false } = {}) {
     state.data = data;
     state.tags = data.versions.map((row) => row.tag);
     state.showAll = false;
+    state.ovAll = false;
     render();
     if (data.upToDate) setStatus(data.installed ? `你装的 ${data.installed} 已经是最新的。` : '已经是最新的。');
     else if (data.totalCards) setStatus(`读到 ${data.versions.filter((row) => row.cardCount > 0).length} 个版本，挑出 ${data.totalCards} 条。`);
@@ -420,6 +429,8 @@ async function loadWall({ rebuild = false } = {}) {
 
 function bind() {
   $('hb-top3').addEventListener('click', onLeadClick);
+  $('hb-overview').addEventListener('click', onLeadClick);
+  $('hb-overview').addEventListener('click', onRowClick);
   $('hb-groups').addEventListener('click', onRowClick);
   $('hb-groups').addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;

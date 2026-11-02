@@ -64,32 +64,22 @@ html[data-appearance="dark"] {
 }
 .hb-ver-note { font-size: 12.5px; color: var(--hb-faint); }
 
-/* ── 本版总览：这一版到底改了什么，不按「跟你有没有关系」筛 ── */
+/* ── 本版速览：最新版的内容，还是卡片；原文长文不往这儿搬 ── */
 .hb-overview {
-  margin: 16px 0 0; padding: 14px 16px 16px;
+  margin: 16px 0 0; padding: 14px 16px 14px;
   background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 18px;
   box-shadow: var(--hb-shadow);
 }
-.hb-ov-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px solid var(--hb-line); }
+.hb-ov-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 12px; }
 .hb-ov-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .hb-ov-head .n { margin-left: auto; font-size: 11.5px; color: var(--hb-faint); }
-.hb-ov-g { margin-top: 8px; }
-.hb-ov-h { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; list-style: none; }
-.hb-ov-h::-webkit-details-marker { display: none; }
-.hb-ov-n { font-size: 12.5px; font-weight: 600; color: var(--hb-primary); }
-.hb-ov-c { font-size: 11px; color: var(--hb-faint); }
-.hb-ov-h::after {
-  content: "▾"; margin-left: auto; font-size: 11px; color: var(--hb-faint);
-  transition: transform .18s cubic-bezier(.22, 1.08, .36, 1);
-}
-.hb-ov-g:not([open]) .hb-ov-h::after { transform: rotate(-90deg); }
-.hb-ov-list { list-style: none; margin: 0; padding: 0 0 4px; }
-.hb-ov-item { padding: 8px 0; border-bottom: 1px solid #f1ece1; }
-html[data-appearance="dark"] .hb-ov-item { border-bottom-color: #333a33; }
-.hb-ov-item:last-child { border-bottom: 0; }
-.hb-ov-t { display: block; font-size: 14px; font-weight: 600; line-height: 1.5; }
-.hb-ov-d { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--hb-muted); }
-.hb-ov-src { display: block; margin-top: 4px; font-size: 11px; letter-spacing: .04em; color: var(--hb-faint); }
+.hb-ov-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.hb-ov-cards .hb-lead { padding: 12px 14px 13px; }
+.hb-ov-rest { margin-top: 4px; }
+/* 墙是更早的版本了，给个抬头，免得跟上面本版的卡片混成一片。 */
+.hb-wall-h { display: flex; align-items: baseline; gap: 9px; margin: 24px 0 10px; }
+.hb-wall-h::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: var(--hb-mint-deep); flex: none; transform: translateY(-1px); }
+.hb-wall-h { font-size: 13px; font-weight: 600; color: var(--hb-muted); }
 
 /* ── 状态条：读的时候说在读什么，读完说读到了什么 ── */
 .hb-status {
@@ -273,6 +263,7 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
   .hb-page { padding: 18px 16px; }
   .hb-head h1 { font-size: 21px; }
   .hb-top3 { grid-template-columns: 1fr; gap: 8px; }
+  .hb-ov-cards { grid-template-columns: 1fr; gap: 8px; }
   .hb-composer { margin: 16px 0 12px; }
   .hb-row-h { padding: 10px 6px 10px 8px; gap: 8px; }
 }

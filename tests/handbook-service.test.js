@@ -96,7 +96,11 @@ test("缓存命中直接用，没命中而模型不可用时只影响那一版",
   const failed = state.versions.find((v) => v.tag === "v1.5.7-beta");
   assert.equal(failed.cardCount, 0);
   assert.ok(failed.error);
-  assert.equal(state.wall.highlights.length, 1);
+  // 最新一版的卡片单独摆一块（本版速览），墙留给更早的版本。
+  assert.equal(state.overview.cards.length, 1);
+  assert.equal(state.overview.version, "1.5.48-beta");
+  assert.equal(state.wall.highlights.length, 0);
+  assert.equal(state.wall.rest.length, 0);
 });
 
 test("墙面数据带版本来源，能说清从哪版来的", async () => {
@@ -110,7 +114,7 @@ test("墙面数据带版本来源，能说清从哪版来的", async () => {
     promptVersion: CARD_PROMPT_VERSION,
   });
   const state = await loadWall(sdk, { installedVersion: "1.3.6-beta" });
-  const hit = state.wall.highlights[0];
+  const hit = state.overview.cards[0];
   assert.equal(hit.tag, "v1.5.48-beta");
   assert.equal(hit.version, "1.5.48-beta");
   assert.equal(hit.publishedAt, "2026-11-01T23:32:45Z");
