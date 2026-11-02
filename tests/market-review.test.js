@@ -358,9 +358,9 @@ test("审查流程会把版本对比交给模型，提示词不许拿缺少更�
     assert.match(JSON.stringify(prompt.messages[0]), /export const d = 4/);
     assert.match(prompt.systemPrompt, /不许这样回答/);
     assert.match(prompt.systemPrompt, /无法确认/);
-    // 语气边界：可以软，不能卖萌；俏皮只给确定的事，不拿玩笑盖住没查清的部分。
-    assert.match(prompt.systemPrompt, /可以软/);
-    assert.match(prompt.systemPrompt, /不能卖萌/);
+    // 语气边界：可以说软（句尾挂个「哈」）、不卖萌；俏皮只给确定的事，不拿玩笑盖住没查清的部分。
+    assert.match(prompt.systemPrompt, /句尾偶尔带个「哈」/);
+    assert.match(prompt.systemPrompt, /也不卖萌/);
     assert.match(prompt.systemPrompt, /俏皮只给确定的事/);
     // 给例子，不只给形容词：模型对例子的反应比对形容词敏感。
     assert.match(prompt.systemPrompt, /语气参考/);

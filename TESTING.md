@@ -1,5 +1,13 @@
 # 测试
 
+## 2026-11-02 知意的口吻照「学我说话」重写（0.2.1-dev.10）
+
+- 参照：`C:\Users\laotv\.hanako\app-data\biaoqingbao-app\style-template.json`（她自己改定的「学我说话」模板，`locked` 五段就是她拍板的写法）与 `style-feedback.json`（她从旧模板里删掉的叠词、哦哦、感叹号堆叠等反例）。
+- 改动：`lib/voice-style.js` 三段重写；`lib/handbook-cards.js` 的 `CARD_PROMPT_VERSION` 3→4；`ui/assets/handbook.js` 开场白收尾加「哈」。
+- 测试：`tests/style-voice.test.js` 加 1 项（句尾挂哈 / 该拍板就拍板 / 不是客服腔 / 「您」只当反面例子）；`tests/market-review.test.js` 一处断言换成新文案里的句子（原来盯的「可以软」「不能卖萌」已不在）。
+- 全量 `node --test` 764 项：762 通过 / 0 失败 / 2 跳过（既有）。
+- 未做：没真的调一次模型看输出。提示词拼接有测试盯，但口吻到底像不像她，得在真机上问一句才知道；卡片缓存要等版本页重算后才是新口吻。
+
 ## 2026-11-02 应用雷达的问题改成她的口气（0.2.1-dev.9）
 
 - 改动：`ui/assets/market.js` 的 `quickActions` 五句问题文案、`lib/market-review.js` 里 `inspect` 首次自动问的那句，换成口语写法（「多了啥、改了啥？」「它要啥权限？会不会翻我聊天、读我文件」）。

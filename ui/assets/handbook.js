@@ -427,7 +427,7 @@ function cardIntro(card) {
   if (card.title) parts.push(`这条是「${card.title}」。`);
   if (body) parts.push(/[。！!？?]$/.test(body) ? body : `${body}。`);
   if (card.where) parts.push(`在${card.where}就能碰到。`);
-  parts.push("想细问哪一点，直接说。");
+  parts.push("想细问哪一点，直接说哈。");
   return parts.join("\n");
 }
 

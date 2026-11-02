@@ -54,6 +54,15 @@ test("关键口径标记留在常量里", () => {
   assert.match(VOICE_STYLE, /推断必须说成推断/);
 });
 
+test("口吻照她自己的打法：句尾挂哈、该拍板就拍板、不写成客服腔", () => {
+  // 参照表情包应用方言板块的「学我说话」（biaoqingbao-app 的 userstyle 模板）：
+  // 她那套打法她 2026-11-02 拍板拿来做知意的客服口吻。这三句掉了，口吻就漂回公文。
+  assert.match(VOICE_STYLE, /句尾偶尔带个「哈」/);
+  assert.match(VOICE_STYLE, /该拍板就拍板/);
+  assert.match(VOICE_STYLE, /不是客服腔/);
+  assert.match(VOICE_STYLE, /不写「您是否希望……」。/, "「您」只能当反面例子出现，不能真这么说");
+});
+
 test("共享常量里不夹带某个窗口自己的领域词", () => {
   for (const word of ["审查", "安装", "更新说明", "应用雷达", "待审", "卡片"]) {
     assert.ok(!VOICE_STYLE.includes(word), `共享口吻里出现了窗口专属词「${word}」`);
