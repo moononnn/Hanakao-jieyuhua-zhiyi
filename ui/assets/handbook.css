@@ -125,17 +125,18 @@ html[data-appearance="dark"] .hb-row:hover { background: #2b322b; }
 .hb-row-v { font-size: 11px; color: var(--hb-faint); padding-top: 2px; white-space: nowrap; }
 .hb-row-v .hurt { display: inline-block; margin-right: 7px; padding: 1px 7px; border-radius: 999px; background: var(--hb-pink-soft); color: var(--hb-pink-ink); font-size: 10.5px; font-weight: 600; }
 
-.hb-row-body { display: none; padding: 0 12px 14px 12px; }
+.hb-row-body { display: none; padding: 0 12px 20px 12px; }
 .hb-row.open { background: #fdfbf4; }
 html[data-appearance="dark"] .hb-row.open { background: #2a302a; }
 .hb-row.open .hb-row-body { display: block; }
 .hb-row.open .hb-row-h { padding-bottom: 6px; }
-.hb-body-in { padding-left: 13px; border-left: 2px solid var(--hb-mint-deep); }
+.hb-body-in { padding: 0 0 8px 15px; border-left: 2px solid var(--hb-mint-deep); }
 .hb-why { margin: 0 0 10px; font-size: 13.5px; line-height: 1.65; }
 .hb-orig { margin: 0 0 9px; font-size: 12.5px; line-height: 1.65; color: #6b786f; }
 html[data-appearance="dark"] .hb-orig { color: var(--hb-muted); }
 .hb-orig b { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--hb-faint); font-weight: 600; margin-bottom: 3px; }
-.hb-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* 追问按钮留出呼吸空间：不贴着卡片下边缘，也不贴着左边那条竖线。 */
+.hb-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin: 3px 0 6px; }
 .hb-ask { flex: none; border: 1px solid var(--hb-mint-deep); background: var(--hb-mint); color: var(--hb-primary); font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 13px; border-radius: 999px; cursor: pointer; min-height: 32px; }
 .hb-ask:hover { background: var(--hb-mint-deep); }
 .hb-where { font-size: 12px; color: var(--hb-faint); }
@@ -154,23 +155,20 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
 .hb-empty b { display: block; font-size: 16px; color: var(--hb-ink); margin-bottom: 6px; }
 
 /* ── 常驻输入：明确浮在内容之上。
-   实色底 + 上沿细线 + 上投影 + 一道渐隐。之前只有一层很淡的渐变，
-   滚上来的内容会透在输入框上面，看着跟页面是一张纸。 */
+   之前是一整条贴边的白带，跟下面的白内容几乎一个颜色，看着就是页面的一部分。
+   现在收成一块内缩的浮板：圆角、实边、压得住的投影，滚上来的内容从四周绕过去，
+   一眼就看出这块是搭在页面上的。 */
 .hb-composer {
   position: sticky; bottom: 0; z-index: 6;
-  margin: 20px calc(-1 * clamp(16px, 3vw, 32px)) 0;
-  padding: 18px clamp(16px, 3vw, 32px) 16px;
-  background: var(--hb-paper);
-  border-top: 1px solid var(--hb-line);
-  box-shadow: 0 -14px 34px -22px #35493e7a;
+  margin: 20px 0 14px;
+  padding: 14px 16px 12px;
+  background: var(--hb-surface);
+  border: 1px solid var(--hb-line);
+  border-radius: 18px;
+  box-shadow: 0 26px 48px -22px #35493e80, 0 2px 10px -6px #35493e29;
 }
-.hb-composer::before {
-  content: ""; position: absolute; left: 0; right: 0; top: -26px; height: 26px;
-  background: linear-gradient(to bottom, #fffdf800, var(--hb-paper));
-  pointer-events: none;
-}
-html[data-appearance="dark"] .hb-composer::before {
-  background: linear-gradient(to bottom, #20251f00, var(--hb-paper));
+html[data-appearance="dark"] .hb-composer {
+  box-shadow: 0 26px 48px -20px #0000008c, 0 2px 10px -6px #0006;
 }
 .hb-stream { margin: 0 0 8px; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
 .hb-bub { max-width: 80%; padding: 7px 13px; border-radius: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
@@ -181,7 +179,7 @@ html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-ref.on { display: inline-flex; }
 .hb-ref b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
 .hb-ref button { flex: none; border: 0; background: #ffffffb0; color: var(--hb-primary); width: 21px; height: 21px; border-radius: 999px; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
-.hb-box { display: flex; align-items: flex-end; gap: 10px; background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 16px; padding: 7px 7px 7px 15px; box-shadow: var(--hb-shadow); transition: border-color .16s; }
+.hb-box { display: flex; align-items: flex-end; gap: 10px; background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 16px; padding: 8px 10px 8px 15px; box-shadow: var(--hb-shadow); transition: border-color .16s; }
 .hb-box:focus-within { border-color: var(--hb-mint-deep); }
 .hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 1.6; padding: 8px 0; height: 38px; max-height: 120px; }
 .hb-box textarea::placeholder { color: #9aa79e; }
@@ -195,7 +193,7 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
   .hb-page { padding: 18px 16px; }
   .hb-head h1 { font-size: 21px; }
   .hb-top3 { grid-template-columns: 1fr; gap: 8px; }
-  .hb-composer { margin: 16px -16px 0; padding: 12px 16px 14px; }
+  .hb-composer { margin: 16px 0 12px; padding: 12px 14px 12px; }
   .hb-row-h { padding: 10px 6px 10px 8px; gap: 8px; }
 }
 
