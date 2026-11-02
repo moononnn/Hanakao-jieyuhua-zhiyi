@@ -1,5 +1,12 @@
 # 测试
 
+## 2026-11-02 发布 0.2.0（应用雷达）
+
+- 全量：`node --test` 692 项 690 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过。发布小工坊 verify 与最终副本测试均以同一组命令复跑通过（副本 690 项）。
+- 独立审包（只读、带执行权限）实际解包 423 条目：ZIP `a825f309…b0fd` 与 entry `9f7de9d9…9abb` 双指纹一致，5,685,651 字节与条目 `archive.size` 相符；423 个文件逐字节相同 416、仅行尾规范化 7、0 个内容差异；12 类禁止项零命中；隐私扫描 417 个文本文件，仅 `sdk/components.css` 的 base64 字体块内出现 `yUmI` 子串（已知假阳性），真名、本机路径、号码均 0；应用雷达 10 个模块在位、路由已接线、19 条 capability 都能找到对应调用点。
+- 发布证据：CI run 41379158690 在 `166f570` 上 completed/success；回下载 Release 附件实测 SHA-256 与本地包一致（`a825f309…b0fd` / 5,685,651 字节）；市场 PR #142 当前 head `65df904` 的 validate-pr success。
+- 未做：安装与升级实机验证；运行时行为（页面渲染、GitHub 限额、模型调用、传音樱）只做了静态阅读；包内 6 个 `python/test_*.py` 按现有规则未剔除，与「包里不再带测试代码」的口径仍不齐。
+
 ## 2026-11-02 深色主题补齐（0.1.49-dev.43）
 
 - 界面检查：本机起静态服务渲染 `ui/panel.html`、`ui/market.html`、`ui/suggest-panel.html`、`ui/ask-panel.html`、`ui/permission-panel.html` 的深浅两态，逐元素比背景与文字亮度。深色下「浅底 + 白字」的实心按钮从 18 处降到 0（余下 1 处是半透明警示块，叠在深底上可读）；浅色态无回退。`theme-follow.js` 与 `theme-report.js` 两条跟随路径都在，`data-appearance` 按预期切换。
