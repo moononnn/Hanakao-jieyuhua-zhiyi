@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="./assets/panel.css">
   <link rel="stylesheet" href="./assets/panel-layout.css">
   <link rel="stylesheet" href="./assets/market.css">
+  <link rel="stylesheet" href="./assets/handbook.css">
   <script src="./assets/theme-follow.js"></script>
 </head>
 <body>
@@ -108,6 +109,39 @@
       </div>
     </section>
   </div>
+        </section>
+
+        <!-- Hana 更新手记：只读官方 release 说明，挑成卡片，能追问。跟应用雷达同一种活法，占一个视图 -->
+        <section class="view hb-body" id="view-handbook" aria-labelledby="hb-title">
+          <div class="hb-page">
+            <header class="hb-head">
+              <p class="hb-eyebrow">知意 · 更新手记</p>
+              <h1 class="hb-wk" id="hb-title">这一版改了啥</h1>
+              <p class="hb-lede" id="hb-lede">点开就会读 Hana 最近的更新说明。</p>
+            </header>
+
+            <div class="hb-status" id="hb-status" role="status" aria-live="polite" hidden>
+              <span id="hb-status-text"></span>
+              <button id="hb-rebuild" type="button" hidden>再试一次</button>
+            </div>
+
+            <section class="hb-top3" id="hb-top3" aria-label="最值得知道的三条" hidden></section>
+            <section class="hb-groups" id="hb-groups" aria-label="这一版改了什么" hidden></section>
+            <div class="hb-empty" id="hb-empty" hidden></div>
+
+            <div class="hb-composer">
+              <div class="hb-stream" id="hb-stream" aria-live="polite"></div>
+              <div class="hb-ref" id="hb-ref">
+                <span>正在问：</span><b id="hb-reftxt"></b>
+                <button id="hb-refx" type="button" aria-label="取消引用">×</button>
+              </div>
+              <div class="hb-box">
+                <textarea id="hb-ta" rows="1" placeholder="随便问，比如「闲聊独立模型那条我要开吗」"></textarea>
+                <button class="hb-send" id="hb-send" type="button" aria-label="发送">→</button>
+              </div>
+              <p class="hb-foot">只讲更新说明里写了的；没写的不猜。要翻提交记录会告诉你来源。</p>
+            </div>
+          </div>
         </section>
 
         <!-- 概览：一眼看完，点一行就去改 -->
@@ -894,5 +928,6 @@
   <script type="module" src="./assets/panel.js"></script>
   <script type="module" src="./assets/panel-layout.js"></script>
   <script type="module" src="./assets/market.js"></script>
+  <script type="module" src="./assets/handbook.js"></script>
 </body>
 </html>
