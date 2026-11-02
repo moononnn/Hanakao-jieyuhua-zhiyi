@@ -316,5 +316,19 @@ function bind() {
   });
 }
 
+// 首次切到这个视图才去读，不在知意一打开时就打 GitHub 和模型：
+// 用户可能一辈子不点这一页，没必要为它付一次调用。
+let started = false;
+const section = $('view-handbook');
+async function activate() {
+  if (started) return;
+  started = true;
+  await loadWall();
+}
+
+window.addEventListener('zhiyi:view-change', (event) => {
+  if (event.detail?.view === 'handbook') void activate();
+});
+
 bind();
-void loadWall();
+if (section && section.classList.contains('on')) void activate();
