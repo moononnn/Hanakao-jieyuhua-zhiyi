@@ -12,6 +12,8 @@ const ASK_TIMEOUT = 90000;
 const VISIBLE_ROWS = 8;
 
 const state = { data: null, tags: [], current: null, history: [], showAll: false, chat: false, ovAll: false };
+// 已经打过招呼的卡片：同一条不重复开场白。
+const greeted = new Set();
 
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -340,14 +342,21 @@ function turnPage(swap) {
 
 // 追问模式：清单整块退场，换成一条干净的对话流。
 // 像翻到另一页，而不是把气泡挤在清单底下浮着。
-function openChat(card) {
+function openChat(card, afterTurn) {
   const chat = $('hb-chat');
   const apply = () => {
     $('view-handbook').classList.add('is-chat');
     chat.hidden = false;
     if (card) cite(card);
     $('hb-chat-t').textContent = card ? `追问：${card.title}` : '追问答疑';
+    // 开场白：点开哪条，就先把这条讲清楚，别丢一个空窗口给人家。
+    if (card && !greeted.has(card.id)) {
+      greeted.add(card.id);
+      const intro = cardIntro(card);
+      if (intro) pushBubble('sys', intro);
+    }
     scrollToThread();
+    if (typeof afterTurn === 'function') afterTurn();
   };
   if (state.chat) {
     apply();
@@ -355,6 +364,17 @@ function openChat(card) {
   }
   state.chat = true;
   turnPage(apply);
+}
+
+/** 点开一张卡时知意的开场白：用卡片自己的话讲，不另调模型。 */
+function cardIntro(card) {
+  const body = [card.now, card.why].filter(Boolean).join("，");
+  const parts = [];
+  if (card.title) parts.push(`这条是「${card.title}」。`);
+  if (body) parts.push(/[。！!？?]$/.test(body) ? body : `${body}。`);
+  if (card.where) parts.push(`在${card.where}就能碰到。`);
+  parts.push("想细问哪一点，直接说。");
+  return parts.join("\n");
 }
 
 function closeChat() {
@@ -383,29 +403,37 @@ async function ask() {
   const question = ta.value.trim();
   if (!question) return;
   const card = state.current;
-  if (!state.chat) openChat(card);
-  pushBubble('me', card ? `（问「${card.title}」）${question}` : question);
+  const text = card ? `（问「${card.title}」）${question}` : question;
   ta.value = '';
   ta.style.height = '38px';
   state.history.push({ role: 'user', content: question });
   $('hb-send').disabled = true;
   setStatus('正在翻原文…', { busy: true });
-  try {
-    const payload = await request('/handbook/ask', {
-      question,
-      card,
-      tags: state.tags,
-      history: state.history.slice(-8),
-    }, ASK_TIMEOUT);
-    pushBubble('sys', payload.content);
-    state.history.push({ role: 'assistant', content: payload.content });
-    setStatus('');
-  } catch (error) {
-    pushBubble('sys', error?.message || '这次没答上来，再问一次。');
-    setStatus('');
-  } finally {
-    $('hb-send').disabled = false;
+  const send = async () => {
+    pushBubble('me', text);
+    try {
+      const payload = await request('/handbook/ask', {
+        question,
+        card,
+        tags: state.tags,
+        history: state.history.slice(-8),
+      }, ASK_TIMEOUT);
+      pushBubble('sys', payload.content);
+      state.history.push({ role: 'assistant', content: payload.content });
+      setStatus('');
+    } catch (error) {
+      pushBubble('sys', error?.message || '这次没答上来，再问一次。');
+      setStatus('');
+    } finally {
+      $('hb-send').disabled = false;
+    }
+  };
+  // 第一次发送就是「翻页」：先把开场白摆上，再上你的话，顺序不能反。
+  if (!state.chat) {
+    openChat(card, () => { void send(); });
+    return;
   }
+  await send();
 }
 
 async function loadWall({ rebuild = false } = {}) {

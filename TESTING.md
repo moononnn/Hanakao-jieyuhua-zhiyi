@@ -1,5 +1,13 @@
 # 测试
 
+## 2026-11-02 追问页有开场白（0.2.1-dev.7）
+
+- 改动：`ui/assets/handbook.js` 加 `cardIntro`（用卡片自己的话拼开场白）与 `greeted` 集合（同一条不重复打招呼）；`openChat` 多一个 `afterTurn` 回调，`ask()` 第一次发送改成「先翻页 → 先开场白 → 再上你的话 → 最后回答」。
+- `tests/handbook-ui.test.js` 加 1 项（开场白存在、不重复、走知意那一侧、发送顺序），并改了两条旧断言（`openChat` 签名变了）。
+- 全量 `node --test` 760 项：758 通过 / 0 失败 / 2 跳过（既有）。
+- 界面检查：本机 Edge 无头渲染静态页，开场白气泡带头像、内容顺序正确。
+- 未做：App 未重载；真机里点卡进追问页的开场白读起来顺不顺，没在真机验。
+
 ## 2026-11-02 本版速览改成卡片式（0.2.1-dev.6）
 
 - 改动：撕掉上一版那个「把官网原文列成长清单」的总览块；`lib/handbook-service.js` 改成 `buildVersionOverview`（只挑最新一版的卡片），最新一版的卡片从墙里分出来进速览块，更早的版本归「再往前几版」；`ui/assets/handbook.js` 速览块改用 `leadHtml`/`rowHtml`（还是卡片），三张先摆、其余收在「还有 N 张，展开」；`handbook-cards` 提示词加一条「改名/入口改名这类要挑出来」，`CARD_PROMPT_VERSION` 提到 3。

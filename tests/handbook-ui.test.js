@@ -87,9 +87,17 @@ test('知意这一侧带头像，跟应用雷达一个样', () => {
 test('气泡不再挤在清单底下浮着，它住在对话流里', () => {
   assert.doesNotMatch(html, /hb-stream/, '旧的浮层气泡区要拆掉');
   assert.match(js, /\$\('hb-thread'\)\.appendChild/, '气泡进对话流');
-  assert.match(js, /function openChat\(card\)/, '要有翻页动作');
+  assert.match(js, /function openChat\(card, afterTurn\)/, '要有翻页动作');
   assert.match(js, /function closeChat\(\)/, '要有回清单动作');
-  assert.match(js, /if \(!state\.chat\) openChat\(card\);/, '点发送先翻页再发');
+  assert.match(js, /if \(!state\.chat\) \{\s*\n\s*openChat\(card, \(\) => \{ void send\(\); \}\);/, '点发送先翻页再发');
+});
+
+test('点开卡片有知意的开场白，不是一个空窗口', () => {
+  assert.match(js, /function cardIntro\(card\)/, '要有开场白这个动作');
+  assert.match(js, /greeted\.has\(card\.id\)/, '同一条不重复打招呼');
+  assert.match(js, /pushBubble\('sys', intro\)/, '开场白走知意那一侧，带头像');
+  assert.match(js, /想细问哪一点，直接说/, '开场白要收一句能往下接的话');
+  assert.match(js, /openChat\(card, \(\) => \{ void send\(\); \}\)/, '发送时先上开场白，再上你的话');
 });
 
 test('追问按钮和发送按钮都不贴着边框，留出呼吸空间', () => {
