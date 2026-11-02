@@ -53,6 +53,35 @@ test('追问模式：清单整块退场，换成一条干净的对话流', () =>
   assert.match(css, /\.hb-body\.is-chat \.hb-composer \{[^}]*position: static/, '输入台在追问页固定在底下');
 });
 
+test('翻页是淡出下沉再淡回来，不是硬切', () => {
+  assert.match(css, /\.hb-page\.is-turning \{[^}]*opacity: 0/, '翻页时整页先淡出');
+  assert.match(css, /\.hb-page \{[^}]*transition: opacity/, '整页要有透明度过渡');
+  assert.match(js, /function turnPage\(swap\)/, '翻页走一个统一的换页动作');
+  assert.match(js, /page\.classList\.add\('is-turning'\)/, '换页前要先淡出');
+  assert.match(js, /page\.classList\.remove\('is-turning'\)/, '换完再淡回来');
+});
+
+test('开头就写明当前版本号', () => {
+  assert.match(html, /id="hb-ver"/, '页头要有版本号的位置');
+  assert.match(css, /\.hb-ver-tag \{/, '版本号要有样式');
+  assert.match(js, /function renderVersionLine/, '要渲染版本号那行');
+  assert.match(js, /hb-ver-tag/, '版本号要真的写进页面');
+});
+
+test('有一块专门讲这一版更新了啥，不按「跟你有没有关系」筛', () => {
+  assert.match(html, /id="hb-overview"/, '要有本版总览这一块');
+  assert.match(js, /function renderOverview/, '要渲染本版总览');
+  assert.match(js, /这一版更新了啥/, '标题里要点明这是本版总览');
+  assert.match(css, /\.hb-ov-item \{/, '总览里的条目要有样式');
+  assert.match(css, /\.hb-ov-g/, '总览要能折叠');
+});
+
+test('知意这一侧带头像，跟应用雷达一个样', () => {
+  assert.match(js, /hb-avatar/, '回答气泡要带头像');
+  assert.match(js, /assets\/market-avatar\.png/, '用的是知意同一张头像');
+  assert.match(css, /\.hb-avatar \{/, '头像要有样式');
+});
+
 test('气泡不再挤在清单底下浮着，它住在对话流里', () => {
   assert.doesNotMatch(html, /hb-stream/, '旧的浮层气泡区要拆掉');
   assert.match(js, /\$\('hb-thread'\)\.appendChild/, '气泡进对话流');

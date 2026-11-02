@@ -1,5 +1,14 @@
 # 测试
 
+## 2026-11-02 翻页更丝滑 + 本版总览 + 全局口吻（0.2.1-dev.5）
+
+- 改动：`ui/assets/handbook.js` 加 `turnPage`（整页淡出下沉再淡回来）、`renderVersionLine`、`renderOverview`；回答气泡带知意头像（`assets/market-avatar.png`）。`ui/assets/handbook.css` 加版本号胶囊、本版总览块（`<details>` 分组）、头像与翻页样式。`lib/handbook-service.js` 新增 `buildOverview`，`loadWall` 返回 `overview`。新建 `lib/voice-style.js`（共享口吻），六个调用点统一引用；`handbook-cards` 的 `CARD_PROMPT_VERSION` 提到 2。
+- 新增 `tests/handbook-overview.test.js` 4 项（分组、总数、改名条目能摆出来、超量截断、无版本时不编）；`tests/style-voice.test.js` 7 项；`tests/handbook-ui.test.js` 扩到 13 项（翻页、版本号、本版总览、头像）。
+- 全量 `node --test` 760 项：758 通过 / 0 失败 / 2 跳过（既有）。
+- 事实核查：HanaAgent `v1.5.48-beta` 官方 release 确有「中文信息流名称调整：「报纸」更名为「日报」」，核对自 GitHub releases API（`liliMozi/openhanako`）。
+- 界面检查：本机 Edge 无头渲染静态页（清单态 + 追问态），版本号胶囊、本版总览、头像位置符合预期。
+- 未做：App 未重载；翻页动画的节奏、口吻是否真的一致，未在真机里跑一轮对话验。
+
 ## 2026-11-02 追问改成独立的一页（0.2.1-dev.4）
 
 - 改动：新增 `.hb-chat` 追问页（返回条 + 对话流），`#view-handbook` 挂 `is-chat` 时清单退场、对话流接管；气泡容器从 `.hb-stream` 改成 `#hb-thread`；输入台里的小字删除；`handbook.js` 加 `openChat` / `closeChat` / `scrollToThread`，点发送与点「接着问这条」都先翻页。

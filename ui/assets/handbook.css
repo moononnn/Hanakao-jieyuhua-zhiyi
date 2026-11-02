@@ -42,7 +42,9 @@ html[data-appearance="dark"] {
   overflow-x: clip;
 }
 .hb-wk { font-family: "LXGW WenKai", "霞鹜文楷", "Kaiti SC", STKaiti, system-ui, serif; }
-.hb-page { max-width: 1000px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 32px); }
+.hb-page { max-width: 1000px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 32px); transition: opacity .19s ease, transform .19s cubic-bezier(.22, 1.08, .36, 1); }
+/* 翻页：整页先淡出下沉，换完内容再淡回来。清单退场和对话进场之间没有硬切。 */
+.hb-page.is-turning { opacity: 0; transform: translateY(10px); }
 [hidden] { display: none !important; }
 
 /* ── 头部 ── */
@@ -52,6 +54,42 @@ html[data-appearance="dark"] {
 .hb-lede { margin: 7px 0 0; color: var(--hb-muted); font-size: 14px; }
 .hb-lede b { color: var(--hb-ink); font-weight: 600; }
 .hb-lede em { font-style: normal; color: var(--hb-faint); }
+
+/* ── 版本号：一开口就说清楚是哪一版 ── */
+.hb-ver { display: flex; align-items: center; gap: 9px; margin: 11px 0 0; }
+.hb-ver-tag {
+  display: inline-block; padding: 3px 11px; border-radius: 999px;
+  background: var(--hb-mint); color: var(--hb-primary);
+  font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+}
+.hb-ver-note { font-size: 12.5px; color: var(--hb-faint); }
+
+/* ── 本版总览：这一版到底改了什么，不按「跟你有没有关系」筛 ── */
+.hb-overview {
+  margin: 16px 0 0; padding: 14px 16px 16px;
+  background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 18px;
+  box-shadow: var(--hb-shadow);
+}
+.hb-ov-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px solid var(--hb-line); }
+.hb-ov-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.hb-ov-head .n { margin-left: auto; font-size: 11.5px; color: var(--hb-faint); }
+.hb-ov-g { margin-top: 8px; }
+.hb-ov-h { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; list-style: none; }
+.hb-ov-h::-webkit-details-marker { display: none; }
+.hb-ov-n { font-size: 12.5px; font-weight: 600; color: var(--hb-primary); }
+.hb-ov-c { font-size: 11px; color: var(--hb-faint); }
+.hb-ov-h::after {
+  content: "▾"; margin-left: auto; font-size: 11px; color: var(--hb-faint);
+  transition: transform .18s cubic-bezier(.22, 1.08, .36, 1);
+}
+.hb-ov-g:not([open]) .hb-ov-h::after { transform: rotate(-90deg); }
+.hb-ov-list { list-style: none; margin: 0; padding: 0 0 4px; }
+.hb-ov-item { padding: 8px 0; border-bottom: 1px solid #f1ece1; }
+html[data-appearance="dark"] .hb-ov-item { border-bottom-color: #333a33; }
+.hb-ov-item:last-child { border-bottom: 0; }
+.hb-ov-t { display: block; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.hb-ov-d { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--hb-muted); }
+.hb-ov-src { display: block; margin-top: 4px; font-size: 11px; letter-spacing: .04em; color: var(--hb-faint); }
 
 /* ── 状态条：读的时候说在读什么，读完说读到了什么 ── */
 .hb-status {
@@ -185,6 +223,9 @@ html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 
 .hb-thread { display: flex; flex-direction: column; gap: 12px; }
 /* 对话少的时候沉在输入台上面，多的时候正常往下长（auto 外边距在溢出时归零，不会把顶部截掉）。 */
 .hb-thread::before { content: ""; margin-top: auto; }
+/* 知意这一侧带头像，跟应用雷达的对话窗一个样。 */
+.hb-bub-row { display: flex; align-items: flex-start; gap: 8px; }
+.hb-avatar { flex: none; width: 20px; height: 20px; border-radius: 50%; object-fit: cover; margin-top: 2px; }
 .hb-bub { max-width: 84%; padding: 9px 14px; border-radius: 16px; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
 .hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); border-radius: 16px 16px 6px 16px; }
 .hb-bub.sys { align-self: flex-start; background: #f6f4ec; color: var(--hb-muted); font-size: 13px; border-radius: 16px 16px 16px 6px; }
@@ -246,4 +287,5 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
 @media (prefers-reduced-motion: reduce) {
   .hb-lead, .hb-status.is-busy::before { transition: none; animation: none; }
   .hb-composer, .hb-list, .hb-chat { animation: none; }
+  .hb-page { transition: none; }
 }

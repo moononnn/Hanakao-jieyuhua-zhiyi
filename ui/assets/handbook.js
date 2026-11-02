@@ -106,6 +106,54 @@ function rowHtml(card) {
   </div>`;
 }
 
+function renderVersionLine(data, overview) {
+  const box = $('hb-ver');
+  if (!overview) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  const note = data.upToDate
+    ? '你装的就是这一版'
+    : data.installed
+      ? `你装的是 ${data.installed}，这一版还没装上`
+      : '你装的是哪版没读到';
+  box.innerHTML = `<span class="hb-ver-tag">${esc(overview.version)}</span><span class="hb-ver-note">${esc(note)}</span>`;
+  box.hidden = false;
+}
+
+/**
+ * 这一版的总览：按原文摆，不按「你摸得到」筛。
+ * 分组可折叠：新功能默认展开，问题修复先收着。
+ */
+function renderOverview(overview) {
+  const box = $('hb-overview');
+  if (!overview || !overview.groups.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  const shown = overview.groups.reduce((sum, group) => sum + group.items.length, 0);
+  const groups = overview.groups.map((group, index) => {
+    const items = group.items.map((item) => {
+      const detail = item.detail && item.detail.length > 110 ? `${item.detail.slice(0, 110)}…` : item.detail;
+      const source = [item.section, item.group].filter(Boolean).join(' · ');
+      return `<li class="hb-ov-item">
+        <span class="hb-ov-t">${esc(item.title)}</span>
+        ${detail ? `<span class="hb-ov-d">${esc(detail)}</span>` : ''}
+        ${source ? `<span class="hb-ov-src">${esc(source)}</span>` : ''}
+      </li>`;
+    }).join('');
+    const open = index === 0 ? ' open' : '';
+    return `<details class="hb-ov-g"${open}>
+      <summary class="hb-ov-h"><span class="hb-ov-n">${esc(group.title)}</span><span class="hb-ov-c">${group.total} 条</span></summary>
+      <ul class="hb-ov-list">${items}</ul>
+    </details>`;
+  }).join('');
+  box.innerHTML = `<header class="hb-ov-head"><h2>${esc(overview.version)} 这一版更新了啥</h2><span class="n">原文共 ${overview.totalItems} 条，这里摆 ${shown} 条</span></header>${groups}`;
+  box.hidden = false;
+}
+
 function render() {
   const data = state.data;
   const lede = $('hb-lede');
@@ -117,6 +165,8 @@ function render() {
     $('hb-top3').hidden = true;
     $('hb-groups').hidden = true;
     $('hb-empty').hidden = false;
+    renderVersionLine(data || {}, data?.overview);
+    renderOverview(data?.overview);
     const failed = data?.versions?.find((row) => row.error);
     $('hb-empty').innerHTML = failed
       ? `<b>这版没读出来</b>${esc(failed.error)}<br>确认网络通了、内容模型也选好了，点上面的「再试一次」。`
@@ -136,6 +186,8 @@ function render() {
   }
 
   $('hb-empty').hidden = true;
+  renderVersionLine(data, data.overview);
+  renderOverview(data.overview);
 
   const highlights = data.wall.highlights.slice(0, 3);
   $('hb-top3').innerHTML = highlights.map(leadHtml).join('');
@@ -224,7 +276,8 @@ function onRowClick(event) {
     const card = findCard(ask.dataset.ask);
     cite(card);
     openChat(card);
-    $('hb-ta').focus();
+    // 等翻页那口气过去再落光标，不然光标会在看不见的地方闪。
+    window.setTimeout(() => $('hb-ta').focus(), TURN_MS + 40);
     return;
   }
   const head = event.target.closest('.hb-row-h');
@@ -241,32 +294,69 @@ function pushBubble(kind, text) {
   const bubble = document.createElement('div');
   bubble.className = `hb-bub ${kind}`;
   bubble.textContent = text;
+  if (kind === 'sys') {
+    // 知意这一侧带头像，跟应用雷达的对话窗一个样：看得出哪句是她说的。
+    const row = document.createElement('div');
+    row.className = 'hb-bub-row';
+    const avatar = document.createElement('img');
+    avatar.className = 'hb-avatar';
+    avatar.setAttribute('src', 'assets/market-avatar.png');
+    avatar.setAttribute('alt', '');
+    avatar.setAttribute('width', '20');
+    avatar.setAttribute('height', '20');
+    row.append(avatar, bubble);
+    $('hb-thread').appendChild(row);
+    scrollToThread();
+    return bubble;
+  }
   $('hb-thread').appendChild(bubble);
   scrollToThread();
   return bubble;
+}
+
+// 翻页：先把整页淡出下沉，换完内容再淡回来。
+// 清单退场和对话进场之间没有硬切，只有一口气。
+const TURN_MS = 190;
+function turnPage(swap) {
+  const page = document.querySelector('.hb-page');
+  if (!page) {
+    swap();
+    return;
+  }
+  page.classList.add('is-turning');
+  window.setTimeout(() => {
+    swap();
+    page.classList.remove('is-turning');
+  }, TURN_MS);
 }
 
 // 追问模式：清单整块退场，换成一条干净的对话流。
 // 像翻到另一页，而不是把气泡挤在清单底下浮着。
 function openChat(card) {
   const chat = $('hb-chat');
-  if (!state.chat) {
-    state.chat = true;
+  const apply = () => {
     $('view-handbook').classList.add('is-chat');
     chat.hidden = false;
-    chat.scrollTop = 0;
+    if (card) cite(card);
+    $('hb-chat-t').textContent = card ? `追问：${card.title}` : '追问答疑';
+    scrollToThread();
+  };
+  if (state.chat) {
+    apply();
+    return;
   }
-  if (card) cite(card);
-  $('hb-chat-t').textContent = card ? `追问：${card.title}` : '追问答疑';
-  scrollToThread();
+  state.chat = true;
+  turnPage(apply);
 }
 
 function closeChat() {
   if (!state.chat) return;
   state.chat = false;
-  $('view-handbook').classList.remove('is-chat');
-  $('hb-chat').hidden = true;
-  $('hb-ta').blur();
+  turnPage(() => {
+    $('view-handbook').classList.remove('is-chat');
+    $('hb-chat').hidden = true;
+    $('hb-ta').blur();
+  });
 }
 
 // 对话流在页面里正常排版，滚到底就是最新一条。
