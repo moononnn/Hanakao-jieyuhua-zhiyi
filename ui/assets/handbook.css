@@ -182,10 +182,12 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
 }
 .hb-field:focus-within { border-color: var(--hb-mint-deep); box-shadow: 0 1px 2px #35493e0f, 0 14px 30px -16px #35493e45; }
 html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 1px 2px #0000004d, 0 14px 30px -16px #000000a6; }
-.hb-stream { margin: 0 0 8px; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
-.hb-bub { max-width: 80%; padding: 7px 13px; border-radius: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-.hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); }
-.hb-bub.sys { align-self: flex-start; background: #f6f4ec; color: var(--hb-muted); font-size: 12.5px; }
+.hb-thread { display: flex; flex-direction: column; gap: 12px; }
+/* 对话少的时候沉在输入台上面，多的时候正常往下长（auto 外边距在溢出时归零，不会把顶部截掉）。 */
+.hb-thread::before { content: ""; margin-top: auto; }
+.hb-bub { max-width: 84%; padding: 9px 14px; border-radius: 16px; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
+.hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); border-radius: 16px 16px 6px 16px; }
+.hb-bub.sys { align-self: flex-start; background: #f6f4ec; color: var(--hb-muted); font-size: 13px; border-radius: 16px 16px 16px 6px; }
 html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-ref { display: none; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin-bottom: 8px; padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--hb-mint); border: 1px solid var(--hb-mint-deep); font-size: 12px; color: var(--hb-primary); }
 .hb-ref.on { display: inline-flex; }
@@ -198,7 +200,33 @@ html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-send:hover { background: #2b5240; }
 .hb-send:disabled { opacity: .5; cursor: default; }
 html[data-appearance="dark"] .hb-send { color: #20251f; }
-.hb-foot { margin: 7px 0 0; font-size: 11.5px; color: #a9b3ab; }
+/* ── 追问模式：像翻到另一页 ──
+   清单整块退场（display:none，不占位），换上一条干净的对话流；
+   两边各用一次淡入上浮，300ms，缓动带一点回弹，尾巴过冲一丁点再稳住。 */
+.hb-list { animation: hb-list-in .26s cubic-bezier(.22, 1.08, .36, 1) both; }
+.hb-chat { display: none; }
+.hb-body.is-chat .hb-list { display: none; }
+.hb-body.is-chat .hb-chat { display: flex; flex-direction: column; animation: hb-chat-in .3s cubic-bezier(.22, 1.08, .36, 1) both; }
+.hb-body.is-chat .hb-composer { animation: none; }
+/* 追问模式整页接管：对话流自己滚，输入台固定在页面底下，不跟着内容跑。 */
+.hb-body.is-chat .hb-page { height: calc(100vh - 118px); display: flex; flex-direction: column; overflow: hidden; }
+.hb-body.is-chat .hb-chat { flex: 1 1 auto; min-height: 0; }
+.hb-body.is-chat .hb-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.hb-body.is-chat .hb-composer { position: static; margin: 12px 0 0; }
+.hb-body.is-chat .hb-composer::before { display: none; }
+@keyframes hb-list-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes hb-chat-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.hb-chat-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 0 12px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--hb-line);
+}
+.hb-chat-back {
+  flex: none; border: 1px solid var(--hb-line); background: var(--hb-surface); color: var(--hb-primary);
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 13px; border-radius: 999px; cursor: pointer; min-height: 32px;
+}
+.hb-chat-back:hover { background: var(--hb-mint); border-color: var(--hb-mint-deep); }
+.hb-chat-t { font-size: 12.5px; color: var(--hb-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 720px) {
   .hb-page { padding: 18px 16px; }
@@ -217,5 +245,5 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
 
 @media (prefers-reduced-motion: reduce) {
   .hb-lead, .hb-status.is-busy::before { transition: none; animation: none; }
-  .hb-composer { animation: none; }
+  .hb-composer, .hb-list, .hb-chat { animation: none; }
 }

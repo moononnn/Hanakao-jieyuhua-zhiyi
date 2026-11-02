@@ -11,7 +11,7 @@ const WALL_TIMEOUT = 120000;
 const ASK_TIMEOUT = 90000;
 const VISIBLE_ROWS = 8;
 
-const state = { data: null, tags: [], current: null, history: [], showAll: false };
+const state = { data: null, tags: [], current: null, history: [], showAll: false, chat: false };
 
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -223,6 +223,7 @@ function onRowClick(event) {
   if (ask) {
     const card = findCard(ask.dataset.ask);
     cite(card);
+    openChat(card);
     $('hb-ta').focus();
     return;
   }
@@ -240,9 +241,43 @@ function pushBubble(kind, text) {
   const bubble = document.createElement('div');
   bubble.className = `hb-bub ${kind}`;
   bubble.textContent = text;
-  $('hb-stream').appendChild(bubble);
-  $('hb-stream').scrollTop = $('hb-stream').scrollHeight;
+  $('hb-thread').appendChild(bubble);
+  scrollToThread();
   return bubble;
+}
+
+// 追问模式：清单整块退场，换成一条干净的对话流。
+// 像翻到另一页，而不是把气泡挤在清单底下浮着。
+function openChat(card) {
+  const chat = $('hb-chat');
+  if (!state.chat) {
+    state.chat = true;
+    $('view-handbook').classList.add('is-chat');
+    chat.hidden = false;
+    chat.scrollTop = 0;
+  }
+  if (card) cite(card);
+  $('hb-chat-t').textContent = card ? `追问：${card.title}` : '追问答疑';
+  scrollToThread();
+}
+
+function closeChat() {
+  if (!state.chat) return;
+  state.chat = false;
+  $('view-handbook').classList.remove('is-chat');
+  $('hb-chat').hidden = true;
+  $('hb-ta').blur();
+}
+
+// 对话流在页面里正常排版，滚到底就是最新一条。
+function scrollToThread() {
+  const scroller = document.querySelector('.workspace');
+  if (!scroller) return;
+  try {
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+  } catch {
+    scroller.scrollTop = scroller.scrollHeight;
+  }
 }
 
 async function ask() {
@@ -250,6 +285,7 @@ async function ask() {
   const question = ta.value.trim();
   if (!question) return;
   const card = state.current;
+  if (!state.chat) openChat(card);
   pushBubble('me', card ? `（问「${card.title}」）${question}` : question);
   ta.value = '';
   ta.style.height = '38px';
@@ -302,6 +338,7 @@ function bind() {
     onRowClick(event);
   });
   $('hb-refx').addEventListener('click', () => cite(null));
+  $('hb-chat-back').addEventListener('click', () => closeChat());
   $('hb-send').addEventListener('click', ask);
   $('hb-rebuild').addEventListener('click', () => loadWall({ rebuild: true }));
   $('hb-ta').addEventListener('input', function onInput() {
