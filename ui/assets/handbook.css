@@ -13,7 +13,7 @@
   --hb-pink: #e89bb0;
   --hb-pink-soft: #faedf0;
   --hb-pink-ink: #8a4f60;
-  --hb-shadow: 0 8px 24px #35493e0f;
+  --hb-shadow: 0 10px 26px #35493e14;
 }
 html[data-appearance="dark"] {
   --hb-paper: #20251f;
@@ -92,6 +92,16 @@ html[data-appearance="dark"] {
 .hb-lead .hb-go { margin-top: 9px; font-size: 12px; color: var(--hb-primary); opacity: 0; transition: opacity .16s; }
 .hb-lead:hover .hb-go { opacity: 1; }
 
+/* 头条展开块：比卡片重一级的阴影，让它看起来是从卡片上掉下来的。 */
+.hb-lead-open {
+  margin-top: 12px;
+  border: 1px solid var(--hb-line);
+  border-radius: 14px;
+  background: var(--hb-surface);
+  box-shadow: 0 16px 38px -20px #35493e66;
+  overflow: hidden;
+}
+
 /* ── 分组清单 ── */
 .hb-groups { margin: 26px 0 0; }
 .hb-group { margin-bottom: 20px; }
@@ -143,8 +153,25 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
 .hb-empty { margin: 40px 0; text-align: center; color: var(--hb-muted); font-size: 14px; }
 .hb-empty b { display: block; font-size: 16px; color: var(--hb-ink); margin-bottom: 6px; }
 
-/* ── 常驻输入 ── */
-.hb-composer { position: sticky; bottom: 0; margin: 20px calc(-1 * clamp(16px, 3vw, 32px)) 0; padding: 14px clamp(16px, 3vw, 32px) 16px; background: linear-gradient(to bottom, #fffdf800, var(--hb-paper) 26%); }
+/* ── 常驻输入：明确浮在内容之上。
+   实色底 + 上沿细线 + 上投影 + 一道渐隐。之前只有一层很淡的渐变，
+   滚上来的内容会透在输入框上面，看着跟页面是一张纸。 */
+.hb-composer {
+  position: sticky; bottom: 0; z-index: 6;
+  margin: 20px calc(-1 * clamp(16px, 3vw, 32px)) 0;
+  padding: 18px clamp(16px, 3vw, 32px) 16px;
+  background: var(--hb-paper);
+  border-top: 1px solid var(--hb-line);
+  box-shadow: 0 -14px 34px -22px #35493e7a;
+}
+.hb-composer::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -26px; height: 26px;
+  background: linear-gradient(to bottom, #fffdf800, var(--hb-paper));
+  pointer-events: none;
+}
+html[data-appearance="dark"] .hb-composer::before {
+  background: linear-gradient(to bottom, #20251f00, var(--hb-paper));
+}
 .hb-stream { margin: 0 0 8px; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
 .hb-bub { max-width: 80%; padding: 7px 13px; border-radius: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 .hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); }

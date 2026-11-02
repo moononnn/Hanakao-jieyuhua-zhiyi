@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describeWall, listReleases, loadWall, readHostVersion, resetHandbookListCacheForTest, sourcesForCard } from "../lib/handbook-service.js";
+import { describeWall, listReleases, loadWall, readHostVersion, readVersionFromHomes, resetHandbookListCacheForTest, sourcesForCard } from "../lib/handbook-service.js";
 import { writeCardsCache, resetCardsCacheForTest } from "../lib/handbook-cache.js";
 import { CARD_PROMPT_VERSION } from "../lib/handbook-cards.js";
 import { parseReleaseBody } from "../lib/handbook-releases.js";
@@ -56,19 +56,16 @@ const card = (title, items) => ({
 });
 
 test("本机版本从 server-info.json 读，读不到换落盘文件", () => {
-  const sdk = tempSdk();
-  const home = path.resolve(sdk.dataDir, "..", "..");
-  // dataDir 是 <home>/app-data/<id>，测试里自己搭出同样的形状。
-  const fakeHome = path.join(sdk.dataDir, "app-data", "jiegehua-zhiyi");
-  fs.mkdirSync(fakeHome, { recursive: true });
-  assert.equal(readHostVersion({ dataDir: fakeHome }), "");
-  fs.writeFileSync(path.join(sdk.dataDir, "server-info.json"), JSON.stringify({ version: "1.5.48-beta" }), "utf8");
-  assert.equal(readHostVersion({ dataDir: fakeHome }), "1.5.48-beta");
-  fs.rmSync(path.join(sdk.dataDir, "server-info.json"));
-  fs.writeFileSync(path.join(sdk.dataDir, "last-update-version"), "1.5.7-beta\n", "utf8");
-  assert.equal(readHostVersion({ dataDir: fakeHome }), "1.5.7-beta");
-  assert.equal(readHostVersion({}), "");
-  void home;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "handbook-home-"));
+  assert.equal(readVersionFromHomes([home]), "");
+  fs.writeFileSync(path.join(home, "server-info.json"), JSON.stringify({ version: "1.5.48-beta" }), "utf8");
+  assert.equal(readVersionFromHomes([home]), "1.5.48-beta");
+  fs.rmSync(path.join(home, "server-info.json"));
+  fs.writeFileSync(path.join(home, "last-update-version"), "1.5.7-beta\n", "utf8");
+  assert.equal(readVersionFromHomes([home]), "1.5.7-beta");
+  // 第一个目录什么都没有时接着找第二个。
+  assert.equal(readVersionFromHomes([path.join(home, "空"), home]), "1.5.7-beta");
+  assert.equal(readHostVersion({}), readHostVersion({}));
 });
 
 test("已是最新时给出 upToDate，不硬凑卡片", async () => {

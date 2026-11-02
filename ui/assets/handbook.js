@@ -213,7 +213,7 @@ function onLeadClick(event) {
   box.id = 'hb-lead-open';
   box.dataset.card = card.id;
   box.style.marginTop = '12px';
-  box.innerHTML = `<div class="hb-row open" style="border:1px solid var(--hb-line);border-radius:14px;background:var(--hb-surface)">${detailHtml(card)}</div>`;
+  box.innerHTML = `<div class="hb-lead-open"><div class="hb-row open" style="border:0;border-radius:0;background:transparent">${detailHtml(card)}</div></div>`;
   $('hb-top3').insertAdjacentElement('afterend', box);
   cite(card);
 }
