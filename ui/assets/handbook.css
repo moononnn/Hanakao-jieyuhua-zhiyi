@@ -1,12 +1,13 @@
 /* Hana 更新手记：米白纸、薄荷主色、樱花粉只用于「之前烦过你的」。
    自带一套变量，不依赖 panel.css：这页会被单独打开，样式来源越少越不会因为别处改版而崩。 */
 :root {
-  --hb-paper: #fffdf8;
-  --hb-surface: #fffefb;
+  --hb-paper: #fbf6ea;
+  --hb-surface: #fbf6ea;
+  --hb-tray: #f6efe0;
   --hb-ink: #2f3a33;
   --hb-muted: #5b6b61;
   --hb-faint: #96a29a;
-  --hb-line: #eae5d9;
+  --hb-line: #e7e0cd;
   --hb-page: var(--paper, #f5f8f3);
   --hb-mint: #eef4ee;
   --hb-mint-deep: #d5e7da;
@@ -14,11 +15,12 @@
   --hb-pink: #e89bb0;
   --hb-pink-soft: #faedf0;
   --hb-pink-ink: #8a4f60;
-  --hb-shadow: 0 10px 26px #35493e14;
+  --hb-shadow: 0 8px 22px #35493e10;
 }
 html[data-appearance="dark"] {
   --hb-paper: #20251f;
   --hb-surface: #262d26;
+  --hb-tray: #242a24;
   --hb-ink: #e8ece4;
   --hb-muted: #b3c0b6;
   --hb-faint: #8b978d;
@@ -67,7 +69,7 @@ html[data-appearance="dark"] {
 /* ── 本版速览：最新版的内容，还是卡片；原文长文不往这儿搬 ── */
 .hb-overview {
   margin: 16px 0 0; padding: 14px 16px 14px;
-  background: var(--hb-surface); border: 1px solid var(--hb-line); border-radius: 18px;
+  background: var(--hb-tray); border: 1px solid var(--hb-line); border-radius: 18px;
   box-shadow: var(--hb-shadow);
 }
 .hb-ov-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 12px; }
@@ -86,7 +88,7 @@ html[data-appearance="dark"] {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
   margin: 16px 0 0; padding: 9px 14px;
   border: 1px solid var(--hb-line); border-radius: 12px;
-  background: var(--hb-surface); color: var(--hb-muted); font-size: 13px;
+  background: var(--hb-tray); color: var(--hb-muted); font-size: 13px;
 }
 .hb-status.is-busy::before {
   content: ""; width: 9px; height: 9px; border-radius: 50%;
@@ -113,6 +115,7 @@ html[data-appearance="dark"] {
   transition: transform .18s cubic-bezier(.22, 1.06, .36, 1), box-shadow .18s ease, border-color .18s ease;
 }
 .hb-lead:hover { transform: translateY(-2px); box-shadow: 0 14px 30px #35493e1a; border-color: #ded9cb; }
+html[data-appearance="dark"] .hb-lead:hover { box-shadow: 0 14px 30px #00000059; border-color: #46503f; }
 .hb-lead:focus-visible { outline: 2px solid var(--hb-primary); outline-offset: 3px; }
 .hb-lead-k { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
 .hb-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--hb-mint); color: var(--hb-primary); font-weight: 600; }
@@ -131,6 +134,7 @@ html[data-appearance="dark"] {
   box-shadow: 0 16px 38px -20px #35493e66;
   overflow: hidden;
 }
+html[data-appearance="dark"] .hb-lead-open { box-shadow: 0 16px 38px -20px #000000cc; }
 
 /* ── 分组清单 ── */
 .hb-groups { margin: 26px 0 0; }
@@ -152,6 +156,7 @@ html[data-appearance="dark"] .hb-row:hover { background: #2b322b; }
 .hb-row-t .hb-swap { margin: 2px 0 0; font-size: 12.5px; color: var(--hb-muted); line-height: 1.55; overflow-wrap: anywhere; }
 .hb-row-t .hb-swap i { font-style: normal; color: var(--hb-faint); margin-right: 4px; font-size: 11.5px; letter-spacing: .04em; }
 .hb-row-t .hb-swap .arrow { color: #c3cec6; margin: 0 5px; font-size: 11px; }
+html[data-appearance="dark"] .hb-row-t .hb-swap .arrow { color: #5c6a61; }
 .hb-row-v { font-size: 11px; color: var(--hb-faint); padding-top: 2px; white-space: nowrap; }
 .hb-row-v .hurt { display: inline-block; margin-right: 7px; padding: 1px 7px; border-radius: 999px; background: var(--hb-pink-soft); color: var(--hb-pink-ink); font-size: 10.5px; font-weight: 600; }
 
@@ -205,7 +210,7 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
   border: 1px solid var(--hb-line);
   border-radius: 20px;
   padding: 8px 10px 8px 15px;
-  box-shadow: inset 0 1px 0 #fffdf8, 0 1px 2px #35493e0f, 0 12px 28px -16px #35493e38;
+  box-shadow: inset 0 1px 0 #fefcf7, 0 1px 2px #35493e0d, 0 12px 26px -16px #35493e2e;
   transition: border-color .16s ease, box-shadow .16s ease;
 }
 .hb-field:focus-within { border-color: var(--hb-mint-deep); box-shadow: 0 1px 2px #35493e0f, 0 14px 30px -16px #35493e45; }
@@ -240,14 +245,15 @@ html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 
 .hb-bub.me { align-self: flex-end; background: var(--hb-mint); color: var(--hb-primary); border-radius: 16px 16px 6px 16px; }
 /* 知意的正文在卡片里，不带自己的底色。 */
 .hb-bub.sys { max-width: 100%; padding: 0; background: transparent; color: var(--hb-ink); font-size: 13.5px; border-radius: 0; }
-html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-ref { display: none; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin-bottom: 8px; padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--hb-mint); border: 1px solid var(--hb-mint-deep); font-size: 12px; color: var(--hb-primary); }
 .hb-ref.on { display: inline-flex; }
 .hb-ref b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
 .hb-ref button { flex: none; border: 0; background: #ffffffb0; color: var(--hb-primary); width: 21px; height: 21px; border-radius: 999px; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
+html[data-appearance="dark"] .hb-ref button { background: #ffffff1f; }
 .hb-box { display: flex; align-items: flex-end; gap: 10px; }
 .hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 22px; padding: 8px 0; height: 38px; max-height: 120px; }
 .hb-box textarea::placeholder { color: #9aa79e; }
+html[data-appearance="dark"] .hb-box textarea::placeholder { color: #7d8a81; }
 .hb-send { flex: none; width: 38px; height: 38px; border-radius: 13px; border: 0; background: var(--hb-primary); color: #fffdf8; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: background .14s; }
 .hb-send:hover { background: #2b5240; }
 .hb-send:disabled { opacity: .5; cursor: default; }
@@ -293,6 +299,7 @@ html[data-appearance="dark"] .hb-send { color: #20251f; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: #c9dfd3; border-radius: 99px; border: 2px solid var(--hb-paper); }
+html[data-appearance="dark"] *::-webkit-scrollbar-thumb { background: #3f4c43; }
 *::-webkit-scrollbar-thumb:hover { background: var(--hb-primary); }
 * { scrollbar-width: thin; scrollbar-color: #c9dfd3 transparent; }
 
