@@ -439,7 +439,7 @@ function quickActions(item) {
   // 只有「已上架的应用递了新版」才有旧版可比；首次申请问「更新了什么」只会得到一个空答案。
   const firstTime = item.source === 'pending' && !item.listedVersion;
   const rows = [];
-  // 这些问题是代替玥儿打出去的字，所以按她自己的口气写：短句、说「啥」「咋」，
+  // 这些问题是代替她打出去的字，所以按她自己的口气写：短句、说「啥」「咋」，
   // 不摆「用大白话说清它是干什么的、第一次上手要做什么、有什么地方得先留意」这种三段式公文。
   if (installed && version && installed !== version) {
     rows.push({

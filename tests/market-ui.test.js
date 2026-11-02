@@ -471,7 +471,7 @@ test('quick question sends through the chat route and reuses the bound snapshot'
   assert.match(sent.body.text, /权限/);
 });
 
-test('快捷问题按玥儿自己的口气写，不摆三段式公文', async () => {
+test('快捷问题按她自己的口气写，不摆三段式公文', async () => {
   // 这几句话是代替她打出去的，会原样存在聊天记录里。写成「用大白话说清它是干什么的、
   // 第一次上手要做什么、有什么地方得先留意」这种模板，她翻记录时会认不出是自己说的。
   const entry = { ...item(1), installed: true, installedVersion: '0.9.0' };
