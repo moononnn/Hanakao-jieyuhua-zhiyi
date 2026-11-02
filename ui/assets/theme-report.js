@@ -6,6 +6,20 @@
 import { hana } from './sdk.js';
 
 let reported = '';
+let hostThemeLink = null;
+
+/** 宿主主题的 CSS 挂进来，--bg / --text 这几个变量才拿得到真值，
+ *  页面底色才是真的跟着 Hana 走，而不是自己猜一套。 */
+function hostThemeStylesheet() {
+  if (hostThemeLink) return hostThemeLink;
+  hostThemeLink = document.querySelector('link[data-host-theme="true"]');
+  if (hostThemeLink) return hostThemeLink;
+  hostThemeLink = document.createElement('link');
+  hostThemeLink.rel = 'stylesheet';
+  hostThemeLink.dataset.hostTheme = 'true';
+  document.head.appendChild(hostThemeLink);
+  return hostThemeLink;
+}
 
 /** 读页面实际渲染出来的底色，用它判断深浅（宿主没给 appearance 时的兜底）。 */
 function readBackground() {
@@ -52,16 +66,26 @@ function report(resolved) {
 
 /** 订阅宿主主题：设上 data-appearance，并把深浅报给 App。 */
 export function followHostTheme() {
+  const apply = (snapshot) => {
+    const resolved = resolve(snapshot);
+    if (resolved.mode && document.documentElement.getAttribute('data-appearance') !== resolved.mode) {
+      document.documentElement.setAttribute('data-appearance', resolved.mode);
+    }
+    const link = hostThemeStylesheet();
+    if (snapshot?.cssUrl && link.getAttribute('href') !== snapshot.cssUrl) {
+      link.setAttribute('href', snapshot.cssUrl);
+    }
+    if (resolved.mode) report(resolved);
+  };
+
   try {
-    hana.theme.subscribe((snapshot) => {
-      const resolved = resolve(snapshot);
-      if (!resolved.mode) return;
-      if (document.documentElement.getAttribute('data-appearance') !== resolved.mode) {
-        document.documentElement.setAttribute('data-appearance', resolved.mode);
-      }
-      report(resolved);
-    });
+    hana.theme.subscribe(apply);
   } catch {
     // 拿不到主题就维持原样，不影响页面本身。
+  }
+  try {
+    apply(hana.theme?.getSnapshot?.());
+  } catch {
+    // 同上。
   }
 }

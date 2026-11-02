@@ -289,7 +289,7 @@ html[data-appearance="dark"] .flower-mark { color: #edb4c0; background: #48343b;
 html[data-appearance="dark"] .permission-note { border-color: #5b4244; background: #362b2c; }
 html[data-appearance="dark"] .permission-note strong { color: #f0d9d7; }
 html[data-appearance="dark"] .permission-note p { color: #cdbab8; }
-html[data-appearance="dark"] .model-save:not(.is-saved) { border-color: #477a66; background: #477a66; color: #fff; }
+html[data-appearance="dark"] .model-save:not(.is-saved) { border-color: var(--mint-deep); background: var(--mint-deep); color: #16221b; }
 html[data-appearance="dark"] .ball-toggle:hover { background: #34483b; color: #a5d0b5; }
 html[data-appearance="dark"] .ball-toggle.is-on { border-color: #6cbfa0; background: #34483b; color: #a5d0b5; }
 html[data-appearance="dark"] .ball-toggle.is-on:hover { background: #34483b; }
@@ -301,6 +301,14 @@ html[data-appearance="dark"] .permission-state[data-status="denied"] { backgroun
 html[data-appearance="dark"] .permission-state[data-status="not-asked"], html[data-appearance="dark"] .permission-state[data-status="unknown"] { background: #34483b; color: var(--muted); }
 html[data-appearance="dark"] .modal-overlay { background: rgba(8, 12, 10, .58); }
 html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
+/* 深色下主色会反过来变成浅绿（--mint-deep），凡是以它为底色的实心按钮，
+   字都得换成深墨色：白字压在浅绿上只有 1.9:1，基本读不出来。 */
+html[data-appearance="dark"] .settings-btn { color: var(--mint-deep); }
+html[data-appearance="dark"] .ball-actions button { color: #16221b; }
+html[data-appearance="dark"] .ball-actions button.secondary { color: var(--ink); }
+html[data-appearance="dark"] .segmented button[aria-pressed="true"] { color: #16221b; }
+html[data-appearance="dark"] .quick-add button { color: #16221b; }
+html[data-appearance="dark"] .note-icon { background: #48343b; color: #edb4c0; }
 
 /* ── 语音朗读 ── */
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; padding: 16px 2px 4px; }
@@ -375,7 +383,7 @@ html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 
   font-size: 12px;
   border: 1px solid var(--line, #e5e8e1);
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .quick-tag-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -402,7 +410,7 @@ html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 
   padding: 5px 9px;
   border: 1px solid var(--line, #e5e8e1);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   color: inherit;
 }
 
@@ -412,7 +420,7 @@ html[data-appearance="dark"] .modal-box { background: var(--paper); box-shadow: 
   padding: 5px 12px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #2f8f6f;
+  background: var(--mint-deep);
   color: #fff;
   cursor: pointer;
 }

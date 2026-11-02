@@ -27,6 +27,7 @@ function showView(id, { focus = false } = {}) {
   if (id === 'overview') syncOverview();
   if (id === 'overview') void refreshZoomState();
   if (focus) document.querySelector(`.rail-item[data-view="${id}"]`)?.focus();
+  window.dispatchEvent(new CustomEvent('zhiyi:view-change', { detail: { view: id } }));
 }
 
 for (const item of railItems) {

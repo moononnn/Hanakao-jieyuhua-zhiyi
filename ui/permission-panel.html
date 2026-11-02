@@ -164,6 +164,14 @@
   </div>
 
   <div class="group">
+    <div class="label">发现</div>
+    <button type="button" data-view="market">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M7 4v6M4 7h6"/></svg>
+      <span class="text">应用雷达</span>
+    </button>
+  </div>
+
+  <div class="group">
     <div class="label">接口</div>
     <button type="button" data-view="models">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><ellipse cx="8" cy="4.2" rx="4.6" ry="1.8"/><path d="M3.4 4.2v7.6c0 1 2 1.8 4.6 1.8s4.6-.8 4.6-1.8V4.2"/><path d="M3.4 8c0 1 2 1.8 4.6 1.8S12.6 9 12.6 8"/></svg>
@@ -180,6 +188,10 @@
 
   <script type="module">
     import { hana } from './assets/sdk.js';
+    import { followHostTheme } from './assets/theme-report.js';
+
+    // 左侧栏也是面板的一部分：深浅得跟着宿主走，不然切换主题后它自己不变。
+    followHostTheme();
 
     // 宿主靠 hana.ready() 这个报到决定面板算不算加载成功。
     // 不调它，宿主会一直等到超时，然后显示「应用加载失败」。

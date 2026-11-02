@@ -1,0 +1,224 @@
+/* Inherits panel.css tokens and the existing theme-follow.js appearance contract. */
+:root {
+  --radar-muted: #52665a;
+  --radar-primary: #376650;
+  --radar-on-primary: #fffdf8;
+  --radar-notice: #835164;
+  --radar-notice-bg: #faedf0;
+  --radar-shadow: 0 12px 38px #35493e14;
+  --radar-radius: 20px;
+  --radar-space: 16px;
+}
+html[data-appearance="dark"] {
+  --radar-muted: #c2d0c5;
+  --radar-primary: #acd6bb;
+  --radar-on-primary: #202923;
+  --radar-notice: #f1c3d0;
+  --radar-notice-bg: #48343b;
+  --radar-shadow: 0 12px 38px #101b1452;
+}
+.market-body { overflow-x: clip; container-type: inline-size; container-name: market; }
+.market-body [hidden] { display: none !important; }
+.market-body { font-size: 15px; line-height: 1.65; }
+.market-page { width: min(100%, 1360px); margin: auto; padding: 24px clamp(16px, 3vw, 32px); }
+/* 目录页与二级页互斥：点开应用后整页换成对话框，不再是同页上下两块。 */
+.market-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
+.market-catalog { min-width: 0; }
+.market-workspace .market-controls { margin-top: 0; }
+.market-heading { margin-bottom: 20px; }
+.market-intro { margin: 0; color: var(--radar-muted); }
+/* 未过审提醒：只在待审应用页出现，说事实不说免责套话。 */
+.pending-notice {
+  margin: 6px 0 10px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--radar-notice) 26%, transparent);
+  border-left: 3px solid var(--radar-notice);
+  background: var(--radar-notice-bg); color: var(--ink);
+}
+.pending-notice strong { display: block; margin-bottom: 2px; font-size: 13.5px; font-weight: 700; color: var(--radar-notice); letter-spacing: .01em; }
+.pending-notice p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--radar-muted); }
+.pending-notice p + p { margin-top: 3px; }
+.market-body button, .market-body input, .market-body textarea { font: inherit; }
+.market-body button {
+  flex: none; min-height: 44px; padding: 8px 16px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--surface); color: var(--ink); cursor: pointer;
+  white-space: nowrap; transition: background .16s ease, border-color .16s ease;
+}
+.market-body button:hover:not(:disabled) { background: var(--mint); border-color: var(--mint-deep); }
+.market-body button:active:not(:disabled) { transform: translateY(1px); }
+.market-body button:disabled { opacity: .5; cursor: not-allowed; }
+.market-body :is(button, input, textarea, summary):focus-visible { outline: 2px solid var(--mint-deep); outline-offset: 3px; }
+.market-body button.market-primary { background: var(--radar-primary); border-color: var(--radar-primary); color: var(--radar-on-primary); font-weight: 600; }
+.market-body button.market-primary:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); }
+.market-boundary { padding: 14px 18px; border-left: 3px solid var(--pink); border-radius: 0 12px 12px 0; background: var(--surface); color: var(--radar-muted); font-size: 14px; }
+.market-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; margin: 20px 0 12px; align-items: end; }
+.market-segments { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; width: fit-content; padding: 4px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.market-segments button { border: 0; background: transparent; color: var(--radar-muted); border-radius: 12px; }
+.market-segments button[aria-pressed="true"] { background: var(--radar-primary); color: var(--radar-on-primary); }
+.market-segments button[aria-pressed="true"]:hover { background: var(--radar-primary); }
+.market-search { display: grid; gap: 6px; min-width: 0; font-size: 14px; }
+.market-search input, .market-chat textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--ink); background: var(--surface); }
+.market-search input { min-height: 44px; }
+.market-body ::placeholder { color: var(--radar-muted); opacity: 1; }
+.market-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
+.market-status { margin: 10px 0; color: var(--radar-muted); font-size: 14px; overflow-wrap: anywhere; }
+.market-status[data-error="true"] { color: var(--radar-notice); }
+.market-meta { margin: 8px 0; color: var(--radar-muted); font-size: 13px; overflow-wrap: anywhere; }
+.market-status:empty, .market-meta:empty { display: none; }
+.market-warnings { padding: 12px 16px 12px 32px; background: var(--radar-notice-bg); color: var(--radar-notice); border-radius: 12px; font-size: 13px; overflow-wrap: anywhere; }
+/* Compact grid: icon plus name plus version state, no long description block. */
+.market-list { list-style: none; margin: 16px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; align-items: stretch; }
+.market-list > li { min-width: 0; }
+.market-body button.market-item { display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: 22px 18px 18px; align-content: center; column-gap: 10px; row-gap: 2px; width: 100%; height: 104px; min-height: 104px; padding: 12px; text-align: left; white-space: normal; border-radius: 16px; box-shadow: 0 5px 18px #35493e08; }
+.market-body button.market-item.is-pending { border-color: var(--radar-primary); box-shadow: inset 3px 0 0 var(--radar-primary), 0 5px 18px #35493e08; }
+.market-item .item-icon { grid-row: 1 / 4; align-self: center; position: relative; width: 44px; height: 44px; flex: none; border-radius: 12px; background: var(--mint); color: var(--radar-primary); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.market-item .item-icon-glyph { font-size: 20px; font-weight: 600; line-height: 1; }
+.market-item .item-icon-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.market-item .item-icon-img[hidden] { display: none; }
+.market-item .item-name { grid-column: 2; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.35; color: var(--ink); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.market-item .item-meta, .market-item .item-update { grid-column: 2; min-width: 0; font-size: 12px; line-height: 1.4; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.market-item .item-meta { color: var(--radar-muted); }
+.market-item .item-meta-row { grid-column: 2; display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; }
+.market-item .item-meta-row > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.market-item .item-meta-row > .is-pending { flex: 0 0 auto; }
+.market-item .item-meta.is-pending { color: var(--radar-primary); font-weight: 700; }
+.market-item .item-update { color: var(--radar-muted); }
+.market-empty { grid-column: 1 / -1; padding: 32px 16px; text-align: center; color: var(--radar-muted); }
+.market-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; }
+.market-pagination span { color: var(--radar-muted); font-size: 13px; }
+
+/* 二级页：一条对话，输入常驻底部 */
+.market-conversation {
+  display: flex; flex-direction: column;
+  height: calc(100dvh - 40px); min-height: 420px;
+  border: 1px solid var(--line); border-radius: var(--radar-radius);
+  background: var(--paper); color: var(--ink); box-shadow: var(--radar-shadow); overflow: hidden;
+}
+/* 单独打开雷达页时，卡片撑满可视高度，下面不再空一大截。 */
+body.market-body .market-conversation { height: calc(100dvh - 48px); }
+/* 雷达是宽内容：它在前台时把内栏放宽、页面内边距收小，其它设置页保持原样。 */
+.workspace-inner:has(#view-market.on) { max-width: 1360px; }
+.workspace:has(#view-market.on) { padding: 20px 24px; }
+.detail-header { display: flex; flex: none; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.detail-heading { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.detail-heading h2 { margin: 0; font-size: 18px; line-height: 1.35; }
+.detail-context { margin: 2px 0 0; font-size: 12px; }
+.market-body button.detail-back { min-height: 34px; padding: 4px 13px; border-radius: 999px; border-color: transparent; background: var(--mint); color: var(--radar-primary); font-size: 13px; font-weight: 600; }
+.market-body button.detail-back:hover:not(:disabled) { background: var(--mint-deep); color: var(--radar-on-primary); }
+.market-body button.detail-clear { min-height: 34px; padding: 4px 12px; border-radius: 999px; border-color: var(--line); background: var(--paper); color: var(--radar-muted); font-size: 13px; }
+.market-body button.detail-clear:hover:not(:disabled) { border-color: var(--radar-notice); background: var(--radar-notice-bg); color: var(--radar-notice); }
+.market-body button.detail-clear[data-armed="true"] { border-color: var(--radar-notice); background: var(--radar-notice); color: var(--radar-on-primary); font-weight: 600; }
+.detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+/* 两条信息折叠条钉在顶部：审查正文滚动时它们不动，也不会自己展开。 */
+.detail-folds {
+  position: sticky; top: 0; z-index: 3;
+  display: grid; gap: 8px;
+  margin: 0 -18px; padding: 9px 18px 9px;
+  background: var(--paper); border-bottom: 1px solid var(--line);
+  box-shadow: 0 8px 14px -12px #35493e33;
+}
+.detail-scroll .detail-folds .detail-fold > summary { min-height: 30px; padding: 5px 0; font-size: 12.5px; }
+.detail-fold { flex: none; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.detail-fold > summary { min-height: 38px; padding: 8px 0; font-size: 13px; font-weight: 600; color: var(--radar-muted); }
+.detail-fold-body { padding: 2px 0 12px; font-size: 13px; }
+.detail-fold-body p { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-facts { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px 14px; margin: 10px 0; font-size: 12.5px; }
+.detail-facts dt { color: var(--radar-muted); }
+.detail-facts dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspection-state { margin: 6px 0; font-weight: 600; }
+.inspection-files { padding-left: 18px; font-size: 12.5px; color: var(--radar-muted); }
+.market-body summary { cursor: pointer; min-height: 44px; padding: 8px 0; }
+.market-body .detail-fold > summary, .market-body .detail-fold-body summary { min-height: 34px; }
+
+/* 开场白当作知意的第一条消息，而不是一块说明文字 */
+.chat-intro { flex: none; margin: 0; padding: 11px 14px; border: 1px solid var(--line); border-radius: 16px 16px 16px 6px; background: var(--surface); color: var(--ink); font-size: 14px; line-height: 1.75; }
+
+.market-messages { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; align-content: start; }
+/* 审查正文是这一页最要紧的东西，给它整幅宽度；用户自己那句短问话仍窄一点靠右。 */
+.market-message { max-width: min(100%, 1180px); padding: 12px 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.market-message[data-role="assistant"] { justify-self: start; width: 100%; border-bottom-left-radius: 6px; }
+.market-message[data-role="user"] { justify-self: end; max-width: min(100%, 560px); background: var(--mint); border-color: transparent; border-bottom-right-radius: 6px; }
+.market-message strong { display: block; margin-bottom: 3px; color: var(--radar-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
+.market-message[data-role="user"] strong { color: var(--radar-primary); }
+/* 名头行：知意的头像与小字并排，用户自己那条不显示名头。 */
+.market-name { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+/* 知意的头像：40px 源图按 20px 显示，高分屏也够清晰。 */
+.market-avatar { display: inline-block; flex: none; width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+.market-name-text { color: var(--radar-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
+
+/* 回答正文：段落短、层级浅，符号不再原样露出来 */
+.rich { font-size: 14.5px; line-height: 1.78; }
+.rich > :first-child { margin-top: 0; }
+.rich > :last-child { margin-bottom: 0; }
+.rich p { margin: 0 0 8px; }
+.rich h4, .rich h5 { margin: 12px 0 5px; color: var(--radar-primary); font-size: 14px; font-weight: 600; line-height: 1.5; }
+.rich ul, .rich ol { margin: 4px 0 9px; padding-left: 20px; }
+.rich li { margin: 3px 0; }
+.rich code { padding: 1px 5px; border-radius: 5px; background: var(--mint); font-family: inherit; font-size: 12.5px; }
+.rich pre { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); overflow: auto; }
+.rich pre code { padding: 0; background: transparent; font-size: 12.5px; }
+.rich hr { margin: 12px 0; border: 0; border-top: 1px dashed var(--line); }
+.rich blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--mint-deep); color: var(--radar-muted); }
+.rich .rich-row { margin: 0; color: var(--radar-muted); font-size: 13px; }
+
+.market-message.is-typing { display: flex; flex-direction: column; }
+.typing-row { display: flex; align-items: center; gap: 8px; }
+.typing-dots { display: inline-flex; gap: 4px; }
+.typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--radar-primary); animation: radar-typing 1.1s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay: .18s; }
+.typing-dots i:nth-child(3) { animation-delay: .36s; }
+.typing-copy { color: var(--radar-muted); font-size: 12.5px; }
+@keyframes radar-typing {
+  0%, 100% { opacity: .3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ── 底部输入区 ── */
+.detail-footer { flex: none; padding: 8px 16px 8px; border-top: 1px solid var(--line); background: var(--surface); box-shadow: 0 -10px 20px #35493e0d; }
+.quick-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: none; }
+/* 一点点说明：这几个按钮点下去就直接发问，不是筛选也不是展开。 */
+.quick-note { margin: -2px 0 8px; font-size: 12px; }
+.quick-row::-webkit-scrollbar { display: none; }
+.market-body button.quick-chip { min-height: 32px; padding: 5px 14px; border-radius: 999px; background: var(--paper); color: var(--ink); font-size: 13px; }
+.market-body button.quick-chip:hover:not(:disabled) { border-color: var(--radar-primary); background: var(--mint); }
+.market-body button.quick-chip.is-primary { border-color: var(--radar-primary); background: var(--radar-primary); color: var(--radar-on-primary); font-weight: 600; }
+.market-body button.quick-chip.is-primary:hover:not(:disabled) { border-color: var(--ink); background: var(--ink); }
+.market-chat { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin: 0; }
+.market-chat textarea { display: block; min-height: 42px; max-height: 120px; padding: 9px 13px; border-radius: 14px; resize: none; }
+.market-chat textarea:disabled { opacity: .65; }
+.market-chat .market-primary { min-height: 42px; padding-inline: 20px; border-radius: 14px; }
+.chat-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.chat-actions button { min-height: 30px; padding: 3px 12px; font-size: 12.5px; }
+.chat-actions .market-meta { flex: 1; min-width: 0; margin: 0; font-size: 12px; }
+.model-disclosure { margin: 4px 0 0; color: var(--radar-notice); font-size: 11px; line-height: 1.5; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+@container market (max-width: 900px) {
+  .market-conversation { height: min(760px, calc(100dvh - 40px)); }
+  body.market-body .market-conversation { height: calc(100dvh - 48px); }
+}
+@media (max-width: 600px) {
+  .market-page { padding-top: 24px; }
+  .market-list { gap: 10px; }
+  .market-segments { width: 100%; }
+  .market-segments button { flex: 1 1 40%; }
+  .market-conversation { height: calc(100dvh - 90px); min-height: 360px; border-radius: 16px; }
+  body.market-body .market-conversation { height: calc(100dvh - 90px); }
+  .detail-header { padding: 10px 12px; }
+  .detail-scroll { padding: 10px 12px 4px; }
+  .detail-footer { padding: 8px 12px 10px; }
+  .detail-facts { grid-template-columns: 80px minmax(0, 1fr); gap: 6px 10px; }
+  .market-chat .market-primary { padding-inline: 14px; }
+  .chat-actions .market-meta { display: none; }
+}
+@media (max-width: 360px) {
+  .market-controls { grid-template-columns: minmax(0, 1fr); }
+  .market-segments { width: 100%; }
+  .market-segments button { flex: 1 1 auto; padding-inline: 10px; }
+  .market-pagination { gap: 8px; }
+  .market-pagination button { padding-inline: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .market-body button { transition: none; }
+  .market-body button:active:not(:disabled) { transform: none; }
+  .typing-dots i { animation: none; opacity: .7; }
+}

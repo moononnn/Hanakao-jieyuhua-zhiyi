@@ -157,7 +157,7 @@ html[data-appearance="dark"] .zy-ov-btn[data-armed="1"] {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 1px 2px rgba(53, 73, 62, .18);
   transition: transform .2s ease;
 }
@@ -353,6 +353,8 @@ html[data-appearance="dark"] .zy-chat-row.user .zy-chat-bubble { color: #16221b;
 }
 .zy-chat-plan-item.is-add .zy-chat-plan-tag { background: #e7f1e9; color: #3f7d64; }
 .zy-chat-plan-item.is-update .zy-chat-plan-tag { background: #f7e8eb; color: #a4576a; }
+html[data-appearance="dark"] .zy-chat-plan-item.is-add .zy-chat-plan-tag { background: rgba(111, 191, 160, .18); color: #a5d0b5; }
+html[data-appearance="dark"] .zy-chat-plan-item.is-update .zy-chat-plan-tag { background: rgba(217, 138, 148, .18); color: #efbfc6; }
 .zy-chat-plan-intent { margin: 3px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink); }
 .zy-chat-plan-before {
   margin: 4px 0 0;
@@ -702,6 +704,9 @@ html[data-appearance="dark"] .zy-fb-row.user .zy-fb-bubble { color: #16221b; }
 }
 .zy-fb-send:disabled { opacity: .5; cursor: default; }
 .zy-fb-send:hover:not(:disabled) { filter: brightness(1.06); }
+/* 深色下主色反过来是浅绿，字要换成深墨才看得清。 */
+html[data-appearance="dark"] .zy-fb-primary,
+html[data-appearance="dark"] .zy-fb-send { color: #16221b; }
 
 .zy-fb-head-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 /* 发出去的消息带图：气泡下面一排小图，点一下看大图 */
@@ -743,7 +748,7 @@ html[data-appearance="dark"] .zy-fb-row.user .zy-fb-bubble { color: #16221b; }
   max-width: min(1100px, 94vw);
   max-height: 88vh;
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface);
   object-fit: contain;
   box-shadow: 0 30px 80px rgba(0, 0, 0, .38);
 }
@@ -755,13 +760,13 @@ html[data-appearance="dark"] .zy-fb-row.user .zy-fb-bubble { color: #16221b; }
   height: 34px;
   border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .14);
+  background: rgba(20, 28, 24, .6);
   color: #fff;
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
 }
-.zy-fb-lightbox-close:hover { background: rgba(255, 255, 255, .24); }
+.zy-fb-lightbox-close:hover { background: rgba(20, 28, 24, .78); }
 .zy-fb-error {
   margin: 12px 0 0;
   padding: 9px 11px;

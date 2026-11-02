@@ -78,6 +78,8 @@ import {
 } from "./lib/style-refine.js";
 import { buildShowStyleCardInput, buildShowStyleCardInstruction, buildStyleRefineCardDocument } from "./lib/style-card.js";
 import { chatFeedback, FEEDBACK_LIMITS } from "./lib/feedback-chat.js";
+import { createMarketCatalog } from "./lib/market-catalog.js";
+import { registerMarketRoutes } from "./lib/market-review.js";
 import {
   maskCustomModelConfig,
   mergeCustomModelConfig,
@@ -3108,6 +3110,8 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
 
+    registerMarketRoutes(app, sdk, createMarketCatalog(sdk));
+
     app.get("/input-zoom", async (c) => {
       try {
         return c.json(await inputZoomStatus());
@@ -4655,7 +4659,6 @@ activeFusionServiceDispose = disposeFusionService;
     const timer = setTimeout(() => { void runOnce(0); }, 4000);
     timer.unref?.();
   };
-  scheduleInputStatusSync();
 
   // 开发期探针：只采样、只记录，不发关机命令，也不改任何设置。
   // 真正的守门人在下面那个工具里，这个只是开发时肉眼对时间线用的壳。
@@ -5374,4 +5377,6 @@ activeFusionServiceDispose = disposeFusionService;
       await sdk.logger.warn(`传音樱自动恢复跳过：${String(error?.message || error).slice(0, 120)}`);
     }
   })();
+  // 所有声明注册完后再开始延迟同步，避免贡献表尚未投影就写入按钮状态。
+  scheduleInputStatusSync();
 });

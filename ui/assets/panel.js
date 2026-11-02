@@ -6,21 +6,6 @@ import { groupModelChoices } from './model-groups.js';
 // 深浅跟着宿主走，顺手报给 App（它再转给传音樱）。
 followHostTheme();
 
-const themeLink = document.createElement('link');
-themeLink.rel = 'stylesheet';
-themeLink.dataset.hostTheme = 'true';
-document.head.append(themeLink);
-
-function syncHostTheme() {
-  const snapshot = hana.theme?.getSnapshot?.();
-  if (snapshot?.cssUrl && themeLink.href !== snapshot.cssUrl) {
-    themeLink.href = snapshot.cssUrl;
-  }
-  if (snapshot?.appearance === 'light' || snapshot?.appearance === 'dark') {
-    document.documentElement.dataset.appearance = snapshot.appearance;
-  }
-}
-
 const startButton = document.querySelector('#ball-toggle');
 const ballStatus = document.querySelector('#ball-status');
 const ballToggleLabel = document.querySelector('#ball-toggle-label');
@@ -2532,10 +2517,8 @@ document.querySelector('#sg-refresh')?.addEventListener('click', () => { void lo
 
 // 守着的时候看一眼倒计时：由 loadSleepGuard 自己排下一轮，没定时器就不会空转。
 
-hana.theme?.subscribe?.(syncHostTheme);
 void (async () => {
   await hana.ready();
-  syncHostTheme();
   initPermissionStatus();
   await Promise.all([
     refreshBallStatus(),

@@ -23,14 +23,17 @@
     "app/input.status",
     "app/input.panels",
     "app/ui.open-external",
-    "app/ui.clipboard-write"
+    "app/ui.clipboard-write",
+    "app/environments.manage"
   ],
   "network": {
     "allowedHosts": [
       "127.0.0.1",
       "api.minimaxi.com",
       "api.xiaomimimo.com",
-      "*.aliyuncs.com"
+      "*.aliyuncs.com",
+      "api.github.com",
+      "raw.githubusercontent.com"
     ],
     "methods": ["GET", "POST"],
     "allowLocalhost": true,
@@ -38,6 +41,21 @@
     "maxResponseBytes": 8388608
   },
   "contributes": {
+    "settings": {
+      "title": "\u77e5\u610f",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "githubToken": {
+            "type": "string",
+            "title": "GitHub \u8bbf\u95ee\u4ee4\u724c\uff08\u53ef\u9009\uff09",
+            "description": "\u7559\u7a7a\u4e5f\u80fd\u7528\uff1a\u8bfb\u516c\u5f00\u6570\u636e\u8d70 GitHub \u516c\u5171\u63a5\u53e3\uff0c\u6bcf\u5c0f\u65f6\u53ea\u6709 60 \u6b21\u8bf7\u6c42\u989d\u5ea6\u3002\u586b\u4e00\u4e2a\u53ea\u8bfb\u4ee4\u724c\u540e\u989d\u5ea6\u63d0\u9ad8\u5230\u6bcf\u5c0f\u65f6 5000 \u6b21\uff0c\u80fd\u5c11\u649e\u9650\u6d41\u3002\u4ee4\u724c\u53ea\u4fdd\u5b58\u5728\u8fd9\u53f0\u7535\u8111\u4e0a\uff0c\u53ea\u7528\u4e8e\u8bfb\u516c\u5f00\u6570\u636e\uff0c\u4e0d\u505a\u4efb\u4f55\u5199\u64cd\u4f5c\u3002",
+            "default": "",
+            "sensitive": true
+          }
+        }
+      }
+    },
     "ui": {
       "inputStatus": [
         {

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>知意 · 应用雷达</title>
+  <link rel="stylesheet" href="./assets/panel.css">
+  <link rel="stylesheet" href="./assets/market.css">
+  <script src="./assets/theme-follow.js"></script>
+</head>
+<body class="market-body">
+  <main id="market-main" class="market-page" aria-labelledby="market-title">
+    <section id="market-home" class="market-home" aria-label="应用目录">
+      <header class="market-heading">
+        <p class="eyebrow">知意 · 应用手记</p>
+        <h1 id="market-title">应用雷达</h1>
+        <p class="market-intro">看中哪款，点进去直接问它。待上架的版本还没经过市场审核。</p>
+      </header>
+      <aside class="market-boundary">官方上架状态和知意的源码检查分开算。上架、模型回答都不代表安全认证；这里不下载安装包、不运行应用、不自动打开外部链接。读公开数据走 GitHub 公共接口，每小时 60 次额度；不填令牌也能用，想更稳可以在 Hana 设置里给知意填一个只读令牌。</aside>
+      <div class="market-workspace" id="market-workspace">
+        <section class="market-catalog" aria-label="应用目录">
+          <section class="market-controls" aria-label="筛选应用">
+            <div class="market-segments" role="group" aria-label="应用来源分类">
+              <button id="filter-installed" type="button" aria-pressed="true">已安装</button>
+              <button id="filter-market" type="button" aria-pressed="false">已上架</button>
+              <button id="filter-pending" type="button" aria-pressed="false">待上架</button>
+              <button id="filter-all" type="button" aria-pressed="false">全部</button>
+            </div>
+            <label class="market-search" for="market-search"><span>搜索应用</span><input id="market-search" type="search" placeholder="名称、简介或应用 ID" autocomplete="off"></label>
+            <div class="market-actions"><button id="market-refresh" type="button" disabled>刷新目录</button></div>
+          </section>
+          <p id="catalog-status" class="market-status" role="status" aria-live="polite">打开应用雷达后读取目录…</p>
+          <p id="catalog-meta" class="market-meta"></p>
+          <ul id="catalog-warnings" class="market-warnings" aria-label="目录提示" hidden></ul>
+          <ul id="market-list" class="market-list" aria-label="应用列表"></ul>
+          <nav class="market-pagination" aria-label="应用分页">
+            <button id="page-prev" type="button" disabled>上一页</button>
+            <span id="page-label" aria-live="polite">第 1 / 1 页</span>
+            <button id="page-next" type="button" disabled>下一页</button>
+          </nav>
+        </section>
+      </div>
+    </section>
+    <section id="market-detail" class="market-conversation" aria-labelledby="detail-name" hidden>
+      <header class="detail-header">
+        <button id="detail-close" type="button" class="detail-back" aria-label="返回应用列表">← 应用雷达</button>
+        <div class="detail-heading">
+          <h2 id="detail-name"></h2>
+          <p id="detail-context" class="market-meta detail-context"></p>
+        </div>
+        <button id="detail-clear" type="button" class="detail-clear" title="删掉这款应用的对话与源码快照，只删本机记录">清空记录</button>
+      </header>
+      <aside id="pending-notice" class="pending-notice" role="note" hidden>
+        <strong>这一版没有经过市场审核</strong>
+        <p>它还在上架申请里，市场没替它把过关。装上以后，它能拿到 Hana 给应用的权限（读聊天、读文件、发网络请求），出了事市场不兜底。</p>
+        <p>我能做的是把源码读一遍、把这次改了什么摆出来，装不装你自己定。</p>
+      </aside>
+      <div id="detail-scroll" class="detail-scroll">
+        <div class="detail-folds" id="detail-folds">
+        <details class="detail-fold" id="official-details">
+          <summary id="official-title">官方与目录信息</summary>
+          <div class="detail-fold-body">
+            <p id="detail-description"></p>
+            <dl id="detail-facts" class="detail-facts"></dl>
+            <p class="market-meta">来源地址只展示，不会自动打开。待上架的申请不等于官方已通过。</p>
+          </div>
+        </details>
+        <details class="detail-fold" id="inspection-details">
+          <summary id="inspection-title">知意源码检查</summary>
+          <div class="detail-fold-body">
+            <p id="inspection-state" class="inspection-state"></p>
+            <dl id="inspection-facts" class="detail-facts"></dl>
+            <details id="inspection-scope"><summary>这次读了哪些文件</summary><ul id="inspection-files" class="inspection-files"></ul></details>
+            <ul id="inspection-warnings" class="market-warnings" aria-label="检查提示" hidden></ul>
+            <p class="market-meta">没查的部分：范围外的文件、运行行为、真实网络请求、依赖和安装包一致性。这里不运行第三方代码，模型回答也可能漏。</p>
+          </div>
+        </details>
+        </div>
+        <p id="conversation-empty" class="chat-intro"></p>
+        <ol id="market-messages" class="market-messages" aria-label="检查与追问记录"></ol>
+      </div>
+      <div class="detail-footer">
+        <div class="quick-row" id="market-quick" role="group" aria-label="快捷提问">
+          <button id="market-inspect" type="button" class="quick-chip is-primary" disabled>整体审查</button>
+        </div>
+        <p class="market-meta quick-note">点那几个按钮，就当我替你把问题问出去了，不用自己打字。</p>
+        <p id="detail-status" class="market-status" role="status" aria-live="polite"></p>
+        <form id="market-chat" class="market-chat">
+          <label class="visually-hidden" for="market-question">向知意解答伙伴提问</label>
+          <textarea id="market-question" rows="1" maxlength="2000" placeholder="跟知意说点什么…" aria-describedby="model-disclosure chat-hint" disabled></textarea>
+          <button id="market-send" class="market-primary" type="submit" disabled>发送</button>
+        </form>
+        <div class="chat-actions">
+          <button id="session-retry" type="button" disabled title="从本机读回这份对话记录，不调用模型、不产生用量；刷新页面或换窗口后，用它把之前的问答接回来">读回记录</button>
+          <p id="chat-hint" class="market-meta"></p>
+        </div>
+        <p id="model-disclosure" class="model-disclosure">发送或审查会把公开源码、你的提问和最近几轮对话发给当前配置的模型，产生用量；记录只存本机。</p>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="./assets/market.js"></script>
+</body>
+</html>

@@ -132,6 +132,14 @@ html, body {
 .slug-note.bad { color: #b24a3a; }
 
 html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
+/* 深色下 --primary-deep / --pink 都是浅色，白字压在它们上面读不出来，
+   实心按钮统一换成深墨字。 */
+html[data-appearance="dark"] .gen,
+html[data-appearance="dark"] .reader-speak,
+html[data-appearance="dark"] .player-toggle,
+html[data-appearance="dark"] .polish-run { color: #14201a; }
+html[data-appearance="dark"] .quick-btn.done,
+html[data-appearance="dark"] .send.done { color: #14201a; }
 
 .slug-note .slug-undo {
   font: inherit;
