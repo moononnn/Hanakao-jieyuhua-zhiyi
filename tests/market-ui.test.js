@@ -945,3 +945,9 @@ test("长版本号不会把待审标记挤没，完整版本留在悬停提示�
   assert.match(app.card(0).attributes.title, /1\.2\.1\+dsh-0\.2\.1-rc\.2/, "完整版本留在悬停提示");
   assert.match(app.card(0).attributes.title, /1\.2\.6\+dsh-0\.2\.1-rc\.5/);
 });
+
+test('雷达这边的「正在想…」也只包住自己，跟更新手记一致', () => {
+  // 两张卡都收成自己的宽度，免得同一个 App 里两处等待动画长得不一样。
+  assert.match(css, /\.market-message\[data-role="assistant"\]\.is-typing \{ width: fit-content/, '等待卡要收成自己的宽度');
+  assert.match(css, /\.market-message\[data-role="assistant"\] \{ justify-self: start; width: 100%/, '回答正文那张卡照旧整幅宽');
+});

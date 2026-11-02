@@ -1,5 +1,14 @@
 # 测试
 
+## 2026-11-02 等待动画收窄 + 输入框里的字居中（0.2.1-dev.11）
+
+- 改动：`ui/assets/handbook.css` 加 `.hb-msg.is-typing { width: fit-content }`、`.hb-box textarea` 改行高 22px / padding 8px 0 / 高度 38px、`.hb-field` 上下留白都 8px；`ui/assets/market.css` 加 `.market-message[data-role="assistant"].is-typing { width: fit-content }`。
+- 验证方式：沙盘（`_tmp/hbtest`，真 `handbook.js` 配假 SDK 跑真 DOM）进追问页后量三组数：等待卡 111x73（之前铺满 714 宽）、字心与框心偏差 0.0px（之前 -3.8px）、输入台高 56。
+- 雷达那边另开一个最小页（`market-typing.html`）量宽度：138x68（容器 720），回答卡仍整幅。
+- 测试：`tests/handbook-ui.test.js` 加 2 项，`tests/market-ui.test.js` 加 1 项。
+- 全量 `node --test` 767 项：765 通过 / 0 失败 / 2 跳过（既有）。中途有一次 `market-catalog.test.js` 的「再打开只问一次主分支」红了（已知的 50ms 等写盘时序），重跑就绿。
+- 未做：真机未验（已重载，等当事人看一眼）。
+
 ## 2026-11-02 知意的口吻照「学我说话」重写（0.2.1-dev.10）
 
 - 参照：`C:\Users\laotv\.hanako\app-data\biaoqingbao-app\style-template.json`（她自己改定的「学我说话」模板，`locked` 五段就是她拍板的写法）与 `style-feedback.json`（她从旧模板里删掉的叠词、哦哦、感叹号堆叠等反例）。

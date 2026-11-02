@@ -4,6 +4,13 @@
 
 ## 待发
 
+### 0.2.1-dev.11 · 等待动画收窄 + 输入框里的字居中（2026-11-02）
+
+- 「正在想…」那张卡之前跟回答卡一样 `width: 100%`，里面就一行「名头 + 三个点」，看着就是一个空滋滋的横条。现在 `width: fit-content`，只包住它自己；回答正文照旧整幅宽。
+- 应用雷达那边一并对齐：`.market-message[data-role="assistant"].is-typing` 也收成自己的宽度，两处等待动画长得一样了。
+- 输入框里的字偏上：原因是 `line-height: 1.6` 加 `padding: 5px 0` 装不满 38px 的高度，字顶在上面；`.hb-field` 上下留白也不一样（8 / 10）。现在改成行高 22px、上下 padding 8px、高度 38px（8+22+8=38），`.hb-field` 上下都 8px，沙盘量出来字心跟框心偏差 0.0px（改前 -3.8px）。
+- 测试：`tests/handbook-ui.test.js` 加 2 项（等待卡收窄；字要高矮居中，掏 line-height、padding、height 相加对平）；`tests/market-ui.test.js` 加 1 项（雷达那边同口径）。
+
 ### 0.2.1-dev.10 · 知意的口吻照「学我说话」重写（2026-11-02）
 
 - 参照物：表情包应用（biaoqingbao-app）方言板块里的「学我说话」（`lib/dialect.js` 的 userstyle 加 `lib/style-template.js` 里她自己改定的那份模板）。她那套打法——句尾挂个「哈」把语气放轻、正事先甩结论再用短句补、偶尔顿一下承认拿不准——她拍板说适合当客服。

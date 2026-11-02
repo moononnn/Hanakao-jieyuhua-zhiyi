@@ -161,6 +161,8 @@ body.market-body .market-conversation { height: calc(100dvh - 48px); }
 .rich .rich-row { margin: 0; color: var(--radar-muted); font-size: 13px; }
 
 .market-message.is-typing { display: flex; flex-direction: column; }
+/* 等待动画那张卡收成自己的宽度，不铺满整幅（跟更新手记的追问页一致）。 */
+.market-message[data-role="assistant"].is-typing { width: fit-content; max-width: 100%; }
 .typing-row { display: flex; align-items: center; gap: 8px; }
 .typing-dots { display: inline-flex; gap: 4px; }
 .typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--radar-primary); animation: radar-typing 1.1s ease-in-out infinite; }

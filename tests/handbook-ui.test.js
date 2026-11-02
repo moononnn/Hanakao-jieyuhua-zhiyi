@@ -133,3 +133,29 @@ test('动效：入场淡入上浮，翻页也淡入，减弱动效时让位', ()
   assert.match(css, /@keyframes hb-chat-in/, '翻页要有过渡');
   assert.match(css, /prefers-reduced-motion[\s\S]*?\.hb-composer, \.hb-list, \.hb-chat \{ animation: none; \}/, '关掉动效偏好时要让位');
 });
+
+test('「正在想…」那张卡只包住自己，不铺满一整幅', () => {
+  // 里面就一行「名头 + 三个点」，铺满宽度就变成一个空滋滋的横条。
+  assert.match(block('.hb-msg.is-typing'), /width: fit-content/, '等待卡要收成自己的宽度');
+  assert.match(js, /className = 'hb-msg is-typing'/, '等待卡得带 is-typing，样式才认得它');
+});
+
+test('输入框里的字落在框正中，不偏上', () => {
+  // 一行字的高度（line-height + 上下 padding）要等于输入框高度，且上下留白一样。
+  const textarea = block('.hb-box textarea');
+  const lineHeight = textarea.match(/line-height:\s*(\d+(?:\.\d+)?)px/);
+  const pad = textarea.match(/padding:\s*(\d+(?:\.\d+)?)px\s+0(?:px)?/);
+  const height = textarea.match(/;\s*height:\s*(\d+(?:\.\d+)?)px/);
+  assert.ok(lineHeight && pad && height, '.hb-box textarea 要同时给 line-height、padding 和 height');
+  const lh = Number(lineHeight[1]);
+  const p = Number(pad[1]);
+  const h = Number(height[1]);
+  assert.equal(p + lh + p, h, `字要高矮居中：上${p} + 行高${lh} + 下${p} 应该等于 ${h}`);
+
+  const field = block('.hb-field');
+  const fieldPad = field.match(/padding:\s*([^;]+);/);
+  assert.ok(fieldPad, '.hb-field 要有 padding');
+  const parts = fieldPad[1].trim().split(/\s+/).map((v) => parseFloat(v));
+  const [top, , bottom] = parts.length === 4 ? parts : [parts[0], parts[0], parts[0], parts[0]];
+  assert.equal(top, bottom, '输入台上下留白要一样，不然字看着偏上');
+});

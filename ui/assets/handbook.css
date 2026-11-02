@@ -204,7 +204,7 @@ html[data-appearance="dark"] .hb-where code { background: #333a33; color: var(--
   background: var(--hb-surface);
   border: 1px solid var(--hb-line);
   border-radius: 20px;
-  padding: 8px 10px 10px 15px;
+  padding: 8px 10px 8px 15px;
   box-shadow: inset 0 1px 0 #fffdf8, 0 1px 2px #35493e0f, 0 12px 28px -16px #35493e38;
   transition: border-color .16s ease, box-shadow .16s ease;
 }
@@ -219,6 +219,9 @@ html[data-appearance="dark"] .hb-field { box-shadow: inset 0 1px 0 #ffffff14, 0 
   background: var(--hb-surface); border: 1px solid var(--hb-line);
   border-radius: 16px; padding: 11px 14px 13px;
 }
+/* 等待动画那张卡只包住它自己：里面就一行「名头 + 三个点」，
+   铺满整幅宽度就成了一个里面空空的横条，跟应用雷达对齐也不好看。 */
+.hb-msg.is-typing { width: fit-content; max-width: 100%; }
 .hb-name { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
 .hb-name span { color: var(--hb-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
 .hb-avatar { flex: none; width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
@@ -243,7 +246,7 @@ html[data-appearance="dark"] .hb-bub.sys { background: #2b322b; }
 .hb-ref b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
 .hb-ref button { flex: none; border: 0; background: #ffffffb0; color: var(--hb-primary); width: 21px; height: 21px; border-radius: 999px; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
 .hb-box { display: flex; align-items: flex-end; gap: 10px; }
-.hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 1.6; padding: 5px 0; height: 38px; max-height: 120px; }
+.hb-box textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hb-ink); font: inherit; font-size: 14px; line-height: 22px; padding: 8px 0; height: 38px; max-height: 120px; }
 .hb-box textarea::placeholder { color: #9aa79e; }
 .hb-send { flex: none; width: 38px; height: 38px; border-radius: 13px; border: 0; background: var(--hb-primary); color: #fffdf8; cursor: pointer; font-size: 15px; display: grid; place-items: center; transition: background .14s; }
 .hb-send:hover { background: #2b5240; }
