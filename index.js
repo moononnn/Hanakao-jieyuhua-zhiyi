@@ -2413,6 +2413,9 @@ activeFusionServiceDispose = disposeFusionService;
           sessionId: targetId,
           title: written.title || title,
           fallback: drafted?.fallback === true,
+          // 同上：球上的提示要据这两个字段写「X 拟的」，不给就是死的。
+          degraded: drafted?.degraded === true,
+          model: drafted?.model || "",
           agentName: String(drafted?.session?.agentName || ""),
         };
       } else {
@@ -4261,8 +4264,16 @@ activeFusionServiceDispose = disposeFusionService;
           title,
           previousTitle: previous?.title || "",
         });
-        await sdk.logger.info("面板起名完成", { sessionId: targetId, fallback: drafted?.fallback === true });
-        return c.json({ ok: true, sessionId: targetId, title: written.title || title, fallback: drafted?.fallback === true });
+        await sdk.logger.info("面板起名完成", { sessionId: targetId, fallback: drafted?.fallback === true, degraded: drafted?.degraded === true, summaryModel: drafted?.model || null });
+        return c.json({
+          ok: true,
+          sessionId: targetId,
+          title: written.title || title,
+          fallback: drafted?.fallback === true,
+          // 换过模型要送到前端：缺这两个字段，面板那行「X 拟的」就是死代码。
+          degraded: drafted?.degraded === true,
+          model: drafted?.model || "",
+        });
       } catch (error) {
         await sdk.logger.warn("面板起名失败", { code: error?.code || "TITLE_ERROR" });
         return c.json({ ok: false, error: String(error?.message || "没改成，再试一次。").slice(0, 200) }, 400);

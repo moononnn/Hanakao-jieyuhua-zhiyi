@@ -105,6 +105,12 @@ test("换过模型就在速览卡里写一行，摘卡时这行也跟着走", ()
   assert.equal(stripSummaryBlocks(withBody).trim(), "正文正文", "脚注也是引用行，得整块一起摘掉，不能在正文里留一句孤零零的话");
 });
 
+test("脚注只认紧跟要点的那一行，卡后面用户自己写的斜体不动", () => {
+  const block = buildSummaryBlock(["要点一"], 120, "这条是「X」（备用模型）拟的。");
+  const text = `正文\n\n${block}\n\n> _这是我自己补的一句_`;
+  assert.equal(stripSummaryBlocks(text).trim(), "正文\n\n> _这是我自己补的一句_");
+});
+
 test("appendSummaryBlock 保留原文，把速览接在最后一个正文片段末尾", () => {
   const message = {
     role: "assistant",

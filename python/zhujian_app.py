@@ -6154,7 +6154,7 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
         self._set_renaming_ui(True)
 
         def worker():
-            payload = {"ok": False, "error": None, "title": None, "agentName": "", "fallback": False}
+            payload = {"ok": False, "error": None, "title": None, "agentName": "", "fallback": False, "degraded": False, "model": ""}
             if APP_ONLY_ASK:
                 result = self._bridge_title_call("rename", timeout_s=75)
                 if result is None:
@@ -6164,6 +6164,9 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                     payload["title"] = result.get("title") or ""
                     payload["agentName"] = result.get("agentName") or ""
                     payload["fallback"] = bool(result.get("fallback"))
+                    # 换过模型也要传到球上：少了这两个字段，下面那行「X 拟的」永远不出现。
+                    payload["degraded"] = bool(result.get("degraded"))
+                    payload["model"] = result.get("model") or ""
                     payload["error"] = result.get("error")
             else:
                 try:
@@ -6172,6 +6175,8 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
                     payload["title"] = data.get("title") or ""
                     payload["agentName"] = data.get("agentName") or ""
                     payload["fallback"] = bool(data.get("fallback"))
+                    payload["degraded"] = bool(data.get("degraded"))
+                    payload["model"] = data.get("model") or ""
                     payload["error"] = data.get("error")
                 except urllib.error.HTTPError as e:
                     try:

@@ -6,7 +6,18 @@
 - 取消：`lib/fast-model.js` 新增 `activeAttempts` / `cancelledBases` 与 `cancelFastModel(sdk, 基号)`，取消真正发出去的 `${基号}_aN` 并叫停整条链；`length-summary` 与 `session-title` 的超时分支改用它。
 - 预算：`invokeFastTextModel` 新增 `budgetMs`，用完抛 `MODEL_BUDGET_EXCEEDED`（带 `triedModels`）；速览传 10s、标题传 25s。
 - 自定义档：`resolveFastModelChain` 末尾补 `resolveTaskModel({hostModel:null})`，角色 `custom`。
-- 打包：`发布小工坊/projects/jiegehua-zhiyi.json` 的 `excludeGlobs` 加 `python/test_*.py`。
+- 打包：曾把 `python/test_*.py` 加进 `excludeGlobs`，但发布副本测试的支架不补 `python/` 目录，一排除副本里就没有 python 测试，pytest 直接 exit 5、整条 release-tests 卡住，已撤销。包内容与 0.3.0 一致；要真正剥掉得先改发布小工坊的测试支架。
+
+## 2026-11-04 审包后补修（同仍 0.3.1）
+
+审包（独立伙伴，写权限、只读纪律）结论 pass with issues，无阻断，但抓到四处真问题，已修：
+
+- **标题降级标注是死代码。** `index.js` 两处路由（`/suggest-panel/rename`、球内重命名）只返回 `fallback`，不带 `degraded`／`model`；`python/zhujian_app.py` 组装 payload 时也不复制这两个字段。现在两边都透传，`tests/app-tool.test.js` 加了断言（重命名响应必须带 `degraded` 与非空 `model`）。
+- **同模型内重试不受取消约束。** `tried` 的 `_a2`／`_a3` 之前不看取消标记；`lib/fast-model.js` 的 `run()` 开头加了 `cancelledBases` 检查，退 `MODEL_CANCELLED`。新增用例：首轮只回思考、结算前标成已放弃，第二次必须发不出去。
+- **脚注误吃范围。** `SUMMARY_NOTE_RE` 只认紧跟要点的下一行（`afterBullet`），卡后面用户自己写的 `> _斜体_` 不动。新增用例覆盖这个边界。
+- **“发布副本 7 个文件”的真实原因。** 审包实测是行尾规范化（CRLF→LF），不是内测剥离：把 `\r\n` 统一后与 HEAD `6cbfee4` 逐字相等。
+
+已知但未处理：`python/test_*.py` 仍在包内（0.1.46 起的遗留），本次测试了三类敏感项均 0 命中；要剥得先改发布小工坊的测试支架。
 - 测试：`tests/fast-model.test.js` 加 3 项（自定义档入链 / 预算到点认输 / 取消用 `_aN` 号）、`tests/length-summary.test.js` 加 1 项（脚注进卡且能整块摘掉）、`tests/suggest-panel-ui.test.js` 那条标题断言改成盯 `degraded`。
 - 全量：`node --test` 775 项 773 通过 / 0 失败 / 2 跳过；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；`python -c ast.parse` 通过。
 - 已重载 App。未做：真实额度耗尽下的降级仍未实测；速览 12 秒预算与链叠加的实际收益仍是推断；速览卡脚注的真机渲染（引用块里带斜体）没看过。

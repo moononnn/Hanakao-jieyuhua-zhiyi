@@ -1134,6 +1134,10 @@ test("面板「起名」只改面板所在那段对话，不用「最近活跃�
   });
   assert.equal(renamed.data.ok, true, renamed.data.error);
   assert.equal(renamed.data.title, "给面板起个名字");
+  // 降级信息要送到前端：缺这两个字段，面板上那行「X 拟的」就是死代码。
+  assert.equal(renamed.data.degraded, false, "没换模型时不该标降级");
+  assert.equal(typeof renamed.data.model, "string");
+  assert.ok(renamed.data.model.length > 0, "要带上实际出结果的模型名");
   // 名单里 sess_other 更新，但面板就在 sess_this 上，绝不能去改另一段。
   assert.deepEqual(mock.updateCalls, [{ sessionId: "sess_this", scope: "all", title: "给面板起个名字" }]);
   assert.equal(mock.historyCalls[0].sessionId, "sess_this");

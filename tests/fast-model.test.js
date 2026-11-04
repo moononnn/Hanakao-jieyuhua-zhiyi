@@ -264,8 +264,7 @@ test("链有总预算：来不及再换一条就认输，不硬拖", async () =>
   );
 });
 
-test("取消要拿实际发出去的号：带 _aN 后缀，并顺手叫停整条链", async () => {
-  const cancelled = [];
+test("取消要拿实际发出去的号：带 _aN 后缀，并顺手叫停整条链", async () => {  const cancelled = [];
   const sdk = createSdk({
     models: [{ provider: "deepseek", model: "deepseek-flash" }],
     onStream: (request) => new Promise((resolve) => {
@@ -290,4 +289,29 @@ test("识别宿主拒绝思考档位的两种形态", () => {
   assert.equal(isUnsupportedReasoning({ code: "X", message: "该模型不支持这个思考档位" }), true);
   assert.equal(isUnsupportedReasoning({ code: "MODEL_TIMEOUT", message: "超时" }), false);
   assert.equal(isUnsupportedReasoning(null), false);
+});
+
+test("被放弃之后，同一条模型里的翻倍重试也不再发", async () => {
+  // 2026-11-04 审包实测抓到的口子：链层拦住了换模型，但 run() 还会再发 _a2/_a3。
+  // 基号用独立的一个：取消标记是模块级记忆（60 秒），别跟前一条测试撞号。
+  const base = "r_cancel_retry";
+  let attempts = 0;
+  let sdk = null;
+  sdk = createSdk({
+    models: [{ provider: "deepseek", model: "deepseek-flash" }],
+    onStream: async (request) => {
+      attempts += 1;
+      // 第一轮只回思考、不回正文（会触发同模型翻倍重试），并在结算前把这条基号标成已放弃。
+      if (attempts === 1) await cancelFastModel(sdk, base);
+      return ndjson([
+        { type: "start", requestId: request.requestId },
+        { type: "done", requestId: request.requestId, stopReason: "stop", usage: { reasoning: 12 } }
+      ]);
+    },
+  });
+  await assert.rejects(
+    () => invokeFastTextModel(sdk, host, { requestId: base, messages: [{ role: "user", content: "x" }] }),
+    (error) => error.code === "MODEL_CANCELLED"
+  );
+  assert.equal(attempts, 1, "已经放弃了就不该再发第二次");
 });
