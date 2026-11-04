@@ -11,7 +11,7 @@ function tempDir(name) {
   return dir;
 }
 
-test("球在跑时快照带上坐标、面板与桥地址", () => {
+test("球在跑时快照只带坐标和面板，不暴露桥令牌", () => {
   const dir = tempDir("running");
   fs.writeFileSync(path.join(dir, "zhujian-state.json"), JSON.stringify({ x: 1284, y: 471, fusionPanel: "menu" }));
   fs.writeFileSync(path.join(dir, "ball-bridge.json"), JSON.stringify({ baseUrl: "http://127.0.0.1:51234", token: "t".repeat(40) }));
@@ -19,8 +19,9 @@ test("球在跑时快照带上坐标、面板与桥地址", () => {
   assert.equal(snap.running, true);
   assert.deepEqual(snap.position, { x: 1284, y: 471, width: 80, height: 80 });
   assert.equal(snap.panel, "menu");
-  assert.equal(snap.proxy.baseUrl, "http://127.0.0.1:51234");
-  assert.equal(snap.proxy.token.length, 40);
+  assert.equal(snap.proxy, null);
+  assert.equal(JSON.stringify(snap).includes("51234"), false);
+  assert.equal(JSON.stringify(snap).includes("ttttt"), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

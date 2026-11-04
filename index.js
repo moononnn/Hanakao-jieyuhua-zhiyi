@@ -2992,7 +2992,8 @@ activeFusionServiceDispose = disposeFusionService;
   // 全局订阅（不给 filter.sessionPath）能收到每个会话上的事件，跟 namespace 无关，
   // 而且事件自带 sessionPath，不需要先知道 sessionId——正好绕开死路。
   const activityLedger = createActivityLedger();
-  setActivityLedger(activityLedger);
+  // 订阅没装上之前不能拿空账本当证据：那会让「没看见」被当成「没人」。
+  setActivityLedger(null);
 
   // 订阅必须显式给第二个参数：省略时经 RPC 会变成 null，宿主在装载阶段读 types 直接抛错，
   // 整条安装记录作废（kc-debug-App里bus订阅省略参数会炸装载）。
@@ -3024,6 +3025,7 @@ activeFusionServiceDispose = disposeFusionService;
         }
         void handleResumeEvent(event, sessionPath);
       }, {});
+      setActivityLedger(activityLedger);
       resumeEventsAvailable = true;
     }
   } catch (error) {

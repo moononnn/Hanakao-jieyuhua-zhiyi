@@ -375,3 +375,52 @@ test("文案不超过宿主的 200 字符上限", () => {
     assert.ok(text.length <= 200, `超了 200 字符：${text.length}`);
   }
 });
+
+
+test("部分会话探测失败时，即使任务层空也不允许关机", () => {
+  const summary = snapshot();
+  summary.sessions.complete = false;
+  summary.events = { readable: true, warmingUp: false, busyCount: 0 };
+  const verdict = judgeIdle(base({ idleSince: 1_000 }), summary, 700_000);
+  assert.equal(verdict.busy, true);
+  assert.equal(verdict.fire, false);
+});
+
+test("事件层明确不可用时不允许执行关机", () => {
+  const summary = snapshot();
+  summary.sessions.complete = true;
+  summary.events = { readable: false, busyCount: 0 };
+  const verdict = judgeIdle(base({ idleSince: 1_000 }), summary, 700_000);
+  assert.equal(verdict.busy, true);
+  assert.equal(verdict.fire, false);
+});
+
+test("会话扫描不完整时，说清是哪一层没法确认", () => {
+  const summary = snapshot();
+  summary.sessions.complete = false;
+  summary.sessions.candidateCount = 3;
+  summary.sessions.probedCount = 1;
+  summary.events = { readable: true, warmingUp: false, busyCount: 0 };
+  const verdict = judgeIdle(base({ idleSince: 1_000 }), summary, 700_000);
+  assert.equal(verdict.busy, true);
+  assert.deepEqual(verdict.blind, ["有 2 段会话没查完"]);
+});
+
+test("事件层读不到时，原因要落到具体那一层", () => {
+  const summary = snapshot();
+  summary.sessions.complete = true;
+  summary.events = { readable: false, busyCount: 0 };
+  const verdict = judgeIdle(base(), summary, 2_000);
+  assert.equal(verdict.busy, true);
+  assert.deepEqual(verdict.blind, ["窗口事件这一层读不到"]);
+});
+
+test("真的空下来时没有看不清的原因", () => {
+  const summary = snapshot();
+  summary.sessions.complete = true;
+  summary.events = { readable: true, warmingUp: false, busyCount: 0 };
+  const verdict = judgeIdle(base({ idleSince: 1_000 }), summary, 700_000);
+  assert.equal(verdict.busy, false);
+  assert.equal(verdict.fire, true);
+  assert.deepEqual(verdict.blind, []);
+});

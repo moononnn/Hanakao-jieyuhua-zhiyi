@@ -257,7 +257,8 @@ test("没注入账本时采样层照常工作，标记成读不到", async () =>
   const summary = summarizeSnapshot(snapshot);
   assert.equal(summary.events.readable, false);
   const verdict = judgeIdle({ idleMs: 0, maxWaitMs: 3_600_000, armedAt: 1, idleSince: 1 }, summary, 2);
-  assert.equal(verdict.busy, false, "账本缺席不该拦关机");
+  assert.equal(verdict.busy, true, "缺少 Code 页事件监控时必须阻止真实关机");
+  assert.equal(verdict.fire, false);
 });
 
 test("压成一行时带上事件层，好让人一眼分得出是哪层在拦", async () => {
@@ -271,4 +272,34 @@ test("压成一行时带上事件层，好让人一眼分得出是哪层在拦",
   assert.equal(summary.events.busyCount, 1);
   assert.equal(summary.busy[0].source, "events");
   assert.equal(summary.busy[0].path, CODE_PATH);
+});
+
+test("会话上下文请求失败应标记扫描不完整", async () => {
+  const now = Date.now();
+  const sdk = {
+    bus: { request: async (name) => {
+      if (name === "session:list") return { sessions: [{ sessionId: "busy-but-unreadable", modified: now }] };
+      if (name === "session:context") throw new Error("RPC failed");
+    } },
+    tasks: { list: async () => [] },
+  };
+  const sample = await sampleIdleSnapshot(sdk, { activityLedger: createActivityLedger({ warmupMs: 0 }) });
+  assert.equal(sample.sessions.readable, true);
+  assert.equal(sample.sessions.complete, false);
+  assert.equal(sample.sessions.candidateCount, 1);
+  assert.equal(sample.sessions.probedCount, 0);
+});
+
+test("超出最大探测会话数不得被标记为全量扫描", async () => {
+  const now = Date.now();
+  const sdk = {
+    bus: { request: async (name) => name === "session:list"
+      ? { sessions: ["a", "b"].map(sessionId => ({ sessionId, modified: now })) }
+      : { isStreaming: false } },
+    tasks: { list: async () => [] },
+  };
+  const sample = await sampleIdleSnapshot(sdk, { maxProbe: 1, activityLedger: createActivityLedger({ warmupMs: 0 }) });
+  assert.equal(sample.sessions.candidateCount, 2);
+  assert.equal(sample.sessions.probedCount, 1);
+  assert.equal(sample.sessions.complete, false);
 });
