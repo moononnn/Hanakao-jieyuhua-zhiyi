@@ -97,10 +97,12 @@ test("起名搬进「小工具」页：头部只剩编辑常用，关面板交�
   assert.match(script, /setRenameState\('起名中…'\)/);
   assert.match(script, /renameButton\.disabled = true/);
   assert.match(html, /id="rename-hint"/);
-  // 成功才给「还原」，兜底要标出来。
+  // 成功才给「还原」，兜底和换模型都要标出来。
   assert.match(script, /slug-undo/);
   assert.match(script, /\/session-title\/undo/);
-  assert.match(script, /（兜底）/);
+  assert.match(script, /payload\?\.fallback/);
+  assert.match(script, /payload\?\.degraded/, "标题换过模型也要写一句，不能静默");
+  assert.match(script, /已改为：/);
   // 换会话时上一段的名字结果不能跟过来。
   assert.match(script, /setSlugNote\(''\)/);
 });

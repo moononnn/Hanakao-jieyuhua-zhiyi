@@ -4,15 +4,17 @@
 
 ## 待发
 
-（暂无）
+### 0.3.1-dev.1 审包六条落地
 
-## 0.3.0 审包留下的待办（非阻断，下一版处理）
+- **降级信息落到界面。** `lib/length-summary.js` 的 `buildSummaryBlock` 收第三个参数（脚注），换过模型时在速览卡底加一行 `> _这条是「X」（内容模型）拟的，原本那条没接住。_`；`index.js` 把它接上并把 `degraded` / `summaryModel` 写进日志。标题那边：`lib/session-title.js` 返回 `model` / `degraded`，面板结果行与球上的 `_apply_rename_result` 都改成「已改为：xxx（兜底标题，MiniMax M2 拟的）」这种写法。摘卡规则同步扩了 `SUMMARY_NOTE_RE`，脚注行跟着整块一起摘掉。
+- **取消拿对了号。** `lib/fast-model.js` 每次真实调用把 `${基号}_aN` 登记进 `activeAttempts`，新增 `cancelFastModel(sdk, 基号)`：取消这些实际号，并把基号记进 `cancelledBases`，链发现被放弃就立刻停，不再拿后备模型烧额度。速览与标题的超时分支都改用它。
+- **链有总预算。** `invokeFastTextModel` 接受 `budgetMs`，每次尝试前检查，用完抛 `MODEL_BUDGET_EXCEEDED`（带 `triedModels`）。速览传 `SUMMARY_TIMEOUT_MS - 2000`（10s），标题传 `TITLE_TIMEOUT_MS - 5000`（25s），给外层超时留余地。
+- **自定义档进了链。** `resolveFastModelChain` 末尾补一条 `resolveTaskModel({hostModel:null})`，角色 `custom`（`modelRoleLabel` 里叫「自定义模型」）。只用自定义 HTTP 档的用户不会再直接撞「快速档没有可用模型」。
+- **包内不再带 python 测试。** `发布小工坊/projects/jiegehua-zhiyi.json` 的 `excludeGlobs` 加 `python/test_*.py`（下个版本打包时生效，包内 6 个测试文件会消失）。
+- 测试：`tests/fast-model.test.js` 新增 3 项（自定义档入链、预算到点认输、取消用 `_aN` 号并叫停链）、`tests/length-summary.test.js` 新增 1 项（脚注进卡且能整块摘掉）。
 
-审包伙伴对 0.3.0 最终包判 pass、无阻断，同时提了这些；逐条记着，别让它们只留在聊天里。
+### 还留着的（没在本轮处理）
 
-- **降级换模型只在库层留了标记，界面层没落地。** `lib/fast-model.js` 会返回 `degraded` / `modelRole` / `modelName`，但 `index.js` 的速览只解构 `lines/elapsedMs/effort/attempts/reasoningTokens`，`lib/session-title.js` 只取 `value.text`。结果：库层说「不静默换」，用户看到的速览卡和标题其实还是静默换。要么在速览卡上加一行「这条是内容模型拟的」，要么把 CHANGELOG 的措辞收回库层。
-- **取消落空，被放弃的链会在后台跑完。** `lib/fast-model.js` 把宿主 `requestId` 写成 `${requestId}_a${attempts}`，而 `length-summary.js` / `session-title.js` 超时分支用无后缀基号调 `sdk.models.cancel`。单条上限 60 秒，多出来的额度消耗是真金白银。修法二选一：取消时也带后缀，或让链接受一个 `shouldAbort()` 在每次尝试前检查。
-- **速览 12 秒预算与链叠加。** 单条最多 3 次调用、链最多 3 条，理论上 9 次往返都要挤进 12 秒；慢模型下备用模型很可能轮不到就被外层超时掐掉。要实测一轮再决定是放宽预算还是链内共用 deadline。
-- **纯自定义 HTTP 模型进不了快速档链。** `resolveFastModel` 要求 catalog 里存在完全相等的 provider/model，自定义档只在 `resolveTaskModel` 里存在。纯自定义档用户会直接看到「快速档没有可用模型」。需要给链加一条「自定义档」来源。
-- **包内仍带 `python/test_*.py` 六个**（`test_app_bridge`、`test_ask_dialog`、`test_queue_bridge`、`test_queue_panel`、`test_queue_receipt`、`test_resume_dialog`），0.1.46 起就存在，与「测试不进包」的表述不符。下次打包前在 `发布小工坊/projects/jiegehua-zhiyi.json` 的 `excludeGlobs` 加 `python/test_*.py`，并顺手修 WORKFLOW 里「python/ 目录本身不进包」那句（与 `lib/ball.js` 要 spawn `python/zhujian_app.py` 矛盾）。
-- **主会话的审计正则只覆盖 `^tests/`**，所以 python 测试只落在 `pyTests` 字段、`forbidden.hits` 为空，报告层面容易被读成「包内无测试」。下次把 `python/test_*.py` 并进 `forbidden` 或明确标注。
+- 速览 12 秒预算与三层链叠加的实际收益，仍然只有推断没有实测；得看真机上慢模型的表现再决定要不要放宽预算。
+- 真实额度耗尽下的降级链路没跑过（单元测试模拟的是限流、额度、服务商不可用三类错误）。
+- 审包提到的主会话审计正则只覆盖 `^tests/`，那是本地脚本口径，不涉及产品，不跟着发版。

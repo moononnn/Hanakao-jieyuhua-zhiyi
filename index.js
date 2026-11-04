@@ -41,7 +41,7 @@ import {
   summarizeReply,
 } from "./lib/length-summary.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
-import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
+import { FAST_TASK_MODEL_KEY, invokeFastTextModel, modelRoleLabel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
 import { readRuntimeState, writeRuntimeState } from "./lib/runtime-state.js";
@@ -992,7 +992,7 @@ export default defineApp(async (sdk) => {
           peekConfig("askJudgeModel", null),
         );
         const events = [];
-        const { lines, elapsedMs, effort, attempts, reasoningTokens } = await summarizeReply(sdk, text, configuredModel, (event) => {
+        const { lines, elapsedMs, effort, attempts, reasoningTokens, model, degraded } = await summarizeReply(sdk, text, configuredModel, (event) => {
           events.push(event);
         });
         if (events.length) safeLog.debug("长回复速览模型流", events[events.length - 1]);
@@ -1000,10 +1000,14 @@ export default defineApp(async (sdk) => {
           ? invocation.session
           : (invocation?.session?.sessionPath ?? invocation?.session?.path ?? "");
         saveOriginalArchive(sdk.dataDir, { sessionPath, chars: check.chars, text, lines });
-        const next = replaceSummaryBlock(invocation.message, buildSummaryBlock(lines, check.chars));
+        // 换过模型就在卡里写一行：不署名的替换，比失败更让人生气。
+        const modelNote = degraded
+          ? `这条是「${model?.name || "另一条模型"}」（${modelRoleLabel(model?.role)}）拟的，原本那条没接住。`
+          : "";
+        const next = replaceSummaryBlock(invocation.message, buildSummaryBlock(lines, check.chars, modelNote));
         if (!next) return undefined;
         // effort / reasoningTokens 记进日志：下次再空正文，日志会直接写“思考吃了多少”，不用猜。
-        await sdk.logger.info(`长回复已附速览小卡（${check.chars} 字，${lines.length} 行，耗时 ${elapsedMs}ms）`, { chars: check.chars, lines: lines.length, elapsedMs, model: invocation?.message?.model ?? null, effort: effort || "(默认档)", attempts, reasoningTokens });
+        await sdk.logger.info(`长回复已附速览小卡（${check.chars} 字，${lines.length} 行，耗时 ${elapsedMs}ms）`, { chars: check.chars, lines: lines.length, elapsedMs, model: invocation?.message?.model ?? null, effort: effort || "(默认档)", attempts, reasoningTokens, degraded, summaryModel: model?.name || null });
         return { message: next };
       } finally {
         summarizing = false;

@@ -6236,7 +6236,13 @@ class ZhujianMenu(FadeOnLeaveMixin, QFrame):
             # 标题改了，球上显示的目标标题立刻跟上，不等下一轮推荐快照。
             self.ball.target_title = payload.get("title") or self.ball.target_title
             # 第一行只报结果；Hana 侧栏现在立即生效，不再提醒「聊一句后刷新」。
-            tip = "（兜底标题）" if payload.get("fallback") else ""
+            # 兜底和换模型都要标：一个是拿原话顶的，一个是另一条模型起的，不能装作正常完成。
+            notes = []
+            if payload.get("fallback"):
+                notes.append("兜底标题")
+            if payload.get("degraded"):
+                notes.append(f"{payload.get('model') or '另一条模型'} 拟的")
+            tip = f"（{'，'.join(notes)}）" if notes else ""
             self._flash(f"已改为：{payload['title']}{tip}")
             self._set_undo_available(True)
             self._update_target()

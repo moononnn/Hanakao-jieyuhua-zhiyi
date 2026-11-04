@@ -1,5 +1,16 @@
 # 测试
 
+## 2026-11-04 审包六条落地（0.3.1-dev.1）
+
+- 降级信息到界面：`lib/length-summary.js` 的 `buildSummaryBlock` 收三个参数，换过模型时在速览卡底加 `> _这条是「X」（内容模型）拟的，原本那条没接住。_`；新增 `SUMMARY_NOTE_RE` 让脚注行跟着速览块一起被 `stripSummaryBlocks` 摘掉。`index.js` 的解构补 `model` / `degraded` 并写日志。标题：`summarizeSessionTitle` 返回 `model` / `degraded`，面板与 `python/zhujian_app.py:_apply_rename_result` 都改成组合标注。
+- 取消：`lib/fast-model.js` 新增 `activeAttempts` / `cancelledBases` 与 `cancelFastModel(sdk, 基号)`，取消真正发出去的 `${基号}_aN` 并叫停整条链；`length-summary` 与 `session-title` 的超时分支改用它。
+- 预算：`invokeFastTextModel` 新增 `budgetMs`，用完抛 `MODEL_BUDGET_EXCEEDED`（带 `triedModels`）；速览传 10s、标题传 25s。
+- 自定义档：`resolveFastModelChain` 末尾补 `resolveTaskModel({hostModel:null})`，角色 `custom`。
+- 打包：`发布小工坊/projects/jiegehua-zhiyi.json` 的 `excludeGlobs` 加 `python/test_*.py`。
+- 测试：`tests/fast-model.test.js` 加 3 项（自定义档入链 / 预算到点认输 / 取消用 `_aN` 号）、`tests/length-summary.test.js` 加 1 项（脚注进卡且能整块摘掉）、`tests/suggest-panel-ui.test.js` 那条标题断言改成盯 `degraded`。
+- 全量：`node --test` 775 项 773 通过 / 0 失败 / 2 跳过；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；`python -c ast.parse` 通过。
+- 已重载 App。未做：真实额度耗尽下的降级仍未实测；速览 12 秒预算与链叠加的实际收益仍是推断；速览卡脚注的真机渲染（引用块里带斜体）没看过。
+
 ## 2026-11-04 发布 0.3.0（面板高度实测、快速模型降级链）
 
 - 全量：`node --test` 771 项 769 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；最终发布副本上重跑 769 项全过（`release-tests` 绑双指纹）。

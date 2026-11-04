@@ -2,7 +2,7 @@
 // 全程不发真实模型请求、不碰网络、不读用户配置。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { invokeFastTextModel, resolveFastModel, resolveFastModelChain, isUnsupportedReasoning, FAST_TASK_MODEL_KEY } from "../lib/fast-model.js";
+import { invokeFastTextModel, resolveFastModel, resolveFastModelChain, cancelFastModel, isUnsupportedReasoning, FAST_TASK_MODEL_KEY } from "../lib/fast-model.js";
 
 function ndjson(lines) {
   return new Response(lines.map((line) => JSON.stringify(line)).join("\n"), {
@@ -226,6 +226,63 @@ test("链里同一条模型只试一次：快速模型就是内容模型时不�
   });
   const chain = await resolveFastModelChain(sdk);
   assert.equal(chain.length, 1);
+});
+
+test("只有自定义 HTTP 档的也能进链：目录里没有条目不该直接报“没模型”", async () => {
+  const sdk = createSdk({
+    stored: { customTextModel: { enabled: true, baseUrl: "https://example.test/v1", model: "my-model", apiKey: "plain" } },
+    models: [],
+  });
+  const chain = await resolveFastModelChain(sdk);
+  assert.equal(chain.length, 1);
+  assert.equal(chain[0].role, "custom");
+  assert.match(chain[0].name, /my-model/);
+});
+
+test("链有总预算：来不及再换一条就认输，不硬拖", async () => {
+  const models = [
+    { provider: "deepseek", model: "deepseek-flash" },
+    { provider: "minimax", model: "MiniMax-M2" },
+  ];
+  const sdk = createSdk({
+    stored: {
+      [FAST_TASK_MODEL_KEY]: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationModel: { provider: "minimax", model: "MiniMax-M2" },
+    },
+    models,
+    onStream: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const error = new Error("429 Too Many Requests");
+      error.code = "APP_PROVIDER_RATE_LIMITED";
+      throw error;
+    },
+  });
+  const chain = await resolveFastModelChain(sdk);
+  await assert.rejects(
+    () => invokeFastTextModel(sdk, chain, { requestId: "r", budgetMs: 10, messages: [{ role: "user", content: "x" }] }),
+    (error) => error.code === "MODEL_BUDGET_EXCEEDED" && error.triedModels.length === 1
+  );
+});
+
+test("取消要拿实际发出去的号：带 _aN 后缀，并顺手叫停整条链", async () => {
+  const cancelled = [];
+  const sdk = createSdk({
+    models: [{ provider: "deepseek", model: "deepseek-flash" }],
+    onStream: (request) => new Promise((resolve) => {
+      setTimeout(() => resolve(ndjson([
+        { type: "start", requestId: request.requestId },
+        { type: "text-delta", requestId: request.requestId, delta: "要点一" },
+        { type: "done", requestId: request.requestId, stopReason: "stop", usage: { reasoning: 0 } }
+      ])), 120);
+    }),
+  });
+  sdk.models.cancel = async (id) => { cancelled.push(id); return { ok: true }; };
+
+  const running = invokeFastTextModel(sdk, host, { requestId: "r", messages: [{ role: "user", content: "x" }] });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await cancelFastModel(sdk, "r");
+  assert.deepEqual(cancelled, ["r_a1"], "要取消真正发出去的那个号，不是基号");
+  await running;
 });
 
 test("识别宿主拒绝思考档位的两种形态", () => {

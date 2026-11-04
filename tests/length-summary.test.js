@@ -96,6 +96,15 @@ test("buildSummaryBlock 画成引用块小卡，带原文长度", () => {
   assert.equal(block, "> **🌸 知意速览** · 原文 812 字\n> - 第一条要点\n> - 第二条要点");
 });
 
+test("换过模型就在速览卡里写一行，摘卡时这行也跟着走", () => {
+  // 2026-11-04 审包指出：库层说「不静默换」，卡上却看不到谁拟的。
+  const block = buildSummaryBlock(["要点一"], 600, "这条是「MiniMax M2」（内容模型）拟的，原本那条没接住。");
+  assert.match(block, /> _这条是「MiniMax M2」（内容模型）拟的/);
+  const withBody = `正文正文\n\n${block}`;
+  assert.equal(hasSummaryBlock(withBody), true);
+  assert.equal(stripSummaryBlocks(withBody).trim(), "正文正文", "脚注也是引用行，得整块一起摘掉，不能在正文里留一句孤零零的话");
+});
+
 test("appendSummaryBlock 保留原文，把速览接在最后一个正文片段末尾", () => {
   const message = {
     role: "assistant",

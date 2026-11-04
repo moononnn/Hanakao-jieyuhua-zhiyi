@@ -272,8 +272,11 @@ async function renameCurrentSession() {
     const payload = await response.json();
     if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没改成，再试一次。');
     const title = String(payload?.title || '').trim();
-    // 兜底标出来：那是拿她自己那句原话顶上的，不是模型起的名，不装作正常完成。
-    setSlugNote(payload?.fallback ? `已改为：${title}（兜底）` : `已改为：${title}`, { undo: true });
+    // 兜底和换模型都要标出来：一个不是模型起的名，一个是另一条模型起的，不能装作正常完成。
+    const notes = [];
+    if (payload?.fallback) notes.push('兜底');
+    if (payload?.degraded) notes.push(`${payload?.model || '另一条模型'} 拟的`);
+    setSlugNote(`已改为：${title}${notes.length ? `（${notes.join('，')}）` : ''}`, { undo: true });
   } catch (error) {
     setSlugNote(String(error?.message || '没改成，再试一次。').slice(0, 160), { bad: true });
   } finally {
