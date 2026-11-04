@@ -331,12 +331,9 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <h3>输入框里也放一个入口</h3>
-                <p>在聊天输入框中间放一个知意按钮，点一下就在上面摊开推荐，能直接改字再发。跟下面的条数、方向是一套设置。</p>
+                <p>那颗知意按钮，连同摊开的整块面板，现在统一在左边「快捷面板」里管：留哪几页、谁排第一栏、要不要显示。</p>
               </div>
-              <div class="segmented" id="rec-input-button" role="group" aria-label="输入栏推荐按钮">
-                <button type="button" data-value="on" aria-pressed="true">显示</button>
-                <button type="button" data-value="off" aria-pressed="false">隐藏</button>
-              </div>
+              <button type="button" class="qp-jump" id="rec-input-button-jump">去快捷面板 →</button>
             </div>
             <div class="setting-row">
               <div class="setting-copy">
@@ -381,6 +378,56 @@
             </div>
             <p id="rec-refine-status" class="ball-status" role="status" aria-live="polite"></p>
             <p id="rec-status" class="ball-status" role="status" aria-live="polite">正在读取推荐设置…</p>
+          </section>
+        </section>
+
+        <!-- 快捷面板：输入框上方那块板子留哪几页、谁排第一栏 -->
+        <section class="view" id="view-quick" aria-labelledby="quick-panel-title">
+          <header class="view-head">
+            <h1>快捷面板</h1>
+            <p>点输入栏那颗知意按钮，上面摊开的就是这块板子。留哪几页、谁排第一栏，在这儿定。</p>
+          </header>
+
+          <section class="settings-section">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">板</span>
+              <div>
+                <p class="eyebrow">输入框上方</p>
+                <h2 id="quick-panel-title">页面怎么排</h2>
+              </div>
+            </div>
+
+            <div class="qp-layout">
+              <div class="qp-preview">
+                <div class="qp-preview-title">打开面板时看到的样子</div>
+                <div class="qp-mock" id="qp-mock">
+                  <div class="qp-mock-tabs" id="qp-mock-tabs"></div>
+                  <div class="qp-mock-body" id="qp-mock-body"></div>
+                </div>
+                <p class="qp-preview-note" id="qp-preview-note"></p>
+              </div>
+
+              <div class="qp-manager">
+                <div class="qp-manager-head">
+                  <span>页面</span>
+                  <span class="qp-drag-hint">按住卡片拖动换顺序</span>
+                </div>
+                <div class="qp-page-list" id="qp-page-list"></div>
+                <p class="qp-foot-note">一页都不选，输入栏那颗按钮也会一起收起来。</p>
+              </div>
+            </div>
+
+            <div class="setting-row qp-input-row">
+              <div class="setting-copy">
+                <h3>输入框里也放一个入口</h3>
+                <p>就是那颗知意按钮。关掉以后面板不弹出来，但上面的页面选择给你留着，下次打开还在。</p>
+              </div>
+              <div class="segmented" id="rec-input-button" role="group" aria-label="输入栏推荐按钮">
+                <button type="button" data-value="on" aria-pressed="true">显示</button>
+                <button type="button" data-value="off" aria-pressed="false">隐藏</button>
+              </div>
+            </div>
+            <p id="qp-status" class="ball-status" role="status" aria-live="polite"></p>
           </section>
         </section>
 

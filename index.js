@@ -116,6 +116,12 @@ import {
 } from "./lib/recommendation-config.js";
 import { generateRecommendations, resolveSessionIdByPath } from "./lib/recommendation.js";
 import {
+  DEFAULT_QUICK_PANEL_PAGES,
+  enabledQuickPanelPages,
+  hasEnabledQuickPanelPage,
+  normalizeQuickPanelPages,
+} from "./lib/quick-panel-pages.js";
+import {
   SUGGEST_INPUT_STATUS_ID,
   SUGGEST_PANEL_ID,
   SUGGEST_PANEL_ROUTE,
@@ -3885,8 +3891,47 @@ activeFusionServiceDispose = disposeFusionService;
       });
       await sdk.storage.global.set("recommendationConfig", config);
       // 开关一改，输入栏那一格得立刻跟着变。
-      void syncInputStatusVisibility(config.inputButton !== false);
+      // 注意不能只看 inputButton：面板一页都不选时那颗按钮同样得收起来。
+      void syncInputStatusVisibility(await currentInputButtonEnabled());
       return c.json({ ok: true, ...config });
+    });
+
+    // 快捷面板的页面排序与取舍（设置里的「快捷面板」页）。
+    // 顺序就是页签顺序，第一页是打开面板时看到的那一页。
+    app.get("/quick-panel-config", async (c) => {
+      try {
+        const pages = normalizeQuickPanelPages(await sdk.storage.global.get("quickPanelPages", null));
+        return c.json({
+          ok: true,
+          pages,
+          enabled: enabledQuickPanelPages(pages).map((page) => page.key),
+          defaults: DEFAULT_QUICK_PANEL_PAGES.map((page) => page.key),
+        });
+      } catch (error) {
+        await sdk.logger.warn("快捷面板设置读不出来", { code: error?.code || "QUICK_PANEL_READ_ERROR" });
+        return c.json({ ok: false, error: "没读到快捷面板设置。" }, 500);
+      }
+    });
+    app.post("/quick-panel-config", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "没收到要改的内容。" }, 400); }
+      if (!Array.isArray(body?.pages)) return c.json({ ok: false, error: "页面清单格式不对。" }, 400);
+      const pages = normalizeQuickPanelPages(body.pages);
+      await sdk.storage.global.set("quickPanelPages", pages);
+      // 直接用刚写进去的 pages 算，不再回头读一遍：
+      // 同一个键刚写完又读，曾出现读到旧值的情况（读缓写缓不同步），
+      // 结果就是页已经全关了、按钮却还赖在输入框里。
+      const inputButton = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {})).inputButton !== false;
+      const visible = inputButton && hasEnabledQuickPanelPage(pages);
+      await sdk.logger.info(`快捷面板已保存：显示页=[${enabledQuickPanelPages(pages).map((page) => page.key).join(",")}] 输入栏按钮=${visible ? "显示" : "隐藏"}`);
+      void syncInputStatusVisibility(visible);
+      // 一页不剩就把已经挂着的面板收掉。
+      if (!visible) await dismissSuggestPanel();
+      return c.json({
+        ok: true,
+        pages,
+        enabled: enabledQuickPanelPages(pages).map((page) => page.key),
+      });
     });
     app.get("/content-model", async (c) => {
       try {
@@ -4326,11 +4371,14 @@ activeFusionServiceDispose = disposeFusionService;
         const state = readPanelState(raw);
         // 常用回复实时读配置：她在设置里改了，面板里立刻就是新的。
         const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
+        // 面板自己按这份清单排页签、决定落在哪一页（改设置后不用重载 App）。
+        const pages = normalizeQuickPanelPages(await sdk.storage.global.get("quickPanelPages", null));
         return c.json({
           ok: state.ok,
           suggestions: state.suggestions,
           quickReplies: recConfig.quickReplies,
           createdAt: state.createdAt,
+          pages,
         });
       } catch (error) {
         await sdk.logger.warn("面板候选读取失败", { code: error?.code || "PANEL_STATE_ERROR" });
@@ -4504,8 +4552,13 @@ activeFusionServiceDispose = disposeFusionService;
   // 所以还得分会话创建事件补一次。这个坑不补，开关就会对新窗口失效。
   async function currentInputButtonEnabled() {
     try {
-      const raw = await sdk.storage.global.get("recommendationConfig", {});
-      return normalizeRecommendationConfig(raw).inputButton !== false;
+      const [raw, pages] = await Promise.all([
+        sdk.storage.global.get("recommendationConfig", {}),
+        sdk.storage.global.get("quickPanelPages", null),
+      ]);
+      // 两个条件同时成立才显示：开关没关，而且至少还留了一页。
+      // 「一页都不选」就是关掉整个快捷面板，不再另设一个总开关。
+      return normalizeRecommendationConfig(raw).inputButton !== false && hasEnabledQuickPanelPage(pages);
     } catch {
       return true;
     }
@@ -4523,17 +4576,35 @@ activeFusionServiceDispose = disposeFusionService;
       const result = await sdk.bus.request("session:list", { scope: "all" }, { timeoutMs: 8000 });
       const list = Array.isArray(result) ? result : result?.sessions;
       rows = (Array.isArray(list) ? list : [])
-        .map((row) => ({ sessionId: String(row?.sessionId || "").trim(), modified: Number(row?.modified ?? 0) || 0 }))
+        .map((row) => ({
+          sessionId: String(row?.sessionId || "").trim(),
+          // modified 是 ISO 字符串（"2026-11-04T08:16:08.730Z"）。
+          // 原来直接 Number() 得到 NaN→0，排序整个失效，取到的只是列表头 30 个旧会话，
+          // 她现在在用的那个根本没被盖，于是按钮一直还在。
+          stamp: Date.parse(String(row?.modified || "")) || Number(row?.modified) || 0,
+        }))
         .filter((row) => row.sessionId)
-        .sort((a, b) => b.modified - a.modified)
-        .slice(0, 30);
+        .sort((a, b) => b.stamp - a.stamp)
+        .slice(0, 40);
     } catch (error) {
       await sdk.logger.warn("列会话失败，输入栏按钮显隐没同步", { code: error?.code || "SESSION_LIST_ERROR" });
       return;
     }
+    // session:list 只开 home/app 两个命名空间，Code 页的会话不在里面。
+    // 可她现在看着的往往就是 Code 页那个窗口，按钮于是一直藏不掉。
+    // 面板状态里记着最近一次点按钮时的会话号（宿主在 ui-action 里给的是准的），补在最前面。
+    try {
+      const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
+      const panelSession = String(readPanelState(raw).sessionId || "").trim();
+      if (panelSession && !rows.some((row) => row.sessionId === panelSession)) {
+        rows.unshift({ sessionId: panelSession, stamp: Date.now() });
+      }
+    } catch {}
+    let done = 0;
     for (const row of rows) {
       try {
         await sdk.inputStatus.set({ sessionId: row.sessionId, id: SUGGEST_INPUT_STATUS_ID, visible: enabled });
+        done += 1;
       } catch (error) {
         hideSyncFailures += 1;
         await sdk.logger.warn("输入栏按钮显隐同步失败", { code: error?.code || "INPUT_STATUS_ERROR" });
@@ -4542,6 +4613,31 @@ activeFusionServiceDispose = disposeFusionService;
         if (/no declared input status/i.test(String(error?.message || ""))) return;
         continue;
       }
+    }
+    // 只在真正改状态时记一笔，方便日后对账「设置说隐藏了、按钮却还在」。
+    // 宿主对已经挂着的输入框不一定重绘，所以藏的时候写两轮：
+    // 先真隐藏，再补一次同样的隐藏，给那个没刷新的前端一个重新拉取的机会。
+    await sdk.logger.info(`输入栏按钮显隐已盖：${enabled ? "显示" : "隐藏"} ${done}/${rows.length} 会话=[${rows.slice(0, 3).map((row) => row.sessionId).join(",")}]`);
+    if (!enabled && done > 0) {
+      try {
+        await new Promise((resolve) => { const timer = setTimeout(resolve, 400); timer.unref?.(); });
+        for (const row of rows.slice(0, 5)) {
+          await sdk.inputStatus.set({ sessionId: row.sessionId, id: SUGGEST_INPUT_STATUS_ID, visible: false }).catch(() => {});
+        }
+      } catch {}
+    }
+  }
+
+  // 一页不剩时，把已经挂着的面板收掉：空白板子杵在输入框上比不显示更迷惑。
+  async function dismissSuggestPanel() {
+    try {
+      const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});
+      const state = readPanelState(raw);
+      if (!state.sessionId) return;
+      await sdk.userInteraction.dismiss({ sessionId: state.sessionId, id: SUGGEST_PANEL_ID });
+      await writeRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, buildPanelState({ sessionId: state.sessionId }));
+    } catch (error) {
+      await sdk.logger.warn("快捷面板收起失败", { code: error?.code || "PANEL_DISMISS_ERROR" });
     }
   }
 
@@ -4578,9 +4674,14 @@ activeFusionServiceDispose = disposeFusionService;
         // 那条链上**任何一环**被拒，整次点击就变成一个报错——表现就是点了没反应。
         // 但人点这个按钮只想要一件事：面板出来。其余全是记账。
         let quickCount = 0;
+        let firstPageKey = "";
         try {
           const recConfig = normalizeRecommendationConfig(await sdk.storage.global.get("recommendationConfig", {}));
           quickCount = recConfig.quickReplies.length;
+          // 她自己排的第一页是哪个，就按哪个估高度：小工贝那页是两列卡片，
+          // 拿常用回复的条数去算只能算出 180 的下限，一打开就被切掉半个卡片。
+          const rawPages = await sdk.storage.global.get("quickPanelPages", []);
+          firstPageKey = enabledQuickPanelPages(normalizeQuickPanelPages(rawPages))[0]?.key || "";
         } catch {
           // 读不到就按 0 条估高度：面板矮一点、里面自己会滚动，总比不开好。
         }
@@ -4609,7 +4710,7 @@ activeFusionServiceDispose = disposeFusionService;
           // 这时候如果传的还是默认展开，参数一模一样，宿主直接返回、什么都不动，
           // 于是看着就是「点了没反应」。传 true 就一定能把它重新摊开。
           presentation: buildPanelPresentation({
-            height: estimatePanelHeight({ quickCount }),
+            height: estimatePanelHeight({ quickCount, firstPage: firstPageKey }),
             expanded: true,
           }),
         });
@@ -4659,6 +4760,8 @@ activeFusionServiceDispose = disposeFusionService;
       try {
         const enabled = await currentInputButtonEnabled();
         await syncInputStatusVisibility(enabled);
+        // 启动/重载时也补一次：上次关着面板却还挂着，这一轮就收掉。
+        if (!enabled) await dismissSuggestPanel();
       } catch {
         // 自己吞：绝不让它冒到 apply 的 Promise 上。
       }

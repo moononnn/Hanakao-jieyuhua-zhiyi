@@ -93,7 +93,7 @@ const speedOptions = [...speedMenu.querySelectorAll('.speed-option')];
 
 let editing = false;
 let quickReplies = [];
-let activePage = 'recommend';
+let activePage = '';
 let currentSessionId = '';
 let recommendationHeight = 220;
 let voiceRepliesLoaded = false;
@@ -132,11 +132,15 @@ const QUEUE_PANEL_HEIGHT = 420;
 // 它不把任何页面拉高（各页高度各自算），只是不再拦住「装不下」的那个。
 const MAX_PANEL_HEIGHT = 640;
 // 面板现在有三页：推荐回复、小工具、帮我理顺。页签与页面一一对应，切页时一起换。
+// 这里只是「有哪几页」的静态清单；实际显示哪几页、按什么顺序，由设置里的
+// quickPanelPages 决定（见 lib/quick-panel-pages.js），applyPanelPages 负责重排。
 const PANEL_PAGES = [
   { key: 'recommend', tab: recommendTab, page: recommendPage },
   { key: 'polish', tab: polishTab, page: polishPage },
   { key: 'tools', tab: toolsTab, page: toolsPage },
 ];
+// 当前真正显示的页，按设置里的顺序。没拿到设置前按旧顺序全显示。
+let panelPageOrder = PANEL_PAGES.map((item) => item.key);
 // 小工具那页现在有三层：入口格子、朗读、排队发送。记住停在哪一层。
 let toolsSubView = 'grid';
 
@@ -342,6 +346,24 @@ function measureContentHeight() {
   return height;
 }
 
+// 面板关掉再点开时，iframe 是复用的，页面不会重新加载，也就不会再跑一次量高。
+// 宿主那边按后端初值重设高度，于是内容多的页底下空一截、内容少的页被切一刀。
+// 这里常驻一个低速校验：内容高和窗口高差出 3px 就自己纠正一次。
+let heightWatchTimer = 0;
+
+function watchPanelHeight() {
+  clearInterval(heightWatchTimer);
+  heightWatchTimer = setInterval(() => {
+    if (document.hidden) return;
+    let target = 0;
+    if (activePage === 'tools') target = measureToolsPageHeight();
+    else if (activePage === 'recommend' || activePage === 'polish') target = measureContentHeight();
+    if (!target) return;
+    if (Math.abs(target - window.innerHeight) <= 3) return;
+    void setPanelHeight(target);
+  }, 1200);
+}
+
 function schedulePanelHeight() {
   // 小工具页有自己的量法（三层子视图各有各的底），这里只管这两页。
   if (activePage !== 'recommend' && activePage !== 'polish') return;
@@ -365,8 +387,7 @@ function schedulePanelHeight() {
   }, 30);
 }
 
-function releaseReplyAudio() {
-  stopHighlightLoop();
+function releaseReplyAudio() {stopHighlightLoop();
   if (replyAudio) {
     replyAudio.pause();
     replyAudio.removeAttribute('src');
@@ -966,9 +987,15 @@ async function stopQueuePlan() {
 function measureToolsPageHeight() {
   const page = toolsPage || document.getElementById('tools-page') || toolsGrid;
   if (!page) return TOOLS_PANEL_HEIGHT;
+  const panel = document.querySelector('.panel');
+  // 和 measureContentHeight 一个向题：.panel 带 min-height:100%，被 iframe
+  // 当下高度撑着。不先摘掉，量到的高度永远等于当前高度——
+  // 面板上一次是矮的，这一次就续着矮，卡片就切在半中。
+  const prevMin = panel ? panel.style.minHeight : '';
+  if (panel) panel.style.minHeight = '0';
   const rect = page.getBoundingClientRect();
   const bottom = rect.bottom + (window.scrollY || 0);
-  const panel = document.querySelector('.panel');
+  if (panel) panel.style.minHeight = prevMin;
   const padBottom = panel ? (parseFloat(getComputedStyle(panel).paddingBottom) || 0) : 0;
   const need = Math.ceil(bottom + padBottom + 2);
   if (!Number.isFinite(need) || need <= 0) return TOOLS_PANEL_HEIGHT;
@@ -1012,8 +1039,39 @@ async function showToolsView(sub = 'grid') {
   if (!reading) await loadVoiceReplies({ force: true });
 }
 
+/**
+ * 按设置重排页签、收起没选的页。
+ * 顺序靠 appendChild 重排（DOM 顺序就是显示顺序，也决定键盘 Tab 的走法）。
+ * 传 null（没拿到设置）时保持原样，不能因为一次请求失败把面板掏空。
+ */
+function applyPanelPages(pages) {
+  if (!Array.isArray(pages)) {
+    panelPageOrder = PANEL_PAGES.map((item) => item.key);
+    return true;
+  }
+  const order = pages
+    .filter((item) => item && item.enabled !== false)
+    .map((item) => String(item.key || ''))
+    .filter((key) => PANEL_PAGES.some((item) => item.key === key));
+  panelPageOrder = order;
+  const nav = recommendTab?.parentElement;
+  for (const item of PANEL_PAGES) {
+    const on = panelPageOrder.includes(item.key);
+    if (item.tab) item.tab.hidden = !on;
+    if (item.page && !on) item.page.hidden = true;
+  }
+  if (nav) {
+    for (const key of panelPageOrder) {
+      const item = PANEL_PAGES.find((entry) => entry.key === key);
+      if (item?.tab) nav.appendChild(item.tab);
+    }
+  }
+  return panelPageOrder.length > 0;
+}
+
 async function showPage(page) {
-  const key = PANEL_PAGES.some((item) => item.key === page) ? page : 'recommend';
+  const fallback = panelPageOrder[0] || 'recommend';
+  const key = panelPageOrder.includes(page) ? page : fallback;
   activePage = key;
   const showTools = key === 'tools';
   const showPolish = key === 'polish';
@@ -1744,17 +1802,30 @@ polishResult?.addEventListener('input', () => {
 });
 
 async function load() {
+  let pages = null;
   try {
     const response = await hana.api.fetch('/suggest-panel/state');
     const payload = await response.json();
+    pages = payload?.pages;
     quickReplies = Array.isArray(payload?.quickReplies) ? payload.quickReplies : [];
     renderQuick();
     renderSuggestions(payload?.suggestions);
   } catch {
     empty.hidden = false;
   }
+  // 先按设置排好页签，再决定落在哪一页：第一栏就是打开面板看到的页。
+  const hasPages = applyPanelPages(pages);
+  if (hasPages && !panelPageOrder.includes(activePage)) {
+    await showPage(panelPageOrder[0]);
+  } else if (activePage === 'tools' && toolsSubView === 'grid') {
+    // 面板关掉再点开时 iframe 是复用的，activePage 没变就不走 showPage，
+    // 高度就停在上一次那个值——上一次是矮的，这一次就续着矮。
+    await showToolsView('grid');
+  }
   // 两条路都要量：拿到了是渲染后的真实高度，没拿到是空态的高度。
   schedulePanelHeight();
+  // 页面复用时不会重载，靠这个定时器自己纠偏。
+  watchPanelHeight();
 }
 
 // 关面板只有宿主自己那颗叉叉：它画在输入框面板的右上角，点一下就把这块板子撤掉。

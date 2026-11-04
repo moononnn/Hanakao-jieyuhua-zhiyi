@@ -1050,6 +1050,9 @@ function renderRecommendationBehavior() {
   setSegmentValue(recDisplay, config.display);
   setSegmentValue(recCount, config.count);
   setSegmentValue(recInputButton, config.inputButton === false ? 'off' : 'on');
+  // 页全关时那颗按钮本来就不显示，开关得跟着显示「隐藏」。
+  // 这里只负责广播一声，真正的锁定在快捷面板那段（qpApplyInputButtonLock）。
+  try { window.dispatchEvent(new CustomEvent('zhiyi:rec-render')); } catch {}
   renderQuickTags();
   renderStyleList();
   if (!recStatus) return;
@@ -2899,4 +2902,277 @@ feedbackMail?.addEventListener('click', async () => {
   if (feedbackHint) feedbackHint.textContent = `都在草稿里了，没配邮件客户端的话，直接复制正文发到 ${FEEDBACK_MAIL}。`;
   void openExternalSafely(`mailto:${FEEDBACK_MAIL}?subject=${subject}&body=${encodedBody}`);
 });
+
+// ── 快捷面板：留哪几页、谁排第一栏 ─────────────────────────────
+// 预览区就是操作区：左边按当前顺序画那块板子，右边卡片按住能拖。
+// 一页都不选＝输入栏那颗按钮也收起来，这条规则在服务端算（currentInputButtonEnabled），
+// 这边只负责把结果画清楚，不自己另存一份真相。
+
+const qpPageList = document.querySelector('#qp-page-list');
+const qpMockTabs = document.querySelector('#qp-mock-tabs');
+const qpMockBody = document.querySelector('#qp-mock-body');
+const qpPreviewNote = document.querySelector('#qp-preview-note');
+const qpStatus = document.querySelector('#qp-status');
+const qpJumpButton = document.querySelector('#rec-input-button-jump');
+
+const QP_PAGE_META = {
+  recommend: { label: '推荐回复', note: '几句现成的话，点一条就能发' },
+  polish: { label: '帮我理顺', note: '潦草的话丢进去，理顺了再发' },
+  tools: { label: '小工具', note: '起名、朗读、排队发送都在这一页' },
+};
+let qpPages = [
+  { key: 'recommend', enabled: true },
+  { key: 'polish', enabled: true },
+  { key: 'tools', enabled: true },
+];
+let qpSaveTimer = 0;
+
+function qpEnabledPages() {
+  return qpPages.filter((page) => page.enabled);
+}
+
+/**
+ * 页全关时，下面那个「显示 / 隐藏」开关得跟着变「隐藏」并置灰。
+ * 只改画面不改数据：数据里 inputButton 还是她上次选的，哪页一点回来，
+ * 开关就自己按那个值恢复，不用她再手动开一次。
+ */
+function qpApplyInputButtonLock() {
+  if (!recInputButton) return;
+  const anyEnabled = qpEnabledPages().length > 0;
+  if (anyEnabled) {
+    setSegmentValue(recInputButton, recommendationBehavior.inputButton === false ? 'off' : 'on');
+  } else {
+    setSegmentValue(recInputButton, 'off');
+  }
+  recInputButton.classList.toggle('is-locked', !anyEnabled);
+  for (const button of recInputButton.querySelectorAll('button[data-value]')) {
+    button.disabled = !anyEnabled;
+  }
+}
+
+function qpSetStatus(text, tone = '') {
+  if (!qpStatus) return;
+  qpStatus.textContent = text;
+  qpStatus.dataset.tone = tone;
+}
+
+/** 启用的一律排在前面，未启用的按原相对顺序缀在后面。 */
+function qpNormalizeOrder() {
+  qpPages = [...qpPages.filter((page) => page.enabled), ...qpPages.filter((page) => !page.enabled)];
+}
+
+function qpRenderPreview() {
+  if (!qpMockTabs || !qpMockBody) return;
+  const enabled = qpEnabledPages();
+  qpMockTabs.replaceChildren();
+  qpMockBody.replaceChildren();
+
+  for (const [index, page] of enabled.entries()) {
+    const meta = QP_PAGE_META[page.key] || { label: page.key };
+    const tab = document.createElement('span');
+    tab.className = 'qp-mock-tab';
+    if (index === 0) tab.classList.add('is-first');
+    tab.textContent = meta.label;
+    qpMockTabs.appendChild(tab);
+  }
+
+  if (!enabled.length) {
+    if (qpPreviewNote) qpPreviewNote.textContent = '三页都没选，输入栏那颗按钮也会收起来，点不进这块板子。';
+    const blank = document.createElement('div');
+    blank.className = 'qp-mock-empty';
+    blank.textContent = '面板不显示';
+    qpMockBody.appendChild(blank);
+    return;
+  }
+
+  const firstKey = enabled[0].key;
+  if (qpPreviewNote) {
+    const meta = QP_PAGE_META[firstKey] || { label: firstKey };
+    qpPreviewNote.textContent = `第一栏是「${meta.label}」，点按钮看到的就是它。${meta.note ? `${meta.note}。` : ''}`;
+  }
+
+  if (firstKey === 'tools') {
+    for (let i = 0; i < 6; i += 1) {
+      const tile = document.createElement('div');
+      tile.className = 'qp-mock-tile';
+      qpMockBody.appendChild(tile);
+    }
+    return;
+  }
+  if (firstKey === 'polish') {
+    const box = document.createElement('div');
+    box.className = 'qp-mock-input';
+    qpMockBody.appendChild(box);
+    for (let i = 0; i < 2; i += 1) {
+      const line = document.createElement('div');
+      line.className = 'qp-mock-line';
+      qpMockBody.appendChild(line);
+    }
+    return;
+  }
+  for (let i = 0; i < 3; i += 1) {
+    const line = document.createElement('div');
+    line.className = 'qp-mock-line';
+    qpMockBody.appendChild(line);
+  }
+}
+
+function qpRenderList() {
+  if (!qpPageList) return;
+  qpPageList.replaceChildren();
+  const enabled = qpEnabledPages();
+  for (const page of qpPages) {
+    const meta = QP_PAGE_META[page.key] || { label: page.key };
+    const rank = page.enabled ? enabled.findIndex((item) => item.key === page.key) + 1 : 0;
+
+    const card = document.createElement('div');
+    card.className = 'qp-page';
+    card.dataset.key = page.key;
+    card.dataset.enabled = page.enabled ? '1' : '0';
+    card.draggable = true;
+
+    const handle = document.createElement('span');
+    handle.className = 'qp-handle';
+    handle.setAttribute('aria-hidden', 'true');
+    handle.textContent = '⋮⋮';
+
+    const name = document.createElement('span');
+    name.className = 'qp-name';
+    name.textContent = meta.label;
+
+    const rankTag = document.createElement('span');
+    rankTag.className = 'qp-rank';
+    rankTag.textContent = rank ? `第 ${rank} 栏` : '未选';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'qp-toggle';
+    toggle.dataset.action = 'toggle';
+    toggle.setAttribute('aria-pressed', String(page.enabled));
+    toggle.textContent = page.enabled ? '显示' : '收起';
+
+    card.append(handle, name, rankTag, toggle);
+    qpPageList.appendChild(card);
+  }
+}
+
+function qpRender() {
+  qpNormalizeOrder();
+  qpRenderList();
+  qpRenderPreview();
+  qpApplyInputButtonLock();
+}
+
+function qpScheduleSave() {
+  if (qpSaveTimer) clearTimeout(qpSaveTimer);
+  qpSaveTimer = setTimeout(() => { void qpSave(); }, 260);
+}
+
+async function qpSave() {
+  if (qpSaveTimer) { clearTimeout(qpSaveTimer); qpSaveTimer = 0; }
+  try {
+    const response = await hana.api.fetch('/quick-panel-config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pages: qpPages.map((page) => ({ key: page.key, enabled: page.enabled })) }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没存上。');
+    if (Array.isArray(payload.pages)) {
+      qpPages = payload.pages.map((page) => ({ key: page.key, enabled: page.enabled !== false }));
+    }
+    qpRender();
+    qpSetStatus(qpEnabledPages().length ? '已保存，下次展开面板就按这个排。' : '已保存：一页都没选，输入栏那颗按钮已经收起来了。');
+  } catch (error) {
+    qpSetStatus(String(error?.message || '没存上，再试一次。').slice(0, 120), 'bad');
+  }
+}
+
+function qpCardAfter(container, y) {
+  const cards = [...container.querySelectorAll('.qp-page:not(.dragging)')];
+  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+  for (const card of cards) {
+    const box = card.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) closest = { offset, element: card };
+  }
+  return closest.element;
+}
+
+if (qpPageList) {
+  qpPageList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action="toggle"]');
+    if (!button) return;
+    const card = button.closest('.qp-page');
+    const key = card?.dataset.key || '';
+    const page = qpPages.find((item) => item.key === key);
+    if (!page) return;
+    page.enabled = !page.enabled;
+    qpRender();
+    qpScheduleSave();
+  });
+
+  qpPageList.addEventListener('dragstart', (event) => {
+    const card = event.target.closest('.qp-page');
+    if (!card) return;
+    card.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    try { event.dataTransfer.setData('text/plain', card.dataset.key || ''); } catch {}
+  });
+
+  qpPageList.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    const dragging = qpPageList.querySelector('.qp-page.dragging');
+    if (!dragging) return;
+    const after = qpCardAfter(qpPageList, event.clientY);
+    if (after == null) qpPageList.appendChild(dragging);
+    else if (after !== dragging) qpPageList.insertBefore(dragging, after);
+    event.dataTransfer.dropEffect = 'move';
+  });
+
+  qpPageList.addEventListener('drop', (event) => { event.preventDefault(); });
+
+  qpPageList.addEventListener('dragend', () => {
+    const dragging = qpPageList.querySelector('.qp-page.dragging');
+    if (!dragging) return;
+    dragging.classList.remove('dragging');
+    // DOM 顺序就是新页序；未启用的排在后面，它们原来的相对顺序照旧。
+    const byKey = new Map(qpPages.map((page) => [page.key, page]));
+    const next = [...qpPageList.querySelectorAll('.qp-page')]
+      .map((card) => byKey.get(card.dataset.key))
+      .filter(Boolean);
+    if (next.length === qpPages.length) qpPages = next;
+    qpRender();
+    qpScheduleSave();
+  });
+}
+
+if (qpJumpButton) {
+  qpJumpButton.addEventListener('click', () => {
+    try {
+      const channel = ('BroadcastChannel' in window) ? new BroadcastChannel('zhiyi-panel-view') : null;
+      channel?.postMessage({ view: 'quick', from: 'nav' });
+      channel?.close?.();
+    } catch {}
+  });
+}
+
+async function loadQuickPanelConfig() {
+  if (!qpPageList) return;
+  try {
+    const response = await hana.api.fetch('/quick-panel-config');
+    const payload = await response.json();
+    if (Array.isArray(payload?.pages)) {
+      qpPages = payload.pages.map((page) => ({ key: page.key, enabled: page.enabled !== false }));
+    }
+  } catch {
+    qpSetStatus('没读到设置，先用着上次的样子。', 'bad');
+  }
+  qpRender();
+}
+
+// 推荐设置那边重画之后（加载完、或她改了显示开关），把锁定状态再对齐一次。
+window.addEventListener('zhiyi:rec-render', () => qpApplyInputButtonLock());
+
+void loadQuickPanelConfig();
 

@@ -426,3 +426,169 @@ html[data-appearance="dark"] .note-icon { background: #48343b; color: #edb4c0; }
 }
 
 .quick-add button:hover { filter: brightness(1.05); }
+
+/* ── 快捷面板设置页 ─────────────────────────────────
+   左边是实时预览（就是那块板子的缩样），右边是可拖动排序的页面卡片。 */
+.qp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 22px;
+  padding: 18px 2px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.qp-preview-title {
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .12em;
+}
+
+.qp-mock {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.qp-mock-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 26px; }
+
+.qp-mock-tab {
+  padding: 3px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.qp-mock-tab.is-first {
+  background: var(--mint);
+  color: var(--mint-deep);
+  font-weight: 600;
+  box-shadow: 0 1px 3px #41604a1a;
+}
+
+.qp-mock-body { display: grid; gap: 7px; }
+
+.qp-mock-line { height: 12px; border-radius: 6px; background: var(--mint); opacity: .55; }
+
+.qp-mock-tile { height: 40px; border-radius: 9px; background: var(--mint); opacity: .5; }
+
+.qp-mock-body:has(.qp-mock-tile) { grid-template-columns: repeat(3, 1fr); }
+
+.qp-mock-input { height: 44px; border: 1px dashed var(--line); border-radius: 9px; background: var(--paper); }
+
+.qp-mock-empty {
+  padding: 26px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.qp-preview-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+
+.qp-manager { min-width: 0; }
+
+.qp-manager-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .12em;
+}
+
+.qp-drag-hint {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--mint);
+  color: var(--mint-deep);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.qp-page-list { display: grid; gap: 8px; }
+
+.qp-page {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: grab;
+  transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+
+.qp-page:active { cursor: grabbing; }
+
+.qp-page[data-enabled="1"] { border-color: #bcdccc; }
+
+.qp-page[data-enabled="0"] { background: transparent; opacity: .62; }
+
+.qp-page.dragging { opacity: .45; border-style: dashed; box-shadow: 0 6px 18px #41604a1f; }
+
+.qp-handle { color: var(--muted); font-size: 12px; letter-spacing: -2px; opacity: .55; user-select: none; }
+
+.qp-name { flex: 1 1 auto; min-width: 0; font-size: 13.5px; font-weight: 600; }
+
+.qp-page[data-enabled="0"] .qp-name { font-weight: 400; }
+
+.qp-rank { flex: 0 0 auto; color: var(--mint-deep); font-size: 11.5px; }
+
+.qp-page[data-enabled="0"] .qp-rank { color: var(--muted); }
+
+.qp-toggle {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.qp-toggle[aria-pressed="true"] { border-color: #bcdccc; background: var(--mint); color: var(--mint-deep); font-weight: 600; }
+
+.qp-toggle:focus-visible, .qp-jump:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+
+.qp-foot-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+
+.qp-input-row { border-bottom: 0; }
+
+.qp-jump {
+  flex: 0 0 auto;
+  padding: 5px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: #4a9277;
+  font-size: 12px;
+  line-height: 1.7;
+  cursor: pointer;
+}
+
+.qp-jump:hover { background: var(--mint); }
+
+/* 页全关时，输入栏那个开关跟着显示「隐藏」并置灰：它现在改也改不动。 */
+.segmented.is-locked { opacity: .55; }
+.segmented.is-locked button { cursor: not-allowed; }
+
+
+#qp-status[data-tone="bad"] { color: #b4564f; }
+
+@media (max-width: 860px) {
+  .qp-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+html[data-appearance="dark"] .qp-page[data-enabled="1"] { border-color: #3f5c4c; }
+
+html[data-appearance="dark"] .qp-toggle[aria-pressed="true"] { border-color: #3f5c4c; }
+

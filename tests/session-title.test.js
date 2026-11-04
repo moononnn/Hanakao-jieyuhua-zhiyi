@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -16,7 +16,12 @@ import {
   detectConversationLang,
   messagePlainText,
   pickTitleModel,
+  projectSessionEntries,
+  readTitleCache,
+  selectTitleMessages,
+  stripAttachmentWrapper,
   stripHiddenMetaBlocks,
+  titleFingerprint,
 } from "../lib/session-title.js";
 
 test("隐藏元信息块不进标题", () => {
@@ -172,4 +177,113 @@ test("写入标题要把旧值记下来，否则「还原」永远报没改过",
   // 确实没有旧标题时记 null（表示从没起过），不能因此就不记。
   await applySessionTitle(sdk, { sessionId: "sess_2", title: "另一段", previousTitle: "" });
   assert.equal(readUndo().sess_2.previousTitle, "");
+});
+
+// ── 2026-11-04 起名取料改造：从「按条数截断」改成「按回合收实质发言」──
+
+test("带附件包装的用户消息不再整条判空", () => {
+  assert.equal(stripAttachmentWrapper("[SessionFile] {fileId:\"sf_1\"} 帮我看看这个面板"), "帮我看看这个面板");
+  assert.equal(cleanContextText('[attached_image: a.png] 这张图歪了'), "这张图歪了");
+  assert.equal(cleanContextText('<file name="a.png">xx</file>截图没截全'), "截图没截全");
+  // 别的未闭合标签照旧整条丢，注入哨兵不能因为这次改造被拆掉。
+  assert.equal(cleanContextText("[hana_reference]一大段"), "");
+});
+
+test("发言开头的会话编号不进语料", () => {
+  assert.equal(
+    cleanContextText("sess_0mw0epz2i_70c6de51dde73f4e7e70 小花你读下这个窗口然后继续哈"),
+    "小花你读下这个窗口然后继续哈",
+  );
+});
+
+test("取样要盖住整个窗口：开头、中段、最近都有份，空的工具轮不占名额", () => {
+  const messages = [];
+  for (let turn = 0; turn < 10; turn++) {
+    messages.push({ role: "user", content: `第${turn}轮的要求` });
+    messages.push({ role: "assistant", content: "" });
+    messages.push({ role: "assistant", content: `第${turn}轮的过程` });
+    messages.push({ role: "assistant", content: "" });
+    messages.push({ role: "assistant", content: `第${turn}轮的结论` });
+  }
+  const texts = selectTitleMessages(messages).map((m) => m.content);
+  assert.ok(texts.some((text) => text.startsWith("第0轮")), "开头要有");
+  assert.ok(
+    texts.some((text) => text.startsWith("第2轮")) || texts.some((text) => text.startsWith("第5轮")),
+    "中段要有",
+  );
+  assert.ok(texts.some((text) => text.startsWith("第9轮")), "最近要有");
+  assert.ok(!texts.some((text) => text === ""), "空消息不许占位");
+  // 顺序必须是时间正序，模型才知道哪头是现在
+  const order = texts.map((text) => Number(text.match(/第(\d+)轮/)[1]));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test("最近几轮完整展开，单轮也最多留最后三条助手发言", () => {
+  const messages = [
+    { role: "user", content: "帮我改面板" },
+    ...["a1", "a2", "a3", "a4", "a5"].map((text) => ({ role: "assistant", content: text })),
+  ];
+  const picked = selectTitleMessages(messages, { segments: 1, tailTurns: 1 });
+  assert.deepEqual(picked.map((m) => m.content), ["帮我改面板", "a3", "a4", "a5"]);
+});
+
+test("一轮干到底的超长任务：助手发言要在整轮里等距抽，不能只看最后几步", () => {
+  const messages = [{ role: "user", content: "把这个功能做完" }];
+  for (let i = 0; i < 40; i++) messages.push({ role: "assistant", content: `第${i}步的结论` });
+  const picked = selectTitleMessages(messages, { segments: 1, tailTurns: 1 });
+  const texts = picked.filter((m) => m.role === "assistant").map((m) => m.content);
+  assert.ok(texts.length > 3, "长轮不能只给最后三条");
+  assert.ok(texts.includes("第0步的结论"), "开头要抽到");
+  assert.ok(texts.includes("第39步的结论"), "最后一步要在");
+  assert.ok(texts.some((text) => /^第(1\d|2\d)步/.test(text)), "中段要抽到");
+});
+
+test("session:entries 的原始条目能投影成对话消息", () => {
+  const entries = [
+    { type: "session", id: "s0" },
+    { type: "message", message: { role: "user", content: "改面板" } },
+    { type: "message", message: { role: "toolResult", content: "一大段工具输出" } },
+    { type: "message", message: { role: "assistant", content: [{ type: "text", text: "改好了" }] } },
+    { type: "custom_message", content: "内部条目" },
+  ];
+  assert.deepEqual(projectSessionEntries(entries), [
+    { role: "user", content: "改面板" },
+    { role: "assistant", content: [{ type: "text", text: "改好了" }] },
+  ]);
+  assert.deepEqual(projectSessionEntries(null), []);
+});
+
+test("指纹随最后一条消息变，没新消息就不变", () => {
+  const one = [{ role: "user", content: "改面板" }];
+  const two = [{ role: "user", content: "改面板" }, { role: "assistant", content: "改好了" }];
+  assert.notEqual(titleFingerprint(one), titleFingerprint(two));
+  assert.equal(titleFingerprint(one), titleFingerprint([{ role: "user", content: "改面板" }]));
+});
+
+test("提示词要求盖住整段对话并列了禁词", () => {
+  const prompt = buildTitlePrompt("用户: 昨天聊天气\n用户: 今天改标题取样逻辑");
+  assert.match(prompt, /要盖住整段对话/);
+  assert.match(prompt, /不是只看最后几轮/);
+  assert.match(prompt, /不要出现这些词：继续、对话、窗口/);
+  assert.match(prompt, /要写出具体在做的东西/);
+});
+
+test("同一段对话没新消息时直接回缓存的名字", async () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), "zhiyi-title-cache-"));
+  writeFileSync(
+    path.join(dataDir, "runtime-state.json"),
+    JSON.stringify({
+      titleCache: {
+        sess_1: { fingerprint: "1:改面板", title: "面板倒计时", at: new Date().toISOString() },
+        sess_2: { fingerprint: "1:旧", title: "过期名字", at: "2020-01-01T00:00:00.000Z" },
+      },
+    }),
+    "utf8",
+  );
+  const sdk = { dataDir };
+  const hit = await readTitleCache(sdk, "sess_1", "1:改面板");
+  assert.equal(hit.title, "面板倒计时");
+  assert.equal(await readTitleCache(sdk, "sess_1", "2:后来又聊了几句"), null, "有新消息就不能拿旧名");
+  assert.equal(await readTitleCache(sdk, "sess_2", "1:旧"), null, "太旧的缓存不要");
+  assert.equal(await readTitleCache(sdk, "sess_9", "1:改面板"), null);
 });
