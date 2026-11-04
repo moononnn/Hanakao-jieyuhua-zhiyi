@@ -1,5 +1,13 @@
 # 测试
 
+## 2026-11-04 发布 0.3.1（降级信息上界面、取消用对号）
+
+- 本地：`node --test` 777 项 775 通过 / 0 失败 / 2 跳过；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；`python -c ast.parse` 通过。
+- 副本：release-tests 在最终包上 775 项全过，绑定 ZIP `aeed0e70…c36b` / entry `c7cece90…8062`。
+- 机械核验：432 文件与暂存目录、解包目录逐文件哈希 0 差异；禁止内容 0；红线 0；邮箱 5（4 处公开反馈出口 + 1 处第三方版权行）；手机号 0；本机路径 0；142 个 js 语法全过；相对 import 0 缺失；配方 3 文件与源码逐字相同。
+- 审包：独立伙伴 pass，无阻断；A/B 探针证实旧包取消后仍发 `_a2`（MODEL_EMPTY），新包只发 a1（MODEL_CANCELLED）；脚注状态机 8 组序列均正确。
+- 线上：CI run 41758074550（提交 `881204e`）success；tag `v0.3.1`；Release 双附件回下载指纹一致；市场 PR #174 更新为 v0.3.1（提交 `ac3ecc0`），`validate-pr` run 41759693040 pass；freeze 完成。
+
 ## 2026-11-04 审包六条落地（0.3.1-dev.1）
 
 - 降级信息到界面：`lib/length-summary.js` 的 `buildSummaryBlock` 收三个参数，换过模型时在速览卡底加 `> _这条是「X」（内容模型）拟的，原本那条没接住。_`；新增 `SUMMARY_NOTE_RE` 让脚注行跟着速览块一起被 `stripSummaryBlocks` 摘掉。`index.js` 的解构补 `model` / `degraded` 并写日志。标题：`summarizeSessionTitle` 返回 `model` / `degraded`，面板与 `python/zhujian_app.py:_apply_rename_result` 都改成组合标注。
