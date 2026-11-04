@@ -2,7 +2,7 @@
 // 全程不发真实模型请求、不碰网络、不读用户配置。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { invokeFastTextModel, resolveFastModel, isUnsupportedReasoning, FAST_TASK_MODEL_KEY } from "../lib/fast-model.js";
+import { invokeFastTextModel, resolveFastModel, resolveFastModelChain, isUnsupportedReasoning, FAST_TASK_MODEL_KEY } from "../lib/fast-model.js";
 
 function ndjson(lines) {
   return new Response(lines.map((line) => JSON.stringify(line)).join("\n"), {
@@ -143,6 +143,89 @@ test("选了一条已经不在目录里的模型，回落而不是硬传", async
   const sdk = createSdk({ stored: {}, models: [{ provider: "deepseek", model: "deepseek-flash" }] });
   const resolved = await resolveFastModel(sdk, { provider: "minimax", model: "已经删掉的模型" });
   assert.equal(resolved, null);
+});
+
+test("快速模型被限流时就换内容模型，再不行换备用模型", async () => {
+  // 2026-11-04：以前快速档只会在同一条模型里调参数，额度用完/被限流就彻底失败。
+  const models = [
+    { provider: "deepseek", model: "deepseek-flash", name: "DS Flash" },
+    { provider: "minimax", model: "MiniMax-M2", name: "MiniMax M2" },
+    { provider: "moonshot", model: "kimi-k2", name: "Kimi K2" },
+  ];
+  const attempts = [];
+  const sdk = createSdk({
+    stored: {
+      [FAST_TASK_MODEL_KEY]: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationModel: { provider: "minimax", model: "MiniMax-M2" },
+      recommendationFallbackModel: { provider: "moonshot", model: "kimi-k2" },
+    },
+    models,
+    onStream: (request) => {
+      attempts.push(request.model);
+      if (request.model === "deepseek-flash") {
+        const error = new Error("429 Too Many Requests");
+        error.code = "APP_PROVIDER_RATE_LIMITED";
+        throw error;
+      }
+      return ndjson([
+        { type: "start", requestId: request.requestId },
+        { type: "text-delta", requestId: request.requestId, delta: "要点一" },
+        { type: "done", requestId: request.requestId, stopReason: "stop", usage: { reasoning: 0 } }
+      ]);
+    },
+  });
+
+  const chain = await resolveFastModelChain(sdk);
+  assert.deepEqual(chain.map((item) => item.model.model), ["deepseek-flash", "MiniMax-M2", "kimi-k2"], "降级链要按快速、内容、备用排开");
+  assert.deepEqual(chain.map((item) => item.role), ["fast", "content", "backup"]);
+
+  const out = await invokeFastTextModel(sdk, chain, { requestId: "r", messages: [{ role: "user", content: "压成两行" }] });
+  assert.equal(out.modelRole, "content", "换上的是内容模型");
+  assert.equal(out.degraded, true, "换过模型这件事要写在结果里，不能默默换");
+  assert.equal(out.tried.length, 1);
+  assert.equal(out.tried[0].code, "APP_PROVIDER_RATE_LIMITED");
+  assert.deepEqual(attempts, ["deepseek-flash", "MiniMax-M2"]);
+});
+
+test("降级链一路到底都失败：抛第一条的原因，并把试过哪几条带出来", async () => {
+  const models = [
+    { provider: "deepseek", model: "deepseek-flash" },
+    { provider: "minimax", model: "MiniMax-M2" },
+  ];
+  const sdk = createSdk({
+    stored: {
+      [FAST_TASK_MODEL_KEY]: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationModel: { provider: "minimax", model: "MiniMax-M2" },
+    },
+    models,
+    onStream: (request) => {
+      const error = new Error(request.model === "deepseek-flash" ? "额度用完了" : "服务商 503");
+      error.code = request.model === "deepseek-flash" ? "APP_PROVIDER_QUOTA" : "APP_PROVIDER_UNAVAILABLE";
+      throw error;
+    },
+  });
+  const chain = await resolveFastModelChain(sdk);
+  await assert.rejects(
+    () => invokeFastTextModel(sdk, chain, { requestId: "r", messages: [{ role: "user", content: "x" }] }),
+    (error) => {
+      assert.equal(error.code, "APP_PROVIDER_QUOTA", "抛第一条的原因，那是她最该知道的");
+      assert.equal(error.triedModels.length, 2);
+      return true;
+    }
+  );
+});
+
+test("链里同一条模型只试一次：快速模型就是内容模型时不会重复打两遍", async () => {
+  const models = [{ provider: "deepseek", model: "deepseek-flash" }];
+  const sdk = createSdk({
+    stored: {
+      [FAST_TASK_MODEL_KEY]: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationModel: { provider: "deepseek", model: "deepseek-flash" },
+    },
+    models,
+  });
+  const chain = await resolveFastModelChain(sdk);
+  assert.equal(chain.length, 1);
 });
 
 test("识别宿主拒绝思考档位的两种形态", () => {

@@ -102,10 +102,13 @@ test("模型列表直接返回数组时也能选到标题模型（以前只看 c
     models: { list: async () => [{ provider: "openai-codex", model: "gpt-6-luna", isCurrent: true }] },
     storage: { global: { get: async () => null } },
   };
-  assert.deepEqual(await pickTitleModel(sdk), { provider: "openai-codex", model: "gpt-6-luna" });
+  const chain = await pickTitleModel(sdk);
+  assert.equal(chain.length, 1);
+  assert.equal(chain[0].model.provider, "openai-codex");
+  assert.equal(chain[0].model.model, "gpt-6-luna");
 });
 
-test("选过内容模型就用选的那条，没选则跟随当前模型", async () => {  const catalog = {
+test("选过内容模型就用选的那条，没选则跟随当前模型，而且给的是降级链", async () => {  const catalog = {
     models: [
       { provider: "openai-codex", model: "gpt-6-luna", isCurrent: true },
       { provider: "deepseek", model: "deepseek-flash" },
@@ -115,13 +118,32 @@ test("选过内容模型就用选的那条，没选则跟随当前模型", async
     models: { list: async () => catalog },
     storage: { global: { get: async (key) => (key === "askJudgeModel" ? { provider: "deepseek", model: "deepseek-flash" } : null) } },
   };
-  assert.deepEqual(await pickTitleModel(withChoice), { provider: "deepseek", model: "deepseek-flash" });
+  const chosen = await pickTitleModel(withChoice);
+  assert.equal(chosen[0].model.provider, "deepseek");
+  assert.equal(chosen[0].model.model, "deepseek-flash");
 
   const followCurrent = {
     models: { list: async () => catalog },
     storage: { global: { get: async () => null } },
   };
-  assert.deepEqual(await pickTitleModel(followCurrent), { provider: "openai-codex", model: "gpt-6-luna" });
+  const followed = await pickTitleModel(followCurrent);
+  assert.equal(followed[0].model.provider, "openai-codex");
+  assert.equal(followed[0].model.model, "gpt-6-luna");
+
+  // 快速档 + 内容模型 + 备用模型都配了：三条按这个顺序排开，同名去掉。
+  const full = {
+    models: { list: async () => catalog },
+    storage: { global: { get: async (key) => ({
+      fastTaskModel: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationModel: { provider: "deepseek", model: "deepseek-flash" },
+      recommendationFallbackModel: { provider: "openai-codex", model: "gpt-6-luna" },
+    }[key] ?? null) } },
+  };
+  const chain = await pickTitleModel(full);
+  assert.deepEqual(chain.map((item) => `${item.model.provider}/${item.model.model}`), [
+    "deepseek/deepseek-flash",
+    "openai-codex/gpt-6-luna",
+  ]);
 
   const empty = { models: { list: async () => [] }, storage: { global: { get: async () => null } } };
   await assert.rejects(() => pickTitleModel(empty), /模型列表为空/);

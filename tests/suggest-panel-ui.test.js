@@ -57,16 +57,20 @@ test("播放/静音图标是 svg：显隐只能走 toggleAttribute", async () =>
   assert.match(script, /syncPlayerButtonState/);
 });
 
-test("起名搬进「小工具」页：头部只剩编辑常用与收起，结果行还能还原", async () => {
+test("起名搬进「小工具」页：头部只剩编辑常用，关面板交给宿主的叉叉", async () => {
   const html = await read("ui/suggest-panel.html");
   const script = await read("ui/assets/suggest-panel.js");
   const css = await read("ui/assets/suggest-panel.css");
 
-  // 头部那排：编辑常用（只在推荐页）、收起。起名不再占头部。
+  // 头部那排只剩编辑常用（只在推荐页）。起名不再占头部；
+  // 关面板也不再自己画「收起」：宿主 1.5.70 起在面板右上角自带一颗叉叉。
   const head = html.slice(html.indexOf('class="head-actions"'), html.indexOf('class="page-tabs"'));
   assert.doesNotMatch(head, /id="rename-slug"/, "起名已经不在头部了");
   assert.match(head, /id="edit-quick"/);
-  assert.match(head, /id="close-panel"/);
+  assert.doesNotMatch(head, /id="close-panel"/, "宿主自己有关闭按钮，别再画一颗");
+  assert.doesNotMatch(script, /close-panel/, "前端不能再找那个已经不存在的按钮");
+  // 头部右侧要给宿主那颗叉叉（28×28，距上、右各 4px）让出位置，别让按钮被压住。
+  assert.match(css, /\.head-actions\s*\{[^}]*margin-right/, "头部动作要往左让开宿主的关闭叉叉");
 
   // 起名是小工具页里的一格入口，不是页签、也不在头部。
   assert.match(html, /id="tools-page"[^>]*role="tabpanel"/);
@@ -99,6 +103,22 @@ test("起名搬进「小工具」页：头部只剩编辑常用与收起，结�
   assert.match(script, /（兜底）/);
   // 换会话时上一段的名字结果不能跟过来。
   assert.match(script, /setSlugNote\(''\)/);
+});
+
+test("推荐页、理顺页的高度都按实测报，不再只靠写死的估算", async () => {
+  const script = await read("ui/assets/suggest-panel.js");
+  const lib = await read("lib/suggest-panel.js");
+  // 2026-11-04 实测：一条常用估算 208、实际要 216，差 8px 正好多一条滚动条；
+  // 三条常用估算 288、实际还是 216（三颗短的在一行）。
+  // 理顺页更明显：写死 420 / 550，实测 392 / 522 /（出候选后）579。
+  assert.match(script, /function measureContentHeight/);
+  assert.match(script, /panel\.style\.minHeight = '0'/, "不摘 min-height 量到的永远等于当前高度");
+  assert.match(script, /function schedulePanelHeight/);
+  assert.match(script, /activePage !== 'recommend' && activePage !== 'polish'/, "推荐页和理顺页都要按实测走");
+  const calls = (script.match(/schedulePanelHeight\(\)/g) || []).length;
+  assert.ok(calls >= 6, `内容变化的几个入口都得量一次（标题行/常用/推荐/切页/加载/理顺），现在只有 ${calls}`);
+  assert.match(script, /function polishPageHeight/, "理顺页切回来时要先用上次实测值");
+  assert.match(lib, /const base = 118/, "初值基数按实测抬到 118，打开时就不会先闪一条滚动条");
 });
 
 test("小工具页是入口格：朗读降为二级，退路要留全", async () => {

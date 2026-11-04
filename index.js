@@ -144,9 +144,9 @@ export const name = "jiegehua-zhiyi";
 // 结果就是表里写着「开着」、宿主那边其实早关了：点一下只走 dismiss（空操作），
 // 界面上什么都没发生，得再点一下才出来。这就是「有时候点不开」。
 // 宿主 userInteraction.show 本身就是按 (session, app, id) 原地 upsert 的，
-// 重复调用是幂等的，所以没必要自己记状态：一律 show，收起交给面板里的「收起」。
+// 重复调用是幂等的，所以没必要自己记状态：一律 show，收起交给宿主面板右上角那颗叉叉。
 // 发出去之后就不可撤销，别让它落到「点了没反应」那条路上。
-// 关面板的唯一入口是面板里的「收起」按钮和宿主自己的关闭，两者都直连 dismiss。
+// 关面板的入口只有宿主自己那颗叉叉（1.5.70 起画在面板内右上角，直连 dismiss）。
 
 // ─── 断点续接的对外可见性（2026-10-19 与用户定下）───
 // 冻结的是「界面上看不看得见」，不是这套功能本身：判定、记账、日志全部照跑，
@@ -4280,8 +4280,8 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
 
-    // 面板里的「收起」：宿主那个关闭入口在 iframe 外面（背景还是透明的），
-    // 我们自己再给一个清楚的按钮，把这块面板撤掉。
+    // 面板里原来的「收起」按钮已经撤掉了：宿主 1.5.70 起在面板右上角自带一颗叉叉，
+    // 关面板走那边（直连 dismiss）。这个入口留着兜底，旧版面板页面调用时照样能收。
     app.post("/suggest-panel/dismiss", async (c) => {
       try {
         const raw = await readRuntimeState(sdk, SUGGEST_PANEL_STATE_KEY, {});

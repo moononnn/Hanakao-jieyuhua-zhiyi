@@ -1,5 +1,51 @@
 # 测试
 
+## 2026-11-04 快速模型加了降级链（未发布）
+
+- 现象：设置里的「快速模型」一旦不可用（额度用完、被限流、模型下线），速览、会话标题这些活直接失败，不会退到她配的其他模型。
+- 根因：`lib/fast-model.js` 只在同一条模型内调参数（关思考 → 脱参数 → 加预算），每一步都明确写着「不换模型」；上层调用方也只传一条。
+- 改法：
+  - `lib/fast-model.js` 新增 `resolveFastModelChain()`（快速 → 内容模型 `recommendationModel` → 备用 `recommendationFallbackModel`，同 provider/model 去重，解析不到的直接跳过）与 `modelRoleLabel()`；`invokeFastTextModel()` 接受单条或链，链上任意一条出结果就收工，每次尝试的错误记进 `tried`；全链失败抛第一条的错误并附 `triedModels`。
+  - 返回值新增 `modelName` / `modelRole` / `degraded` / `tried`。
+  - `lib/length-summary.js` 新增 `resolveSummaryChain()`，`requestSummary` 直接收链，`summarizeReply` 返回实际模型与 `degraded`/`degradedFrom`。
+  - `lib/session-title.js` 的 `pickTitleModel()` 从「只选一条」改成「排一条链」：快速档 → Ask 判断 → 内容模型 → 速览专用 → 备用模型，都没配才回退到 `resolveAskModel` 自动挑一条。
+  - `ui/panel.html` 的快速模型说明补一句「用不了会自动退到内容模型、备用模型」。
+  - 测试按钮 `/fast-model/test` 仍然只测选中那条，不走降级链（否则测试永远绿、看不出那条已经坏了）。
+- 测试：`tests/fast-model.test.js` 新增 3 项（限流时退到内容模型、全链失败抛第一条且带 `triedModels`、同名去重）；`tests/session-title.test.js` 那两项改成断言链；`fast-model` 12/12、`session-title` 22/22、`length-summary` 全过；全量 771 项 769 通过 / 0 失败 / 2 跳过。
+- 已重载 App。
+- 未做：没拿真实限额跑过；理顺页的「候选方向」（同样走快速档，但失败本来就静默）没接降级链；降级发生时的界面提示只在返回值里，速览卡和标题上都没显示谁拟的。
+
+## 2026-11-04 理顺页高度也按实测（未发布）
+
+- 现象：理顺页底部空白很明显；出结果再加候选方向时反过来不够高，会滚。
+- 量数据：理顺页写死 420（无结果）/ 550（有结果），实测内容要 392 / 522；有结果又出三条候选时要 579。空态多出 28px 白，有候选少 29px。
+- 改法：`ui/assets/suggest-panel.js` 把 `scheduleRecommendHeight` 改名 `schedulePanelHeight`，放宽到 `recommend` / `polish` 两页，并分别把实测值记到 `recommendationHeight` / 新增的 `polishMeasuredHeight`；`polishPageHeight()` 有实测先回实测值；切理顺页、理顺出结果、发送后清空、候选方向渲染四处接上；再挂一个 `MutationObserver` 盯 `recommendPage` / `polishPage` / `slugNote`（childList + characterData + hidden），以后加行字不必再手动接线。
+- 端到端验证：本地 HTTP 沙盘，真 `suggest-panel.js` 配假宿主，故意把 `/state` 返空、`/polish` 返一段长结果、`/polish/suggest` 返三条候选。上报序列 `[178, 420, 392, 603]`：推荐页空态 178 → 切理顺先按常量 420、随即收到 392 → 点理顺出结果加候选 603。
+- 测试：`tests/suggest-panel-ui.test.js` 那条改成同时盯两页与 `polishPageHeight`；全量 768 项 766 通过 / 0 失败 / 2 跳过（既有）。
+- 已重载 App。
+- 未做：真机上点一次理顺、再切页的手感；出结果后内容真超过宿主 55vh 时仍会滚（宿主上限，未在本轮处理）。
+
+## 2026-11-04 推荐页高度按实测报（未发布）
+
+- 现象：面板（一条常用、还没生成）底部多出一条竖向滚动条。
+- 量数据（Edge headless，760 宽，`.panel` 的 `min-height` 清为 0 后取 `getBoundingClientRect().height`）：空态 178、一条常用 216、三条常用 216（三颗短的挤在一行）、四条长推荐 457、三条常用 + 四条推荐 + 编辑态 494。后端 `estimatePanelHeight` 算出来：一条常用 208（少 8，正好一条滚动条）、三条常用 288（多留 80）、四条推荐 460（近）。
+- 根因：推荐页高度只靠后端按条数乘出来的估算，内容一变（常用增删、生成推荐、起名结果行、切页）没有重量。
+- 改法：`ui/assets/suggest-panel.js` 新增 `measureContentHeight()`（临时摘掉 `.panel` 的 `min-height:100%` 再量，同一次任务里改回）与 `scheduleRecommendHeight()`（30ms 去抖 → 等一拍 → 量 → 与上次差 1px 以上才报）；`setSlugNote`、`renderQuick`（两个分支）、`renderSuggestions`（两个分支）、`load()`、`showPage` 推荐页分支都接上；`lib/suggest-panel.js` 的 `estimatePanelHeight` 基数 110 → 118（初值不再少那 8px）。
+- 端到端验证：本地 HTTP 沙盘里用真 `suggest-panel.js` 配假 `hana`（mock `/state` 返回指定条数），量上报序列：q1n0 → `[216]`、q4n4 → `[457]`，每个状态只报一次，没有反复抳动。
+- 测试：`tests/suggest-panel-ui.test.js` 新增一项盯测量函数、`min-height` 清除、接线数量与初值基数；`suggest-panel-ui` + `suggest-panel` 20/20 通过。全量待下轮跑。
+- 已重载 App。
+- 未做：真机上生成一次推荐看高度跳变的手感；宿主窗口很矮（内容超 55vh 被裁）时仍会滚，那是宿主上限，本版没动。
+
+## 2026-11-04 头部撤掉「收起」，让开宿主的叉叉（未发布）
+
+- 背景：Hana 1.5.70-beta 起，输入框面板（inputPanels）右上角自带关闭按钮。宿主实现：`.close` 绝对定位，`top/right: var(--space-4)`（4px）、28×28、`z-index: 1`，压在我们 iframe 上方。
+- 改动：`ui/suggest-panel.html` 删 `#close-panel`；`ui/assets/suggest-panel.js` 删 `closeButton` 常量与 dismiss 监听；`ui/assets/suggest-panel.css` 的 `.head-actions` 加 `margin-right: 32px`（只推右侧动作、不动 `.head` 内边距，头部那条分隔线保持通栏）；`index.js` 里两处提到「面板里的收起」的注释改成宿主叉叉，`POST /suggest-panel/dismiss` 路由留下兜底（旧缓存页面还在调）。
+- 为什么 32px：叉叉占右侧 4+28=32px，`编辑常用` 原本的右边缘离面板边只有 14px，会被压 18px；让出 32px 后按钮右边缘与叉叉左边缘之间留 18px。
+- 排版核对：临时副本注入一颗 28×28 的模拟叉叉，Edge headless 按 760 与 420 两档截图，`编辑常用` 都在叉叉左边、不相交；420 档下品牌名与三页签都没被挤扁。
+- 测试：`tests/suggest-panel-ui.test.js` 那条改成断言「头部不再有 close-panel」「前端不再引用」「`.head-actions` 有 margin-right」。`node --test tests/suggest-panel-ui.test.js` 9/9；`tests/suggest-panel.test.js` + `tests/app-tool.test.js` + `tests/dark-theme.test.js` 85 项 83 通过 / 2 跳过；`node --check` 过。
+- 已重载 App（`extension_manager` reload）。
+- 未做：真机上点一下宿主叉叉确认收起、以及窄到 380px 以下时的样子没验。配方未动。
+
 ## 2026-11-02 发布 0.2.1（Hana 更新手记）
 
 - 全量：`node --test` 767 项 765 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；发布小工坊 verify 与最终副本测试以同一组命令复跑通过（副本 765 项）。

@@ -17,7 +17,6 @@ const editToggle = document.getElementById('edit-quick');
 const renameButton = document.getElementById('rename-slug');
 const renameHint = document.getElementById('rename-hint');
 const slugNote = document.getElementById('slug-note');
-const closeButton = document.getElementById('close-panel');
 const generateButton = document.getElementById('generate');
 const genNote = document.getElementById('gen-note');
 const recommendTab = document.getElementById('tab-recommend');
@@ -237,6 +236,8 @@ function setRenameState(text) {
 
 function setSlugNote(text, { bad = false, undo = false } = {}) {
   if (!slugNote) return;
+  // 结果行多一行/少一行都会改总高，量一下再报（不在推荐页时那函数自己会跳过）。
+  schedulePanelHeight();
   slugNote.textContent = '';
   slugNote.classList.toggle('bad', bad === true);
   if (!text) return;
@@ -313,6 +314,52 @@ async function setPanelHeight(height) {
   } catch {
     // 面板高度调整失败时仍可在当前高度内滚动使用。
   }
+}
+
+// 推荐页、理顺页的高度都按实测来。
+//
+// 后端 estimatePanelHeight 只是「面板刚挂上去、页面脚本还没跑」时的初值，
+// 它按条数乘，实机量下来两边都对不上：一条常用算 208、实际要 216（差 8px，
+// 正好多出一条竖向滚动条）；三条常用算 288、实际还是 216（三颗短的挤在同一行）。
+// 理顺页更直接，写死 420（无结果）/ 550（有结果），实测是 392 / 522 / 579，
+// 空的时候多一截白、出候选的时候又不够。所以页面一跑起来就自己量。
+let lastMeasuredPanelHeight = 0;
+let polishMeasuredHeight = 0;
+let measureTimer = 0;
+
+function measureContentHeight() {
+  const panel = document.querySelector('.panel');
+  if (!panel) return 0;
+  // .panel 带 min-height:100%，平时被 iframe 撑满，直接量永远等于当前高度。
+  // 把这条约束临时摘掉再量；同一个任务里改回来，画不出来。
+  const prev = panel.style.minHeight;
+  panel.style.minHeight = '0';
+  const height = Math.ceil(panel.getBoundingClientRect().height);
+  panel.style.minHeight = prev;
+  return height;
+}
+
+function schedulePanelHeight() {
+  // 小工具页有自己的量法（三层子视图各有各的底），这里只管这两页。
+  if (activePage !== 'recommend' && activePage !== 'polish') return;
+  const page = activePage;
+  clearTimeout(measureTimer);
+  measureTimer = setTimeout(() => {
+    void (async () => {
+      // 等一拍：hidden 刚切、列表刚填，布局还没算完，这时量到的是上一版。
+      // 不用 requestAnimationFrame：面板折叠/窗口在后台时它不一定会叫醒，
+      // 高度就一直停在旧值。定时器两条路都跑。
+      await new Promise((resolve) => setTimeout(resolve, 16));
+      if (activePage !== page) return;
+      const height = measureContentHeight();
+      if (!height) return;
+      if (Math.abs(height - lastMeasuredPanelHeight) <= 1) return;
+      lastMeasuredPanelHeight = height;
+      if (page === 'recommend') recommendationHeight = height;
+      else polishMeasuredHeight = height;
+      await setPanelHeight(height);
+    })();
+  }, 30);
 }
 
 function releaseReplyAudio() {
@@ -993,7 +1040,14 @@ async function showPage(page) {
   }
   toolsSubView = 'grid';
   if (toolsGrid) toolsGrid.hidden = false;
-  await setPanelHeight(showPolish ? polishPageHeight() : recommendationHeight);
+  if (showPolish) {
+    await setPanelHeight(polishPageHeight());
+    schedulePanelHeight();
+    return;
+  }
+  // 先按上次量到的高度找回来（不然会留着理顺页的高），再量一次收紫。
+  await setPanelHeight(recommendationHeight);
+  schedulePanelHeight();
 }
 
 recommendTab.addEventListener('click', () => void showPage('recommend'));
@@ -1347,6 +1401,7 @@ function renderQuick() {
 
   if (!items.length) {
     if (editing) quickEditor.hidden = false;
+    schedulePanelHeight();
     return;
   }
 
@@ -1397,6 +1452,7 @@ function renderQuick() {
     row.append(input, remove);
     quickList.append(row);
   });
+  schedulePanelHeight();
 }
 
 function addQuickReply() {
@@ -1429,6 +1485,7 @@ function renderSuggestions(suggestions) {
   const items = Array.isArray(suggestions) ? suggestions : [];
   if (!items.length) {
     empty.hidden = false;
+    schedulePanelHeight();
     return;
   }
   empty.hidden = true;
@@ -1469,6 +1526,7 @@ function renderSuggestions(suggestions) {
     row.append(editor, actions);
     list.append(row);
   });
+  schedulePanelHeight();
 }
 
 // ── 理顺（整理润色）──
@@ -1508,6 +1566,7 @@ function renderPolishSuggestions(items) {
     polishSuggestList.append(button);
   }
   if (polishSuggest) polishSuggest.hidden = polishSuggestList.childElementCount === 0;
+  schedulePanelHeight();
 }
 
 async function loadPolishSuggestions(text) {
@@ -1588,7 +1647,8 @@ async function runPolish() {
     const status = polishStatusText(payload);
     setPolishStatus(status.text, status.tone);
     void loadPolishSuggestions(result);
-    await setPanelHeight(POLISH_PANEL_HEIGHT_WITH_RESULT);
+    // 结果块、候选方向都会改总高，交给实测（高优先先按现值顶着，免得闪一条滚动条）。
+    schedulePanelHeight();
   } catch (error) {
     setPolishStatus(String(error?.message || '这次没理顺成，原话没动。').slice(0, 200), 'warn');
   } finally {
@@ -1640,7 +1700,8 @@ async function sendPolish(mode, button) {
     if (polishQueueButton) polishQueueButton.hidden = true;
     if (polishSendButton) polishSendButton.hidden = true;
     renderPolishRunLabel();
-    void setPanelHeight(POLISH_PANEL_HEIGHT);
+    // 发出去以后结果块、候选都收了，页面矮一截，按实测收回来。
+    schedulePanelHeight();
   } catch (error) {
     setPolishStatus(String(error?.message || '没发出去，再试一次。').slice(0, 200), 'warn');
   } finally {
@@ -1662,8 +1723,9 @@ function renderPolishRunLabel() {
   polishRunButton.textContent = hasResult ? '再理一版' : '理顺';
 }
 
-/** 理顺页的高度：出了结果就多一块，没出就回到单个输入框的高度。 */
+/** 理顺页的高度：有实测就用实测，没量过才回退到两个写死值。 */
 function polishPageHeight() {
+  if (polishMeasuredHeight) return polishMeasuredHeight;
   return polishResultBlock && !polishResultBlock.hidden ? POLISH_PANEL_HEIGHT_WITH_RESULT : POLISH_PANEL_HEIGHT;
 }
 
@@ -1688,22 +1750,12 @@ async function load() {
   } catch {
     empty.hidden = false;
   }
+  // 两条路都要量：拿到了是渲染后的真实高度，没拿到是空态的高度。
+  schedulePanelHeight();
 }
 
-// 宿主自己那个「关闭面板」在 iframe 外面、背景还是透明的（宿主的容器没背景）。
-// 我们自己再给一个「收起」，至少关面板的入口是清楚的一个按钮。
-closeButton?.addEventListener('click', async () => {
-  closeButton.disabled = true;
-  try {
-    await hana.api.fetch('/suggest-panel/dismiss', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-  } catch {
-    closeButton.disabled = false;
-  }
-});
+// 关面板只有宿主自己那颗叉叉：它画在输入框面板的右上角，点一下就把这块板子撤掉。
+// 所以这里不再挂「收起」按钮，也就不需要自己再请求一次 dismiss。
 
 // 生成是唯一要调模型的一步，所以放在她自己点的按钮后面。
 // 后台会连着重试几次（服务商拒一下、下一次就过），最长能等小半分钟。
@@ -1751,6 +1803,23 @@ function reportPanelHidden() {
 try {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') reportPanelHidden(); });
   window.addEventListener('pagehide', reportPanelHidden);
+} catch {}
+
+// 页里内容一变就重量一次高度：常用回复、推荐列表、起名那行结果、候选方向……
+// 显式调用已经接了几处，但以后往页里加一行字，不必再记得去接。
+// 只管推荐/理顺两页（小工具那三层自己有量法）；同高度不重复报。
+try {
+  const observer = new MutationObserver(() => schedulePanelHeight());
+  for (const node of [recommendPage, polishPage, slugNote]) {
+    if (!node) continue;
+    observer.observe(node, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['hidden'],
+    });
+  }
 } catch {}
 
 // 宿主靠 hana.ready() 知道这块板子加载好了：没报就绪就一直显示「App 面板加载失败」。

@@ -84,7 +84,10 @@ html, body {
 
 .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
-.head-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+/* 宿主 1.5.70 起在面板右上角自己叠了一颗关闭叉叉：绝对定位、28×28，距上边和右边各 4px。
+   我们自己不再画「收起」，但头部这一行得往左让开，别让「编辑常用」被压在叉叉底下。
+   只给右侧动作加外边距、不动 .head 的内边距：头部那条分隔线还得通栏。 */
+.head-actions { display: flex; align-items: center; gap: 4px; flex: none; margin-right: 32px; }
 
 .brand-mark { width: 26px; height: 14px; color: var(--primary-deep); flex: 0 0 auto; }
 
