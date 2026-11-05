@@ -4,7 +4,12 @@
 
 ## 待发
 
-（空）
+- 关机判定收紧到「看不清就不关」：会话扫描不完整、事件层不可读、后台任务读不到都算忙；5 秒采样加单飞锁和 90 秒超时；连续看不清十分钟发一条通知说明原因，状态接口与面板也能看到具体是哪一层。
+- 关机命令改成可确认的状态机（preparing / sending / issued），发送前复核当前状态，退出码非零才算失败、超时算结果不明；撤销只在原始 30 秒窗口内执行 `shutdown /a`，失败标 `abort-failed` 不谎报；重载对 issued / unknown / abort-failed 走恢复分支。
+- 新增 `clear` 动作、`/sleep-guard/clear` 路由与面板「已核实，解除警告」，给 `abort-failed` / `shutdown-unknown` 一个人工出口，避免永久挂不上关机。
+- 下线 `probe-shutdown`、`test-shutdown` 两个会真跑 `shutdown.exe` 的探针；测试里那条真调 `/a` 的用例改成注入假执行器。
+- 融合服务快照不再外发球桥的 baseUrl 与令牌，`start` / `stop` / `place` 保留。
+- 未验收：真实 Windows 关机与撤销、App 重载后的恢复分支、宿主对 `sessionPermission: { readOnly: false }` 的处理，都要在真机上跑一次才算数。
 
 ## 记着但不在待发里的
 
