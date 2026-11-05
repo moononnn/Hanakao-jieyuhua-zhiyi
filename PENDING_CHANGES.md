@@ -9,7 +9,8 @@
 - 新增 `clear` 动作、`/sleep-guard/clear` 路由与面板「已核实，解除警告」，给 `abort-failed` / `shutdown-unknown` 一个人工出口，避免永久挂不上关机。
 - 下线 `probe-shutdown`、`test-shutdown` 两个会真跑 `shutdown.exe` 的探针；测试里那条真调 `/a` 的用例改成注入假执行器。
 - 融合服务快照不再外发球桥的 baseUrl 与令牌，`start` / `stop` / `place` 保留。
-- 未验收：真实 Windows 关机与撤销、App 重载后的恢复分支、宿主对 `sessionPermission: { readOnly: false }` 的处理，都要在真机上跑一次才算数。
+- 非关机模块统一加固：排队超上限整份拒绝而非静默丢尾巴；续接运行中不被上限驱逐；`loopFiring` 改成按会话的 Set；自定义模型地址强校验 HTTPS 与非法片段；GitHub Token 只给精确 origin；DPAPI 调用加 10 秒超时且新密钥加密失败不再明文落盘；朗读字幕关重定向但不强求同源（MiniMax 字幕在 aliyuncs，同源会砍掉逐词高亮）；剪辑 ID 写入前校验；旧音频只清理 30 天以上且未被引用的；市场待审 PR 限 4 个 worker；Unified Diff 改用独立新旧行号；Python 桥 `/voice/play` 限定在 `voice-clips` 内，本地主题请求改走 `Authorization` 头与无代理 opener。
+- 未验收：真实 Windows 关机与撤销、App 重载后的恢复分支、宿主对 `sessionPermission: { readOnly: false }` 的处理、Hana 宿主是否接受主题接口的 `Authorization` 头，都要在真机上跑一次才算数。
 
 ## 记着但不在待发里的
 
