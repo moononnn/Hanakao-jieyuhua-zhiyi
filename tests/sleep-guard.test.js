@@ -550,3 +550,60 @@ test("正常守着的时候不能靠 clear 把状态抹掉", async () => {
   await cancelSleepGuard(sdk, "测完了");
   disposeSleepGuard();
 });
+
+test("发令之后机器重启过：旧账直接销账，不报警也不再堵住新挂", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  // 三日前发出的关机：当晚就关成了，记录一直没销。
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued", 3 * 24 * 3_600_000));
+  let called = 0;
+  const restored = await restoreSleepGuard(sdk, {
+    bootTimeProvider: () => Date.now() - 6 * 3_600_000, // 六小时前才开机
+    commandRunner: async () => { called++; return { ok: true }; },
+  });
+  assert.equal(called, 0, "不碰系统命令，也不去撤一个不存在的关机");
+  assert.equal(restored.completed, true);
+  assert.equal(sdk.__notes.length, 0, "旧账已清，不该再报「状态不明」");
+  assert.equal(describeSleepGuard().state.status, "shutdown-done");
+  assert.equal(describeSleepGuard().armed, false);
+  assert.equal(sdk.__store.get("sleepGuardState").status, "shutdown-done");
+  const status = await armSleepGuard(sdk, { idleMs: 60_000 });
+  assert.equal(status.state.status, "watching", "销账之后要能重新挂");
+  await cancelSleepGuard(sdk, "测完了");
+  disposeSleepGuard();
+});
+
+test("判不出重启过的旧账仍按不明处理，不谎称已关成", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued", 45_000));
+  const restored = await restoreSleepGuard(sdk, {
+    bootTimeProvider: () => null, // 拿不到启动时刻
+    commandRunner: async () => ({ ok: true }),
+  });
+  assert.equal(restored.uncertain, true);
+  assert.equal(describeSleepGuard().state.status, "shutdown-unknown");
+  disposeSleepGuard();
+});
+
+test("同一笔旧账反复重载只通知一次", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued", 45_000));
+  const options = {
+    // 一分钟前开机，晚于发令（45 秒前）就不可能：这里给的启动时刻更早，判不出重启过。
+    bootTimeProvider: () => Date.now() - 60_000,
+    commandRunner: async () => ({ ok: true }),
+  };
+  await restoreSleepGuard(sdk, options);
+  assert.equal(sdk.__notes.length, 1, "第一次要把话说清");
+  await restoreSleepGuard(sdk, options);
+  await restoreSleepGuard(sdk, options);
+  assert.equal(sdk.__notes.length, 1, "同一笔账不再重复弹，横幅还在就够了");
+  assert.equal(sdk.__store.get("sleepGuardState").reportedFiredAt,
+    sdk.__store.get("sleepGuardState").firedAt);
+  disposeSleepGuard();
+});

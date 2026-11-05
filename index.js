@@ -5051,6 +5051,7 @@ activeFusionServiceDispose = disposeFusionService;
           "shutdown-sending": "正在发送关机命令",
           "shutdown-issued": "已经发出关机命令",
           "shutdown-unknown": "关机结果不明，可能仍在等待关机",
+          "shutdown-done": "上次关机已完成，旧记录已销账",
           "shutdown-failed": "关机命令执行失败",
           "abort-pending": "正在尝试撤销系统关机",
           "abort-failed": "撤销失败，系统可能仍会关机",
