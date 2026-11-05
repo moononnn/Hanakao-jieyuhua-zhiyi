@@ -2538,6 +2538,78 @@ sgArm?.addEventListener('click', async () => {
   }
 });
 
+// ── GitHub 令牌：从 Hana 的 App 设置搬进这张页 ──
+// 以前它在 Hana 设置里独一份，孤零零占一格；现在跟着「模型和接口」走，
+// 它本来就是外部服务的通行证。页面只显示末四位，不回显明文。
+const githubTokenInput = document.querySelector('#github-token-input');
+const githubTokenSave = document.querySelector('#github-token-save');
+const githubTokenStatus = document.querySelector('#github-token-status');
+const githubTokenNote = document.querySelector('#github-token-note');
+
+function githubTokenSourceText(source) {
+  if (source === 'app') return '存在本机，已加密';
+  if (source === 'legacy') return '还是旧设置里的值';
+  if (source === 'file') return '读的是知意目录下的 github-token.txt';
+  return '';
+}
+
+function applyGithubTokenPayload(payload) {
+  if (!payload || payload.ok === false) {
+    if (githubTokenStatus) githubTokenStatus.textContent = payload?.error || '读取令牌状态失败。';
+    return;
+  }
+  if (githubTokenNote) {
+    githubTokenNote.textContent = payload.configured
+      ? `已配置 · 末四位 ${payload.tail || '----'}`
+      : '还没填';
+  }
+  const where = payload.configured ? githubTokenSourceText(payload.source) : '';
+  const encryptedNote = payload.encrypted === false
+    ? `　系统加密这会儿不可用（${payload.encryptionNote || '原因不明'}），这一版存不进去。`
+    : '';
+  if (githubTokenStatus) {
+    githubTokenStatus.textContent = payload.configured
+      ? `当前：有令牌${where ? `，${where}` : ''}，额度每小时 5000 次。${encryptedNote}`
+      : `当前：没填，走公共接口，每小时 60 次。${encryptedNote}`;
+  }
+}
+
+async function loadGithubTokenStatus() {
+  try {
+    const response = await hana.api.fetch('/github-token');
+    if (!response.ok) throw new Error('读取失败');
+    applyGithubTokenPayload(await response.json());
+  } catch (error) {
+    if (githubTokenStatus) githubTokenStatus.textContent = error?.message || '读取令牌状态失败。';
+  }
+}
+
+githubTokenSave?.addEventListener('click', async () => {
+  if (!githubTokenInput) return;
+  githubTokenSave.disabled = true;
+  if (githubTokenStatus) githubTokenStatus.textContent = '正在保存…';
+  try {
+    const response = await hana.api.fetch('/github-token', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: githubTokenInput.value }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || '没存上。');
+    }
+    if (payload?.ok === false) {
+      throw new Error(payload.error || '没存上。');
+    }
+    githubTokenInput.value = '';
+    applyGithubTokenPayload(payload);
+  } catch (error) {
+    if (githubTokenStatus) githubTokenStatus.textContent = error?.message || '保存失败。';
+  } finally {
+    githubTokenSave.disabled = false;
+  }
+});
+
 // 真关机开关已经撤了：这个功能就是关机，没有演练档。
 
 document.querySelector('#sg-refresh')?.addEventListener('click', () => { void loadSleepGuard(); });
@@ -2558,6 +2630,7 @@ void (async () => {
     loadVoiceFavorites(),
     loadCustomModel(),
     loadSleepGuard(),
+    loadGithubTokenStatus(),
   ]);
   document.documentElement.dataset.ready = 'true';
 })();

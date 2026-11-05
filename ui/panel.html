@@ -27,7 +27,7 @@
         <h1 id="market-title">应用雷达</h1>
         <p class="market-intro">看中哪款，点进去直接问它。待上架的版本还没经过市场审核。</p>
       </header>
-      <aside class="market-boundary">官方上架状态和知意的源码检查分开算。上架、模型回答都不代表安全认证；这里不下载安装包、不运行应用、不自动打开外部链接。读公开数据走 GitHub 公共接口，每小时 60 次额度；不填令牌也能用，想更稳可以在 Hana 设置里给知意填一个只读令牌。</aside>
+      <aside class="market-boundary">官方上架状态和知意的源码检查分开算。上架、模型回答都不代表安全认证；这里不下载安装包、不运行应用、不自动打开外部链接。读公开数据走 GitHub 公共接口，每小时 60 次额度；不填令牌也能用，想更稳就在「模型和接口」里填一个只读令牌。</aside>
       <div class="market-workspace" id="market-workspace">
         <section class="market-catalog" aria-label="应用目录">
           <section class="market-controls" aria-label="筛选应用">
@@ -855,6 +855,37 @@
               <audio id="voice-audio" controls preload="none"></audio>
               <p id="voice-caption" class="voice-caption"></p>
             </div>
+          </section>
+
+          <section class="settings-section" id="github-token-section" aria-labelledby="github-token-title">
+            <div class="section-heading">
+              <span class="section-mark" aria-hidden="true">码</span>
+              <div>
+                <p class="eyebrow">GitHub</p>
+                <h2 id="github-token-title">读 GitHub 用的通行证</h2>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <h3>不填也能用</h3>
+                <p>应用雷达和更新手记读的是 GitHub 公共接口，每小时只有 60 次额度，翻多了就会撞限流。填一个只读令牌，额度提到每小时 5000 次。令牌用 Windows 系统加密存在这台电脑上，只用来读公开数据，不做任何写操作。</p>
+              </div>
+            </div>
+            <div class="field-grid">
+              <label class="field field-wide">
+                <span>访问令牌<span class="field-note" id="github-token-note">只读权限就够</span></span>
+                <input id="github-token-input" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_… 或 ghp_…">
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <p class="setting-hint">保存以后页面上不会回显；想换就直接粘贴新的，想删就清空再保存。</p>
+              </div>
+              <div class="model-controls">
+                <button id="github-token-save" class="model-save" type="button">保存</button>
+              </div>
+            </div>
+            <p id="github-token-status" class="ball-status" role="status" aria-live="polite">正在读取令牌状态…</p>
           </section>
         </section>
 

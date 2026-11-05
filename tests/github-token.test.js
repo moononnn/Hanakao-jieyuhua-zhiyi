@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createMarketCatalog } from "../lib/market-catalog.js";
-import { githubHeaders, isRateLimited, readGithubToken, rateLimitMessage } from "../lib/github-token.js";
+import { describeGithubToken, githubHeaders, isRateLimited, loadGithubToken, readGithubToken, rateLimitMessage, saveGithubToken } from "../lib/github-token.js";
 
 const TOKEN = "github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz";
 
@@ -117,4 +117,74 @@ test("填了令牌时，目录请求带认证；不填时走匿名", async () =>
   const anonymousApi = anonymous.calls.find((call) => call.url.startsWith("https://api.github.com/"));
   assert.ok(anonymousApi);
   assert.equal(anonymousApi.init.headers.Authorization, undefined);
+});
+
+// ── 面板上的令牌（2026-11-05 从 Hana 设置搬进来） ──
+
+function panelSdk(legacyToken = null) {
+  const store = new Map();
+  return {
+    storage: {
+      global: {
+        get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback),
+        set: async (key, value) => { store.set(key, value); },
+      },
+    },
+    config: { get: (key) => (key === "githubToken" && legacyToken ? legacyToken : undefined) },
+    __store: store,
+  };
+}
+
+async function resetToken(sdk) {
+  await saveGithubToken(sdk, "");
+}
+
+test("面板保存的令牌加密落盘，读得回来且不回显明文", async (t) => {
+  const sdk = panelSdk();
+  let saved;
+  try {
+    saved = await saveGithubToken(sdk, TOKEN);
+  } catch (error) {
+    await resetToken(sdk);
+    return t.skip(`本机系统加密不可用：${String(error?.message || error).slice(0, 60)}`);
+  }
+  assert.equal(saved.ok, true);
+  const sealed = sdk.__store.get("githubTokenSealed");
+  assert.match(sealed, /^dpapi:/, "落盘的值必须是密文");
+  assert.equal(sealed.includes(TOKEN), false, "密文里不能出现明文");
+  assert.equal(readGithubToken(sdk), TOKEN);
+  assert.equal(githubHeaders(sdk, {}, "https://api.github.com/repos/o/r").Authorization, `Bearer ${TOKEN}`);
+  const status = describeGithubToken(sdk);
+  assert.equal(status.configured, true);
+  assert.equal(status.source, "app");
+  assert.equal(status.tail, TOKEN.slice(-4));
+  assert.equal(JSON.stringify(status).includes(TOKEN), false, "状态回包不能带明文");
+  await resetToken(sdk);
+});
+
+test("空串就是删除，格式不对的不收", async () => {
+  const sdk = panelSdk();
+  assert.equal((await saveGithubToken(sdk, "")).configured, false);
+  assert.equal(readGithubToken(sdk), "");
+  const bad = await saveGithubToken(sdk, "abc");
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /不像 GitHub 令牌/);
+  await resetToken(sdk);
+});
+
+test("老设置里的令牌启动时迁到加密存储，不用重填", async (t) => {
+  const sdk = panelSdk(TOKEN);
+  assert.equal(readGithubToken(sdk), TOKEN, "迁移前先能读");
+  let ok;
+  try {
+    ok = await loadGithubToken(sdk);
+  } catch (error) {
+    await resetToken(sdk);
+    return t.skip(`本机系统加密不可用：${String(error?.message || error).slice(0, 60)}`);
+  }
+  assert.equal(ok, true);
+  assert.match(String(sdk.__store.get("githubTokenSealed") || ""), /^dpapi:/, "迁过去也要是密文");
+  assert.equal(readGithubToken(sdk), TOKEN);
+  assert.equal(describeGithubToken(sdk).source, "app");
+  await resetToken(sdk);
 });

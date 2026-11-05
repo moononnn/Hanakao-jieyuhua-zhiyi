@@ -47,6 +47,7 @@ import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTit
 import { readRuntimeState, writeRuntimeState } from "./lib/runtime-state.js";
 import { inputZoomStatus, installInputZoom, uninstallInputZoom } from "./lib/input-zoom.js";
 import { encryptionAvailable, encryptionStatus, protectKey } from "./lib/crypto.js";
+import { describeGithubToken, loadGithubToken, saveGithubToken } from "./lib/github-token.js";
 import {
   MAX_REPLY_CHARS,
   VOICE_PRESETS,
@@ -3622,6 +3623,30 @@ activeFusionServiceDispose = disposeFusionService;
       };
     }
 
+    // GitHub 令牌从 Hana 的 App 设置搬进知意自己的面板（2026-11-05）。
+    // 页面只回「有没有、末四位」，不回显明文；写入的值 DPAPI 加密后才落盘。
+    app.get("/github-token", async (c) => c.json({
+      ok: true,
+      ...describeGithubToken(sdk),
+      encrypted: encryptionAvailable(),
+      encryptionNote: encryptionAvailable() ? "" : (encryptionStatus().reason || "系统加密不可用"),
+    }));
+    app.put("/github-token", async (c) => {
+      let body;
+      try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "令牌参数读不出来。" }, 400); }
+      let result;
+      try {
+        result = await saveGithubToken(sdk, body?.token);
+      } catch (error) {
+        // 系统加密不可用时 saveGithubToken 会报错：宁可这次不存，不能明文落盘。
+        return c.json({ ok: false, error: String(error?.message || "令牌没能加密保存。") }, 400);
+      }
+      if (!result?.ok) return c.json({ ok: false, error: result?.error || "没存上。" }, 400);
+      // 只记「更新了 / 清空了」，令牌本身不进日志。
+      await sdk.logger.info(result.configured ? "GitHub 令牌已更新（面板）" : "GitHub 令牌已清除（面板）");
+      return c.json({ ok: true, ...describeGithubToken(sdk) });
+    });
+
     app.get("/voice-config", async (c) => {
       const config = normalizeVoiceConfig(await sdk.storage.global.get("voiceConfig", {}));
       return c.json(await buildVoiceConfigPayload(sdk, config));
@@ -5429,6 +5454,16 @@ activeFusionServiceDispose = disposeFusionService;
       }
     },
   });
+
+  // GitHub 令牌：启动时解一次进内存，顺手把老位置（Hana 的 App 设置）里的值迁过来。
+  // 十几处 GitHub 请求都靠同步读它，不能在请求路径上现解密。
+  void (async () => {
+    try {
+      if (await loadGithubToken(sdk)) await sdk.logger.info("GitHub 令牌已载入");
+    } catch (error) {
+      await sdk.logger.warn(`GitHub 令牌载入跳过：${String(error?.message || error).slice(0, 120)}`);
+    }
+  })();
 
   // 守门人接上一轮：App 重载、宿主重启之后，上次还在守的接着守。
   // 计时从重挂开始重算——中间断过那段根本看不见，不能凭空算数。
