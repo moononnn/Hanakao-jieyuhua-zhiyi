@@ -2331,6 +2331,7 @@ const sgSection = document.querySelector('#sleep-guard-section');
 const sgStateText = document.querySelector('#sg-state-text');
 const sgArm = document.querySelector('#sg-arm');
 const sgCancel = document.querySelector('#sg-cancel');
+const sgClear = document.querySelector('#sg-clear');
 const sgIdle = document.querySelector('#sg-idle');
 const sgTimeline = document.querySelector('#sg-timeline');
 const sgStatus = document.querySelector('#sg-status');
@@ -2365,16 +2366,24 @@ function sgDescribeBusy(entry) {
 function sgStateLine(snapshot) {
   if (!snapshot) return '正在读取…';
   const status = String(snapshot.status || 'idle');
+  const blind = Array.isArray(snapshot.blind) ? snapshot.blind.filter(Boolean) : [];
+  const blindTail = blind.length ? ` 不过现在看不清：${blind.join('；')}。看不清就不关，这是你定的规矩。` : '';
   if (status === 'watching') {
     const idle = Number(snapshot.idleSeconds) || 0;
     const need = Number(snapshot.needSeconds) || 0;
-    if (idle <= 0) return `正在静候。刚刚才空下来，还差 ${sgSecondsText(need)} 才算结束。`;
-    return `正在静候。已经安静了 ${sgSecondsText(idle)}，满 ${sgSecondsText(need)} 才关机。`;
+    if (idle <= 0) return `正在静候。刚刚才空下来，还差 ${sgSecondsText(need)} 才算结束。${blindTail}`;
+    return `正在静候。已经安静了 ${sgSecondsText(idle)}，满 ${sgSecondsText(need)} 才关机。${blindTail}`;
   }
   if (status === 'countdown') {
     return `活儿都结束了，正在倒计时：还有 ${sgSecondsText(snapshot.countdownSeconds)} 就关机。这期间有任何动静都会当场取消。`;
   }
+  if (status === 'shutdown-preparing') return '已经确认都空了，正在准备请求关机。这一步还能取消。';
+  if (status === 'shutdown-sending') return '正在把关机命令发给 Windows。还能试着撤，但得快点。';
   if (status === 'shutdown-issued') return '已经发出关机命令，机器应该正在关。';
+  if (status === 'abort-pending') return '正在请求 Windows 撤销关机，还没收到确认。';
+  if (status === 'abort-failed') return '关机撤销没成功，系统可能还是会关。先去 Windows 里确认一下，确实没在关了再点「已核实，解除警告」。';
+  if (status === 'shutdown-unknown') return '上一次关机的结果不明：可能已经排上队了。核实系统里没有待执行的关机后，再点「已核实，解除警告」。';
+  if (status === 'cleared') return '上一轮的关机警告已经按你的确认清掉了，可以重新挂。';
   if (status === 'preview-done') return '演练走完了整个流程，没有真的关机。';
   if (status === 'expired') return '等太久了，一直有活儿在跑，这次没关机。';
   if (status === 'cancelled') return `已经取消了${snapshot.cancelReason ? `：${snapshot.cancelReason}` : '。'}`;
@@ -2387,6 +2396,9 @@ function renderSleepGuard() {
   if (sgStateText) sgStateText.textContent = sgStateLine(snapshot);
   if (sgArm) sgArm.hidden = !!(snapshot && snapshot.armed === true);
   if (sgCancel) sgCancel.hidden = !(snapshot && snapshot.armed === true);
+  // 只有「撤销失败」和「结果不明」才需要人工核实后亲手解除。
+  const needsClearance = !!snapshot && (snapshot.status === 'abort-failed' || snapshot.status === 'shutdown-unknown');
+  if (sgClear) sgClear.hidden = !needsClearance;
 
   const config = snapshot?.config || {};
   if (sgIdle && document.activeElement !== sgIdle) sgIdle.textContent = String(config.idleMinutes ?? 10);
@@ -2494,6 +2506,18 @@ sgCancel?.addEventListener('click', async () => {
     await loadSleepGuard();
   } catch {
     if (sgStatus) sgStatus.textContent = '撤不掉，再试一次。';
+  }
+});
+
+sgClear?.addEventListener('click', async () => {
+  if (sgStatus) sgStatus.textContent = '正在解除…';
+  try {
+    const response = await hana.api.fetch('/sleep-guard/clear', { method: 'POST' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) throw new Error(payload?.error || '没清掉。');
+    await loadSleepGuard();
+  } catch (error) {
+    if (sgStatus) sgStatus.textContent = error?.message || '没清掉，再试一次。';
   }
 });
 

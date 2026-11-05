@@ -10,7 +10,7 @@ import { createBallBridge, RECOMMEND_POLL_MS } from "./lib/ball-bridge.js";
 import { createCardAskRegistry } from "./lib/card-handoff.js";
 import { appendAskGuidance } from "./lib/ask-guidance.js";
 // 「活干完帮我关」的守门人：采样在 lib/idle-watch.js，判定在 lib/sleep-guard.js。
-import { armSleepGuard, buildShutdownEnv, cancelSleepGuard, describeBannerText, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setActivityLedger, setRealEnabled } from "./lib/sleep-guard.js";
+import { armSleepGuard, cancelSleepGuard, clearSleepGuardWarning, describeBannerText, describeSleepGuard, isRealEnabled, readSleepGuard, readSleepGuardConfig, readSleepTimeline, restoreSleepGuard, saveSleepGuardConfig, setActivityLedger, setRealEnabled } from "./lib/sleep-guard.js";
 // 开发期只读探针：连续拍忙闲快照，肉眼对时间线用。
 // 发布前连同 lib/idle-probe.js 与下面的工具注册一起删掉（见 PENDING_CHANGES），不影响守门功能。
 import { listIdleWatches, reportIdleWatch, startIdleWatch, stopIdleWatch } from "./lib/idle-probe.js";
@@ -3326,6 +3326,9 @@ activeFusionServiceDispose = disposeFusionService;
         sinceArmedSeconds: Math.round((status.sinceArmedMs || 0) / 1000),
         result: state.result || null,
         cancelReason: state.cancelReason || null,
+        // 判不清时是哪一层瞎了。面板要能一句话说清「昨晚为什么没关」，
+        // 否则人只能看到「没关」，分不出是故意不关还是坏了。
+        blind: Array.isArray(state.blind) ? state.blind : null,
         note: state.note || "",
         realEnabled,
         // 最近一条守门通知到底弹出去没。为 2026-10-29 「挂上了但没提醒」那个坑留的：
@@ -3414,6 +3417,16 @@ activeFusionServiceDispose = disposeFusionService;
           error: `关机已经发出去了，撤销没成功（${result.abort?.detail || "原因不明"}），机器还会关。`,
           ...result,
         }, 409);
+      }
+      return c.json({ ok: true, ...result });
+    });
+    // 用户自己核实过 Windows 里没有待执行的关机之后，才能动这个口。
+    // 它不清系统里的任何东西，只清知意自己那份“撤销失败/结果不明”的警告，
+    // 否则那个状态会一直被当成危险拦着，重载也只会恢复成同一种不明。
+    app.post("/sleep-guard/clear", async (c) => {
+      const result = await clearSleepGuardWarning(sdk, "在知意面板上确认系统里没有待执行的关机");
+      if (!result.cleared) {
+        return c.json({ ok: false, error: result.reason || "当前没有需要解除的警告。" }, 409);
       }
       return c.json({ ok: true, ...result });
     });
@@ -4866,15 +4879,15 @@ activeFusionServiceDispose = disposeFusionService;
   await sdk.tools.register({
     name: "jiegehua_zhiyi_sleep_guard",
     description: "守门人：聊天页和 Code 页的所有对话、以及所有后台任务都停下来一段时间后，才执行关机。用户说「干完帮我关」「我睡了以后自己关」时用。挂上就是真关机（没有演练模式）；动手前有一段时间可撤销的倒计时，期间一有动静就自动收手。只有用户明确说要真关机才调 arm。",
-    sessionPermission: { readOnly: true },
+    sessionPermission: { readOnly: false },
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         action: {
           type: "string",
-          enum: ["arm", "rehearse", "status", "cancel", "enable-real", "disable-real", "selftest", "probe-shutdown", "test-shutdown"],
-          description: "arm 挂上守门（真关机）；rehearse 演练：整个流程真跑但不执行关机命令，拿不准时先用这个；status 看现在守着没、空了多久、历史上的记录，以及是哪一层在拦（会话层/任务层/事件层）；cancel 撤掉；enable-real / disable-real 已废弃（演练退役后总开关不再拦任何东西）；selftest 验起进程的能力；probe-shutdown 在 App 进程里试一下 shutdown.exe 能不能跑（跑 /a，无副作用）；test-shutdown 真发一次关机但留 120 秒撤销窗口（仅供验证，不要当正规路径）。",
+          enum: ["arm", "rehearse", "status", "cancel", "clear", "enable-real", "disable-real", "selftest"],
+          description: "arm 挂上守门（真关机）；rehearse 演练：整个流程真跑但不执行关机命令，拿不准时先用这个；status 看现在守着没、空了多久、历史上的记录，以及是哪一层在拦（会话层/任务层/事件层）；cancel 撤掉；clear 仅在用户已经自己核实 Windows 里没有待执行的关机后，清掉“撤销失败/结果不明”的警告；enable-real / disable-real 已废弃（演练退役后总开关不再拦任何东西）；selftest 验起进程的能力；危险的关机探针及测试关机动作已下线。",
         },
         idleMinutes: { type: "number", description: "要连续空多久才算真的干完，默认 10 分钟。" },
         maxWaitMinutes: { type: "number", description: "最多守多久，超过就放弃并提醒，默认 240 分钟。" },
@@ -4910,79 +4923,6 @@ activeFusionServiceDispose = disposeFusionService;
             };
           } catch (error) {
             return { isError: true, content: [{ type: "text", text: `自检没跑成：${String(error?.message || error).slice(0, 160)}` }] };
-          }
-        }
-        if (action === "probe-shutdown") {
-          try {
-            const { spawn } = await import("node:child_process");
-            const absolute = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "shutdown.exe");
-            const runOnce = (exe, args, options) => new Promise((resolve) => {
-              const child = spawn(exe, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
-              let stdout = "";
-              let stderr = "";
-              child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
-              child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
-              child.on("error", (error) => resolve(`起不来：${String(error?.message || error).slice(0, 140)}`));
-              child.on("exit", (code) => resolve(`退码 ${code}｜out=${stdout.trim().slice(0, 80)}｜err=${stderr.trim().slice(0, 120)}`));
-              const timer = setTimeout(() => resolve("超时没回话"), 6_000);
-              timer.unref?.();
-            });
-            const attempts = [
-              { label: "裸名 shutdown.exe", outcome: await runOnce("shutdown.exe", ["/a"], {}) },
-              { label: "绝对路径", outcome: await runOnce(absolute, ["/a"], {}) },
-              { label: "绝对路径 + 继承环境变量", outcome: await runOnce(absolute, ["/a"], { env: process.env }) },
-              { label: "经 cmd 转一道", outcome: await runOnce("cmd.exe", ["/c", "shutdown.exe /a"], {}) },
-              { label: "补 SESSIONNAME=Console", outcome: await runOnce(absolute, ["/a"], { env: { ...process.env, SESSIONNAME: "Console" } }) },
-              {
-                label: "补全常见变量",
-                outcome: await runOnce(absolute, ["/a"], {
-                  env: {
-                    ...process.env,
-                    SESSIONNAME: "Console",
-                    COMPUTERNAME: process.env.COMPUTERNAME || "",
-                    SystemDrive: process.env.SystemDrive || "C:",
-                    SystemRoot: process.env.SystemRoot || "C:\\WINDOWS",
-                    windir: process.env.windir || "C:\\WINDOWS",
-                    USERPROFILE: process.env.USERPROFILE || process.env.PUBLIC || "",
-                    TEMP: process.env.TEMP || process.env.TMP || "",
-                  },
-                }),
-              },
-              { label: "子进程看到的 SESSIONNAME", outcome: await runOnce("cmd.exe", ["/c", "echo [%SESSIONNAME%][%COMPUTERNAME%]"], {}) },
-              { label: "PowerShell 能不能跑", outcome: await runOnce("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Stop-Computer -WhatIf"], {}) },
-            ];
-            const envSummary = ["SESSIONNAME", "USERNAME", "USERDOMAIN", "SystemRoot", "windir"]
-              .map((key) => `${key}=${process.env[key] ?? "（空）"}`)
-              .concat(`PATH=${process.env.PATH ? "有" : "（空）"}`)
-              .join("；");
-            const text = attempts.map((item) => `${item.label}：${item.outcome}`).join("\n");
-            return {
-              content: [{ type: "text", text: `关机命令探针（全跑 /a，无副作用）：\n${text}\n\nApp 进程环境：${envSummary}` }],
-              details: { sleepGuard: { probeShutdown: attempts, envSummary } },
-            };
-          } catch (error) {
-            return { isError: true, content: [{ type: "text", text: `探针没跑成：${String(error?.message || error).slice(0, 160)}` }] };
-          }
-        }
-        if (action === "test-shutdown") {
-          // 真发一次关机请求，但留 120 秒撤销窗口；只给验证用，不能当正式路径。
-          try {
-            const { spawn } = await import("node:child_process");
-            const outcome = await new Promise((resolve) => {
-              const child = spawn("shutdown.exe", ["/s", "/t", "120"], { env: buildShutdownEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-              let stderr = "";
-              child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
-              child.on("error", (error) => resolve(`起不来：${String(error?.message || error).slice(0, 140)}`));
-              child.on("exit", (code) => resolve(`退码 ${code}｜err=${stderr.trim().slice(0, 120)}`));
-              const timer = setTimeout(() => resolve("超时没回话"), 6_000);
-              timer.unref?.();
-            });
-            return {
-              content: [{ type: "text", text: `已尝试发起关机（120 秒后生效）：${outcome}` }],
-              details: { sleepGuard: { testShutdown: outcome } },
-            };
-          } catch (error) {
-            return { isError: true, content: [{ type: "text", text: `测试没跑成：${String(error?.message || error).slice(0, 160)}` }] };
           }
         }
         if (action === "arm" || action === "rehearse") {
@@ -5061,6 +5001,13 @@ activeFusionServiceDispose = disposeFusionService;
           }
           return { content: [{ type: "text", text }], details: { sleepGuard: result } };
         }
+        if (action === "clear") {
+          const result = await clearSleepGuardWarning(sdk, args?.reason || "用户确认系统里没有待执行的关机");
+          const text = result.cleared
+            ? "上一轮的关机警告已经清掉了，现在可以重新挂。"
+            : `没清：${result.reason || "当前没有需要解除的警告"}。`;
+          return { content: [{ type: "text", text }], details: { sleepGuard: result } };
+        }
         const status = await readSleepGuard(sdk, { withLog: true });
         const timeline = await readSleepTimeline(sdk, Number(args?.timelineLimit) > 0 ? Number(args.timelineLimit) : 60);
         // 这里得自己读一次：`realEnabled` 以前是个没声明的变量，
@@ -5080,7 +5027,13 @@ activeFusionServiceDispose = disposeFusionService;
           watching: "正在守",
           countdown: "活已完，正在倒计时",
           "preview-done": "演练走完了整个流程（没真关）",
+          "shutdown-preparing": "已通过检测，准备请求关机",
+          "shutdown-sending": "正在发送关机命令",
           "shutdown-issued": "已经发出关机命令",
+          "shutdown-unknown": "关机结果不明，可能仍在等待关机",
+          "shutdown-failed": "关机命令执行失败",
+          "abort-pending": "正在尝试撤销系统关机",
+          "abort-failed": "撤销失败，系统可能仍会关机",
           fired: "已经触发过（演练）",
           expired: "等太久放弃了",
           cancelled: "已撤掉",
@@ -5090,18 +5043,23 @@ activeFusionServiceDispose = disposeFusionService;
           : "当前：没在守";
         const idleLine = state.status === "countdown"
           ? `还剩 ${Math.round((status.countdownLeftMs || 0) / 1000)} 秒${dryRun ? "结束演练" : "关机"}，这期间一有动静就取消。`
-          : state.status === "shutdown-issued"
-            // 这一段是最要紧的警告：命令已经出去了，但还有几秒能拉回来。
-            ? (status.abortLeftMs > 0
-              ? `关机命令已经发出，还有约 ${Math.round(status.abortLeftMs / 1000)} 秒可撤。要取消就现在点。`
-              : "关机命令已经发出，可撤销窗口已过，现在拦不住了。")
-            : status.armed && status.busyCount !== null && status.busyCount > 0
-              // 有活在跑就没在计时。以前这里写「已经空了 0 秒」，
-              // 跟时间线上那句「忙 N 处」正面矛盾，看着像坏了。
-              ? `还有 ${status.busyCount} 处在跑，所以还没开始算空。`
-              : status.armed
-                ? `已经空了 ${Math.round(status.idleForMs / 1000)} 秒，需要满 ${Math.round((state.idleMs || 0) / 1000)} 秒。`
-                : "";
+          : state.status === "abort-failed"
+            ? "撤销关机失败！系统可能仍会关机，请立即检查 Windows。"
+            : state.status === "abort-pending"
+              ? "正在请求 Windows 撤销关机；还没有确认成功。"
+              : state.status === "shutdown-unknown"
+                ? "关机命令结果不明，系统可能仍会关机，请立即检查。"
+                : state.status === "shutdown-preparing" || state.status === "shutdown-sending"
+                  ? "正在发送关机请求，仍可尝试取消。"
+                  : state.status === "shutdown-issued"
+                    ? (status.abortLeftMs > 0
+                      ? `关机请求已发出，约 ${Math.round(status.abortLeftMs / 1000)} 秒可撤。`
+                      : "关机命令已发出，原撤销窗口可能已过，请检查系统。")
+                    : status.armed && status.busyCount !== null && status.busyCount > 0
+                      ? `还有 ${status.busyCount} 处在跑，所以还没开始算空。`
+                      : status.armed
+                        ? `已经空了 ${Math.round(status.idleForMs / 1000)} 秒，需要满 ${Math.round((state.idleMs || 0) / 1000)} 秒。`
+                        : "";
         // 这一行必须按实际情况报。以前是写死的「现在是真关机」，
         // 演练挂上也会这么写——那就把「演练」说成了「真关机」，
         // 正是最不能错的那种谎。演练时人看到这句话会不敢测，也分不清到底会不会关。

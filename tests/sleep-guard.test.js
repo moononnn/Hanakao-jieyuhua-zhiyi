@@ -155,29 +155,17 @@ test("演练的挂上通知不能说成真关机", async () => {
   await cancelSleepGuard(sdk, "测完了");
 });
 
-test("关机命令已发出后，取消必须真去撒系统那条（不能只改本地状态）", async () => {
-  // 这是 2026-10-28 查出来的一个真缺陷：
-  // 以前 cancelSleepGuard 只把 state.status 改成 cancelled，从来没调过 `shutdown /a`。
-  // 于是那 30 秒里就算在面板上点「取消」，机器照样会关——反馈说撤了、其实没撤。
-  //
-  // 这里用假 sdk 把状态摆到「已发出」，验证会去调 /a。
+test("系统撤销命令的测试路径只使用注入的假执行器", async () => {
   const sdk = fakeSdk();
-  await armSleepGuard(sdk, { idleMs: 60_000 });
-  // 把内部状态手动推到「命令已发出」：没真发命令，只验撤销那条路。
-  const { describeSleepGuard } = await import("../lib/sleep-guard.js");
-  const live = describeSleepGuard();
-  assert.equal(live.armed, true);
-
-  // 直接调 abortSystemShutdown 看它认不认这个环境：
-  // 这里本机没有排上的关机，`shutdown /a` 会返回非 0（1116 没有关机正在进行）。
-  // 关键不是它成功，而是它**真的去调了**并且如实报失败。
   const { abortSystemShutdown } = await import("../lib/sleep-guard.js");
-  const result = await abortSystemShutdown(sdk);
-  assert.equal(typeof result.ok, "boolean", "必须回一个明确的成败");
-  assert.equal(typeof result.detail, "string");
-  // 没排关机时应该老实说没撤成，不能报 ok=true。
-  assert.equal(result.ok, false, "本机没有待执行的关机时，不能谎报撤销成功");
-  await cancelSleepGuard(sdk, "测完了");
+  const commands = [];
+  const result = await abortSystemShutdown(sdk, { commandRunner: async (args) => {
+    commands.push(args);
+    return { ok: false, detail: "模拟失败", code: 1116 };
+  } });
+  assert.deepEqual(commands, [["/a"]]);
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /模拟失败/);
 });
 
 test("没发出关机时取消不去碰系统命令", async () => {
@@ -423,4 +411,142 @@ test("真的空下来时没有看不清的原因", () => {
   assert.equal(verdict.busy, false);
   assert.equal(verdict.fire, true);
   assert.deepEqual(verdict.blind, []);
+});
+
+// ── P2: shutdown process recovery tests. NEVER launch real shutdown.exe. ──
+
+function persistedShutdown(status, ageMs = 1_000) {
+  return {
+    status, armedAt: Date.now() - 600_000, firedAt: Date.now() - ageMs,
+    idleMs: 600_000, maxWaitMs: 3_600_000, graceMs: 300_000,
+    real: true, dryRun: false,
+  };
+}
+
+test("App 重载后发现已发出关机：在有效窗口内自动尝试 /a", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued"));
+  const calls = [];
+  const restored = await restoreSleepGuard(sdk, { commandRunner: async (args) => {
+    calls.push(args);
+    return { ok: true, code: 0, detail: "模拟撤销成功" };
+  } });
+  assert.equal(restored.restored, false);
+  assert.equal(restored.recovered, true);
+  assert.deepEqual(calls, [["/a"]]);
+  assert.equal(describeSleepGuard().state.status, "cancelled");
+  assert.equal(sdk.__store.get("sleepGuardState").status, "cancelled");
+  disposeSleepGuard();
+});
+
+test("撤销失败不能假装关机已经撤掉，窗口内还能再次点击重试", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued"));
+  const first = await restoreSleepGuard(sdk, {
+    commandRunner: async () => ({ ok: false, code: 1116, detail: "模拟无法撤销" }),
+  });
+  assert.equal(first.recovered, true);
+  assert.equal(describeSleepGuard().state.status, "abort-failed");
+  assert.equal(describeSleepGuard().armed, true);
+  assert.match(describeBannerText(describeSleepGuard()), /撤销失败/);
+  const second = await cancelSleepGuard(sdk, "重试", {
+    commandRunner: async () => ({ ok: true, code: 0, detail: "模拟重试成功" }),
+  });
+  assert.equal(second.cancelled, true);
+  assert.equal(describeSleepGuard().state.status, "cancelled");
+  disposeSleepGuard();
+});
+
+test("超过撤销窗口的重载不运行全局 /a，不谎称成功", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued", 45_000));
+  let called = 0;
+  const restored = await restoreSleepGuard(sdk, { commandRunner: async () => {
+    called++; return { ok: true };
+  } });
+  assert.equal(called, 0);
+  assert.equal(restored.uncertain, true);
+  assert.equal(describeSleepGuard().state.status, "shutdown-unknown");
+  disposeSleepGuard();
+});
+
+test("重载时仍处于准备关机：直接丢弃，不运行任何命令", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-preparing"));
+  let called = 0;
+  await restoreSleepGuard(sdk, { commandRunner: async () => { called++; return { ok: true }; } });
+  assert.equal(called, 0);
+  assert.equal(describeSleepGuard().state.status, "cancelled");
+  disposeSleepGuard();
+});
+
+test("已发出或撤销失败的关机不能被新一次 arm 覆盖", async () => {
+  const { disposeSleepGuard, restoreSleepGuard } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued"));
+  await restoreSleepGuard(sdk, { commandRunner: async () => ({ ok: false, detail: "模拟撤销失败" }) });
+  await assert.rejects(armSleepGuard(sdk, { dryRun: true }), /尚未确认撤销/);
+  assert.equal(describeSleepGuard().state.status, "abort-failed");
+  disposeSleepGuard();
+});
+
+test("Windows 退出码不为零时明确失败；单测绝不启动真实关机", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { runShutdownProcess } = await import("../lib/sleep-guard.js");
+  const fakeSpawn = (_exe, args) => {
+    assert.deepEqual(args, ["/s", "/t", "30"]);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => child.emit("exit", 203));
+    return child;
+  };
+  const result = await runShutdownProcess(["/s", "/t", "30"], { spawnProcess: fakeSpawn });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 203);
+});
+
+test("可撤销时间窗校验不允许未来时间戳或过期重试", async () => {
+  const { withinAbortWindow } = await import("../lib/sleep-guard.js");
+  assert.equal(withinAbortWindow({ firedAt: 1000 }, 1000), true);
+  assert.equal(withinAbortWindow({ firedAt: 1000 }, 30999), true);
+  assert.equal(withinAbortWindow({ firedAt: 1000 }, 31000), false);
+  assert.equal(withinAbortWindow({ firedAt: 32000 }, 31000), false);
+});
+
+test("撤销失败可以人工核实后解除，解除后能重新挂", async () => {
+  const { disposeSleepGuard, restoreSleepGuard, clearSleepGuardWarning } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  sdk.__store.set("sleepGuardState", persistedShutdown("shutdown-issued"));
+  await restoreSleepGuard(sdk, { commandRunner: async () => ({ ok: false, code: 1116, detail: "模拟撤销失败" }) });
+  assert.equal(describeSleepGuard().state.status, "abort-failed");
+  const cleared = await clearSleepGuardWarning(sdk, "我核实过了");
+  assert.equal(cleared.cleared, true);
+  assert.equal(describeSleepGuard().state.status, "cleared");
+  const status = await armSleepGuard(sdk, { idleMs: 60_000 });
+  assert.equal(status.state.status, "watching");
+  await cancelSleepGuard(sdk, "测完了");
+  disposeSleepGuard();
+});
+
+test("正常守着的时候不能靠 clear 把状态抹掉", async () => {
+  const { disposeSleepGuard, clearSleepGuardWarning } = await import("../lib/sleep-guard.js");
+  disposeSleepGuard();
+  const sdk = fakeSdk();
+  await armSleepGuard(sdk, { idleMs: 60_000 });
+  const result = await clearSleepGuardWarning(sdk);
+  assert.equal(result.cleared, false);
+  assert.equal(describeSleepGuard().state.status, "watching");
+  await cancelSleepGuard(sdk, "测完了");
+  disposeSleepGuard();
 });
