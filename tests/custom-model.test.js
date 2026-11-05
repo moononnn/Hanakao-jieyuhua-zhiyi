@@ -52,9 +52,14 @@ test("合并：掩码与空串都不覆盖已存 Key，只有显式清除才删"
   assert.equal(blank.apiKey, "sk-plain", "空串也不能覆盖");
   const cleared = await mergeCustomModelConfig(ready, { clearApiKey: true });
   assert.equal(cleared.apiKey, "");
-  const replaced = await mergeCustomModelConfig(ready, { apiKey: "sk-new" });
-  assert.notEqual(replaced.apiKey, "sk-plain");
-  assert.ok(replaced.apiKey.length > 0);
+  if (process.platform === "win32") {
+    const replaced = await mergeCustomModelConfig(ready, { apiKey: "sk-new" });
+    assert.notEqual(replaced.apiKey, "sk-plain");
+    assert.ok(replaced.apiKey.startsWith("dpapi:"));
+  } else {
+    await assert.rejects(() => mergeCustomModelConfig(ready, { apiKey: "sk-new" }),
+      /无法加密 API Key/);
+  }
 });
 
 test("三档分派：先 Hana 选中的，其次自定义档，都没就报错说去哪选", async () => {

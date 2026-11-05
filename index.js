@@ -61,6 +61,7 @@ import {
   resolveVoiceIdForAgent,
   saveClip,
   saveClipMeta,
+  pruneVoiceClipFiles,
   synthesizeVoice,
   voicesForProtocol,
 } from "./lib/voice.js";
@@ -247,8 +248,16 @@ async function rememberCachedSpeak(sdk, fingerprint, clipId) {
   const index = await readClipCacheIndex(sdk);
   const entries = Object.entries(index).filter(([key]) => key !== fingerprint);
   entries.push([fingerprint, clipId]);
-  // 只留最近这些；被挤掉的旧音频文件不删（语音收藏还引用着它的 clipId）。
-  await sdk.storage.global.set(VOICE_CLIP_CACHE_KEY, Object.fromEntries(entries.slice(-VOICE_CLIP_CACHE_LIMIT)));
+  // 先记完整的缓存名单，再从收藏中取保护名单；不删除收藏引用的音频。
+  const kept = Object.fromEntries(entries.slice(-VOICE_CLIP_CACHE_LIMIT));
+  await sdk.storage.global.set(VOICE_CLIP_CACHE_KEY, kept);
+  try {
+    const favorites = await listVoiceFavorites(sdk);
+    const referenced = [...Object.values(kept), ...favorites.map((item) => item.clipId)];
+    pruneVoiceClipFiles(sdk, referenced);
+  } catch (error) {
+    await sdk.logger?.debug?.(`旧语音缓存清理已跳过：${String(error?.message || error).slice(0, 120)}`);
+  }
 }
 
 async function readCachedSpeak(sdk, fingerprint) {
@@ -927,7 +936,7 @@ export default defineApp(async (sdk) => {
       }
     }
     // 循环续接：这一轮说完了，决定要不要再推一句「继续哈」。
-    if (!loopFiring && invocation?.session?.sessionId) {
+    if (invocation?.session?.sessionId && !loopFiring.has(String(invocation.session.sessionId))) {
       try {
         await fireContinueLoop(String(invocation.session.sessionId), readBodyText(invocation?.message), {
           agentId: String(invocation?.session?.agentId || ""),
@@ -1160,7 +1169,7 @@ activeFusionServiceDispose = disposeFusionService;
   // 循环续接（旧版「继续后自动循环」）：正常说完一轮也接着推「继续哈」，
   // 跑满设定轮数自己停；ta 说收工话时先屏住问用户。
   const loopRegistry = new ContinueLoopRegistry();
-  let loopFiring = false;
+  const loopFiring = new Set(); // Per-session lock; unrelated conversations may advance in parallel.
   // 一轮结束现在有两条路会来判定（钩子、turn_end），两者相隔毫秒级。
   // 谁先判完就记一笔，短时间内另一路不再重复判，不然会连发两声「继续哈」。
   // 窗口只用于分辨「同一轮的两个信号」，所以取小值；正常轮次间隔远大于它。
@@ -1176,7 +1185,7 @@ activeFusionServiceDispose = disposeFusionService;
    */
   async function fireContinueLoop(sessionId, assistantText, { agentId = "", source = "" } = {}) {
     const id = String(sessionId || "").trim();
-    if (!id || loopFiring || !loopRegistry.get(id)) return null;
+    if (!id || loopFiring.has(id) || !loopRegistry.get(id)) return null;
     // 手动「这次接几轮」也走循环机制发后续那几句，但进度显示归那一行自己管，
     // 不再推循环状态（一级面板会出现两行进度，写着不同的轮数）。
     const manualKey = resumeTracker.canonicalId(id);
@@ -1200,7 +1209,7 @@ activeFusionServiceDispose = disposeFusionService;
     }
     const decision = loopRegistry.decideAfterTurn(id, { assistantText });
     if (decision?.action === "continue") {
-      loopFiring = true;
+      loopFiring.add(id);
       rememberOwnResume(id);
       try {
         await sendToConversation(sdk, { text: RESUME_TEXT, mode: "steer", sessionId: id });
@@ -1224,7 +1233,7 @@ activeFusionServiceDispose = disposeFusionService;
           await pushLoopState(null);
         }
       } finally {
-        loopFiring = false;
+        loopFiring.delete(id);
       }
     } else if (decision?.action === "confirm") {
       if (manual) {
@@ -1768,7 +1777,7 @@ activeFusionServiceDispose = disposeFusionService;
       if (activity.busy) return null;
       // 忙闲查不到（编号对不上、宿主 RPC 撞上限）时不能一直等，也不能太急：
       // 至少隔一段足够长的时间再发，宁可多等也别扯断 ta 正在写的话。
-      if (!activity.known && plan.lastFiredAt && Date.now() - plan.lastFiredAt < QUEUE_UNKNOWN_STATE_WAIT_MS) return null;
+      if (!activity.known) return null; // Unknown busy state cannot safely deliver even the first message.
       const text = queuePlans.peekText(id);
       if (!text) {
         safeLog.info("排队话单已发完");
@@ -2797,7 +2806,7 @@ activeFusionServiceDispose = disposeFusionService;
     // 一轮只触发一次，撞上宿主的 App RPC 并发限制（日志里一天十几次
     // “adjudicator threw: App RPC concurrency limit reached”）就永久错过，
     // 循环会一直卡在 running、done 停在 0。turn_end 走事件总线不吃那套限流，当第二条路。
-    if (event.type === "turn_end" && loopRegistry.list().length && !loopFiring) {
+    if (event.type === "turn_end" && loopRegistry.list().length) {
       void (async () => {
         try {
           if (event.aborted === true) return;
@@ -3240,7 +3249,12 @@ activeFusionServiceDispose = disposeFusionService;
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "自定义模型设置读不出来。" }, 400); }
       const current = await sdk.storage.global.get("customTextModel", {});
-      const next = await mergeCustomModelConfig(current, body?.config || {});
+      let next;
+      try {
+        next = await mergeCustomModelConfig(current, body?.config || {});
+      } catch (error) {
+        return c.json({ ok: false, error: String(error?.message || "自定义模型设置没存上。") }, 400);
+      }
       await sdk.storage.global.set("customTextModel", next);
       return c.json({
         ok: true,
@@ -3619,7 +3633,13 @@ activeFusionServiceDispose = disposeFusionService;
       const submitted = normalizeVoiceConfig(body?.config);
       // 页面回传掩码时保留旧 Key，不许被 "********" 覆盖成真值。
       const rawKey = isMaskedKey(body?.config?.apiKey) ? current.apiKey : submitted.apiKey;
-      const next = { ...submitted, apiKey: rawKey === current.apiKey ? current.apiKey : await protectKey(rawKey) };
+      // 系统加密不可用时 protectKey 会报错：宁可这次不存，也不能把密钥明文落盘。
+      let next;
+      try {
+        next = { ...submitted, apiKey: rawKey === current.apiKey ? current.apiKey : await protectKey(rawKey) };
+      } catch (error) {
+        return c.json({ ok: false, error: String(error?.message || "新密钥没能加密保存。") }, 400);
+      }
       await sdk.storage.global.set("voiceConfig", next);
       // 回完整的一份：只回 config 的话，页面保存后会把音色库和伙伴名单当成空的。
       return c.json(await buildVoiceConfigPayload(sdk, next));

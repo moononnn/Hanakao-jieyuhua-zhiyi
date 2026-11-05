@@ -352,12 +352,11 @@ def _theme_css_over_http(theme):
         token = str(info.get("token") or "")
         if not port or not token:
             return ""
-        url = "http://127.0.0.1:%d/api/apps/theme.css?theme=%s&token=%s" % (
-            port,
-            urllib.parse.quote(theme),
-            urllib.parse.quote(token),
+        url = "http://127.0.0.1:%d/api/apps/theme.css?theme=%s" % (
+            port, urllib.parse.quote(theme),
         )
-        with urllib.request.urlopen(url, timeout=3) as resp:
+        request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+        with _LOCAL_API_OPENER.open(request, timeout=3) as resp:
             return resp.read().decode("utf-8", "replace")
     except Exception:
         return ""

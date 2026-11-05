@@ -595,8 +595,19 @@ class AppBallBridge:
                 # App → 球：回复行朗读的音频已经落盘，请球播放。
                 body = body if isinstance(body, dict) else {}
                 target = str(body.get("path") or "").strip()
-                if not target or not os.path.exists(target):
-                    return 400, {"ok": False, "error": "音频文件不存在"}
+                audio_root = os.environ.get("ZHIYI_APP_DATA_DIR", "").strip()
+                if not audio_root:
+                    return 403, {"ok": False, "error": "无法确认音频存放目录"}
+                allowed_dir = os.path.realpath(os.path.join(audio_root, "voice-clips"))
+                actual = os.path.realpath(target) if target else ""
+                try:
+                    contained = bool(actual) and os.path.commonpath([allowed_dir, actual]) == allowed_dir
+                except ValueError:  # e.g. Windows paths on different drives
+                    contained = False
+                if (not contained or not os.path.isfile(actual)
+                        or os.path.splitext(actual)[1].lower() not in (".mp3", ".wav")):
+                    return 400, {"ok": False, "error": "只能播放知意语音目录中的音频文件"}
+                target = actual
                 self._voice["playSeq"] = int(self._voice.get("playSeq") or 0) + 1
                 self._voice["play"] = {
                     "path": target,
