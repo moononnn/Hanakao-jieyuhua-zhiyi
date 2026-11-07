@@ -1,5 +1,14 @@
 # 测试
 
+## 2026-11-07 发布 0.3.3（下线输入框图片放大、关机判定收紧、令牌进面板）
+
+- 全量：`node --test` 827 项 825 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过。
+- 副本：release-tests 在最终包上 825 项全过，绑 ZIP `b338fac9…2c6c` / entry `590016b8…950b`。
+- 官方包：118 个文件（解压 4,646,146 字节，ZIP 3,004,156 字节），sdk 只剩真实 import 的 5 个；绑定提交 `7585662`，src 重建树与提交重建树指纹均为 `0fb7ec7c…`。
+- 审包：独立伙伴 pass，无阻断。实算导入闭包 50 个文件，sdk 部分恰好是那 5 个；相对 import 缺失 0，ui/*.html 的 assets 引用全在，隐私扫描（含图片原始字节）零命中，配方与 v0.3.2 逐 blob 相同。非阻断遗留：`/input-zoom` 后端链路仍在、README 死链、`python/test_*.py` 随包。
+- 线上：CI run 42386828179（提交 `7585662`）success；tag `v0.3.3`；Release 双附件回下载指纹一致；市场 PR #174 更新为 v0.3.3（head `4d4c99a`），validate-pr run 42424534553 pass；freeze 完成。
+- 打包工具：发布小工坊新增 `package.trackedOnly`（默认关闭），知意打开后包内容与仓库跟踪文件一致；改前包 433 文件、sdk 320 个，改后 118 文件、sdk 5 个。
+
 ## 2026-11-04 发布 0.3.1（降级信息上界面、取消用对号）
 
 - 本地：`node --test` 777 项 775 通过 / 0 失败 / 2 跳过；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过；`python -c ast.parse` 通过。
