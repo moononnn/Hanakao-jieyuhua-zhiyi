@@ -115,14 +115,3 @@ test("卸载能把注入和脚本都撤掉", { skip: !isWindows }, () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
-
-test("界面不许在没装上的情况下写「装好了」", () => {
-  const script = readFileSync(path.join(appRoot, "ui", "assets", "panel-layout.js"), "utf8");
-  assert.match(script, /payload\.installed !== true/, "安装结果必须先验再报成功");
-  assert.match(script, /装好了。完全退出 Hana 再启动/);
-  // 「装好了」只能挂在 installed 为真的分支后面，不能是无条件赋值。
-  const installBlock = script.slice(script.indexOf("/input-zoom/install"));
-  const claim = installBlock.indexOf("装好了。完全退出 Hana 再启动");
-  const guard = installBlock.indexOf("payload.installed !== true");
-  assert.ok(guard >= 0 && claim > guard, "成功文案必须写在校验之后");
-});

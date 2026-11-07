@@ -4,6 +4,10 @@
 
 ## 待发
 
+- 概览下线「输入框图片放大」：Hana 1.5.118-beta 起官方自己把这件做了（点输入框里的图打开「编辑图片」，画笔/矩形/颜色/线宽/撤销，完成替换待发送附件），知意这层全屏查看脚本会在捕获阶段抢走 chip 的 click，把官方面板挡在门外，所以删掉 `ui/panel.html` 的 `#ov-zoom` 行与 `ui/assets/panel-layout.js` 里对应的状态读取、按钮绑定和 `showView` 里的刷新调用。后端 `/input-zoom` 三个路由、`lib/input-zoom.js` 与安装脚本都留着未动；本机那层已装的脚本另行从 renderer 目录卸掉了（`index.html` 去注入、删 `modules\draft-image-zoom.js`，`.hdiz.bak` 留着）。待验收：重载后概览不再出现这一行，以及重启 Hana 后点缩略图弹的是官方编辑面板而不是黑底大图。文档跟着改：`README.md` 的安全提示、功能总表、第 10 节、已知限制四处不删原文，改成行内删除线并注明已由官方集成（第 10 节前加一段引用说明官方做法）；`manifest.json` 的 `description` 删掉「输入框里贴的图点开就能看大」半句。本地 reload 已生效，市场展示要等下次发布。测试跟着改：`tests/input-zoom-install.test.js` 删掉最后一条只盯旧 UI 文案的用例（安装助手那 6 条仍在）；`tests/market-embedded.test.js` 报的差异是真问题—`ui/market.html` 的边界文案还写着「在 Hana 设置里填令牌」，与 `ui/panel.html` 不同步，已按新文案对齐。全量 `node --test` 827 项（825 通过 / 2 既有跳过）、python 126 项（125 通过 / 1 既有跳过）。
+
+- 更新手记的粉色标签从「之前烦过你」改成「以前可能烦过你」：`hurt` 只是内容模型对「这条修的毛病会不会明显烦到人」的估计，并没有记录用户真实踩过的坑，原文案把概率说成了事实。只动 `ui/assets/handbook.js` 两处渲染文案与 `handbook.css` 注释，`CARD_PROMPT_VERSION` 不动、旧缓存照旧可用（缓存里存的是 `hurt` 布尔，文案在渲染层）。头条标签 7 个字对 `.hb-tag`（11px）与 `.hb-row-v .hurt`（10.5px）的胶囊宽度都还够，窄屏未逐屏确认。
+
 - 关机判定收紧到「看不清就不关」：会话扫描不完整、事件层不可读、后台任务读不到都算忙；5 秒采样加单飞锁和 90 秒超时；连续看不清十分钟发一条通知说明原因，状态接口与面板也能看到具体是哪一层。
 - 关机命令改成可确认的状态机（preparing / sending / issued），发送前复核当前状态，退出码非零才算失败、超时算结果不明；撤销只在原始 30 秒窗口内执行 `shutdown /a`，失败标 `abort-failed` 不谎报；重载对 issued / unknown / abort-failed 走恢复分支。
 - 新增 `clear` 动作、`/sleep-guard/clear` 路由与面板「已核实，解除警告」，给 `abort-failed` / `shutdown-unknown` 一个人工出口，避免永久挂不上关机。

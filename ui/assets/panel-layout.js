@@ -25,7 +25,6 @@ function showView(id, { focus = false } = {}) {
   channel?.postMessage({ view: id, from: 'panel' });
   document.querySelector('.workspace')?.scrollTo({ top: 0 });
   if (id === 'overview') syncOverview();
-  if (id === 'overview') void refreshZoomState();
   if (focus) document.querySelector(`.rail-item[data-view="${id}"]`)?.focus();
   window.dispatchEvent(new CustomEvent('zhiyi:view-change', { detail: { view: id } }));
 }
@@ -185,90 +184,6 @@ async function refreshSleepState() {
     // 读不到就维持现状，不要把按钮弄乱
   }
 }
-
-/* ── 概览上的「输入框图片放大」：只负责把脚本装进 Hana 当前版本，装没装自己读 ── */
-const zoomRow = document.querySelector('#ov-zoom');
-const zoomAction = document.querySelector('#ov-zoom-action');
-const zoomDesc = document.querySelector('#ov-zoom-desc');
-let zoomInstalled = null;
-
-const ZOOM_CODE_TEXT = {
-  NO_DIR: '还没找到 Hana 的界面目录，先启动一次 Hana 再来。',
-  NO_SOURCE: '知意自带的放大脚本没找到，重装一次知意。',
-  INSTALL_FAILED: '写进去了但没验过，这次没算装上，再点一次。',
-  UNINSTALL_FAILED: '没卸干净，再点一次。',
-  BAD_ACTION: '安装助手没认出这次请求，再点一次。',
-  FAILED: '这次没读完，点重试再来一次。',
-};
-
-function zoomErrorText(status) {
-  return status?.message || status?.error || ZOOM_CODE_TEXT[status?.code] || '读不到 Hana 的界面目录，稍后再看。';
-}
-
-function paintZoom(status) {
-  if (!zoomRow || !zoomAction || !zoomDesc) return;
-  if (!status || status.ok !== true) {
-    zoomInstalled = null;
-    zoomRow.classList.add('is-off');
-    zoomDesc.textContent = zoomErrorText(status);
-    zoomAction.textContent = '重试';
-    return;
-  }
-  if (status.found === false) {
-    zoomInstalled = false;
-    zoomRow.classList.add('is-off');
-    zoomDesc.textContent = ZOOM_CODE_TEXT[status.code] || status.reason || '还没找到 Hana 的界面目录。';
-    zoomAction.textContent = '重试';
-    return;
-  }
-  zoomInstalled = status.installed === true;
-  zoomRow.classList.toggle('is-off', !zoomInstalled);
-  zoomAction.textContent = zoomInstalled ? '已装好' : '装上';
-  zoomDesc.textContent = zoomInstalled
-    ? `当前 Hana ${status.version}。点缩略图就全屏，滚轮缩放，Esc 关。`
-    : `当前 Hana ${status.version}，这个版本还没装。装上以后重启一次 Hana 才能用。`;
-}
-
-async function refreshZoomState() {
-  try {
-    const response = await hana.api.fetch('/input-zoom');
-    const payload = await response.json().catch(() => ({}));
-    paintZoom(payload);
-  } catch {
-    paintZoom(null);
-  }
-}
-
-zoomAction?.addEventListener('click', async (event) => {
-  event.stopPropagation();
-  if (zoomInstalled === true) {
-    zoomDesc.textContent = '已经装上了。要是点图没反应，完全退出 Hana 再启动一次。';
-    return;
-  }
-  zoomAction.disabled = true;
-  const previous = zoomAction.textContent;
-  zoomAction.textContent = '正在装…';
-  try {
-    const response = await hana.api.fetch('/input-zoom/install', { method: 'POST' });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.ok !== true) throw new Error(zoomErrorText(payload));
-    // 只认「文件确实在位」这一条：以前这里不看安装结果就把「装好了」写在脸上，
-    // 结果脚本其实什么都没写。现在装不上就照实说装不上。
-    if (payload.installed !== true) {
-      paintZoom(payload);
-      throw new Error(zoomErrorText(payload));
-    }
-    paintZoom(payload);
-    zoomDesc.textContent = `装好了。完全退出 Hana 再启动（托盘也要退干净），点输入框里的缩略图就能放大。当前 Hana ${payload.version || ''}。`;
-  } catch (error) {
-    zoomAction.textContent = previous;
-    zoomDesc.textContent = error?.message || '没装成，再点一次。';
-  } finally {
-    zoomAction.disabled = false;
-  }
-});
-
-void refreshZoomState();
 
 // 停在概览上时，状态变了要跟着变（球可能被别处开关）。
 setInterval(() => {
