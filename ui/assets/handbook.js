@@ -61,7 +61,7 @@ function setStatus(text, { busy = false, error = false } = {}) {
 }
 
 function tagOf(card, index) {
-  if (card.hurt) return { text: '之前烦过你', hurt: true };
+  if (card.hurt) return { text: '以前可能烦过你', hurt: true };
   if (index === 0) return { text: '最值得开', hurt: false };
   if (index === 1) return { text: '每天都碰到', hurt: false };
   return { text: card.topic || '其他', hurt: false };
@@ -94,7 +94,7 @@ function leadHtml(card, index) {
 }
 
 function rowHtml(card) {
-  const hurt = card.hurt ? '<span class="hurt">之前烦过你</span>' : '';
+  const hurt = card.hurt ? '<span class="hurt">以前可能烦过你</span>' : '';
   const swap = [card.before ? `<i>以前</i>${esc(card.before)}` : '', card.now ? `<i class="arrow">→</i><i>现在</i>${esc(card.now)}` : ''].join('');
   return `<div class="hb-row" data-card="${esc(card.id)}">
     <div class="hb-row-h" role="button" tabindex="0">
