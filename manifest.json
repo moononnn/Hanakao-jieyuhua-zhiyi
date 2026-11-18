@@ -71,8 +71,17 @@
         },
         "cardForm": "flush",
         "titlebar": "solid"
+      },
+      {
+        "id": "reply-reading",
+        "title": "知意整理版",
+        "route": "/reply-reading.html",
+        "face": { "image": "assets/cover.png" },
+        "cardForm": "flush",
+        "titleMode": "hide"
       }
-    ]
+    ],
+    "messageRenderers": [{ "customType": "zhiyi-reply-reading", "cardId": "reply-reading" }]
   },
   "icon": "assets/icon.png",
   "minAppVersion": "0.1020.0"

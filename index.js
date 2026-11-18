@@ -23,25 +23,18 @@ import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRo
 import {
   DEFAULT_MIN_CHARS,
   MAX_MIN_CHARS,
-  buildSummaryBlock,
+  hasSummaryBlock,
   hasToolCalls,
-  lastUserMessage,
   normalizeMinChars,
   normalizeSummaryConfig,
   readBodyText,
-  recordSummaryFailure,
-  replaceSummaryBlock,
-  saveOriginalArchive,
-  stripMoodBlock,
-  shouldSummarize,
-  stripSummaryBlocks,
   stripSummaryFromPayload,
   stripSummaryInMessage,
   resolveSummaryModelRef,
-  summarizeReply,
 } from "./lib/length-summary.js";
+import { createReadingCards } from "./lib/reading-card.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
-import { FAST_TASK_MODEL_KEY, invokeFastTextModel, modelRoleLabel, resolveFastModel } from "./lib/fast-model.js";
+import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
 import { applySessionTitle, readTitleUndo, summarizeSessionTitle, undoSessionTitle } from "./lib/session-title.js";
 import { readRuntimeState, writeRuntimeState } from "./lib/runtime-state.js";
@@ -771,24 +764,13 @@ export default defineApp(async (sdk) => {
       askReviewInFlight = false;
     }
   }
-  // 速览判据要读「用户这条到底要什么」：每读一次就是一次历史读取（RPC + 文件解析）。
-  // 同一段对话十秒内复用上一份，足够新，也省下一次排队。
-  const lastUserCache = new Map();
-  async function lastUserMessageCached(session) {
-    const key = typeof session === "string" ? session : (session?.sessionPath ?? session?.path ?? "");
-    const hit = lastUserCache.get(key);
-    if (hit && Date.now() - hit.at < 10_000) return hit.text;
-    const text = await lastUserMessage(sdk, session);
-    if (lastUserCache.size > 32) lastUserCache.clear();
-    lastUserCache.set(key, { at: Date.now(), text });
-    return text;
-  }
   const askEnabledAtLoad = normalizeAskConfig(configCache.get("askConfig")?.value).enabled;  await sdk.logger.info("Ask card registration decided at load", { enabled: askEnabledAtLoad });
   await sdk.hooks.onDecision("agent/before-start", async (invocation) => {
     // 子代理会话整条跳过：不注入、不记账、不预检。
     if (isSubagentHook(invocation)) return undefined;
     // 循环续接：用户自己开口就停（循环自己补发的那句要排除在外）。
     const loopSessionId = String(invocation?.session?.sessionId || "");
+    rememberSessionPath(invocation?.session?.path || invocation?.session?.sessionPath, loopSessionId);
     const incomingPrompt = String(invocation?.prompt || "");
     if (loopSessionId && loopRegistry.get(loopSessionId) && !isOwnResumePrompt(loopSessionId, incomingPrompt)) {
       const stoppedLoop = loopRegistry.onUserMessage(loopSessionId);
@@ -883,25 +865,26 @@ export default defineApp(async (sdk) => {
     const cleaned = stripSummaryFromPayload(payload);
     return cleaned === payload ? undefined : { payload: cleaned };
   });
-  // 长回复速览：正文达到阈值时生成几行要点，以引用块小卡接在原文末尾。
-  // 原文完整保留，速览只是附在后面的一段。
-  let summarizing = false;
-  // 这份配置的快照存在文件顶部（summaryConfigCache），钩子里只读它；saveConfig 写盘时清。
   async function readSummaryConfig() {
-    if (summaryConfigCache) return summaryConfigCache;
-    try {
-      summaryConfigCache = normalizeSummaryConfig(await readConfig("summaryConfig", {}));
-    } catch (error) {
-      // 读不到就这一轮不做速览（默认值是开着的，不能拿默认值当真相，那会白花一次模型调用）。
-      await sdk.logger.debug?.("长回复速览配置读取失败，这轮跳过", {
-        error: String(error?.message || error?.code || error).slice(0, 120),
-      });
-      return { enabled: false, minChars: DEFAULT_MIN_CHARS };
+    if (!summaryConfigCache) {
+      try { summaryConfigCache = normalizeSummaryConfig(await readConfig("summaryConfig", {})); }
+      catch { return { enabled: false, minChars: DEFAULT_MIN_CHARS }; }
     }
     return summaryConfigCache;
   }
-  // check 必须在 try 外面声明：catch 里要读它，写在 try 块内会在错误处理时再抛一次。
-  let check = null;
+  const readingCards = createReadingCards(sdk, {
+    readConfig: readSummaryConfig,
+    readModel: () => resolveSummaryModelRef(peekConfig("summaryModel", null), peekConfig("askJudgeModel", null)),
+    sessionForPath: async (event, sessionPath) => {
+      const id = String(event.sessionId || "");
+      if (STABLE_SESSION_ID.test(id)) return id;
+      // Use the known event path, never the currently focused chat.
+      const target = await resolveResumeTargetLite({ sessionPath });
+      return STABLE_SESSION_ID.test(target?.sessionId || "") ? target.sessionId : "";
+    },
+    ignoredPath: isSubagentSessionPath,
+    reportError: code => { if (logThrottled(`reply-reading:${code}`, 60000)) safeLog.warn(`知意整理版未送达：${code}`); },
+  });
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
     // 子代理会话整条跳过：不贴速览卡、不跑速览模型、不记账。
     if (isSubagentHook(invocation)) return undefined;
@@ -947,96 +930,8 @@ export default defineApp(async (sdk) => {
         safeLog.warn(`循环续接钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
       }
     }
-    try {
-      const config = await readSummaryConfig();
-      if (!config.enabled) return undefined;
-      if (summarizing) return undefined;
-
-      // 这一轮可能是「正文 → 工具调用 → 正文」多段拼起来的：中间那条 assistant 消息
-      // 带着 toolCall，后面一定还有正文。这时就插速览，卡片会夹在回复中间（实测就是
-      // 这样：速览出现在段落之间，后面还接着写）。带工具调用的那条一律跳过，等最后一条。
-      // 中间段的提示最多 30 秒说一次：多步工具调用的回合里，这句会连着打几遍，白占 RPC 仓。
-      if (hasToolCalls(invocation?.message)) {
-        if (logThrottled("summary-skip-toolcall", 30_000)) {
-          safeLog.debug("长回复速览跳过：这条消息还带工具调用，后面还有正文");
-        }
-        return undefined;
-      }
-
-      const rawText = readBodyText(invocation?.message);
-      if (!rawText) return undefined;
-
-      // ── 先无条件把卡全部摘掉，再谈要不要贴新卡 ──
-      // 以前只在「不够长」时摘，结果两条路都漏：
-      //   ① 够长时直接 replace，靠 replaceSummaryBlock 自己剥；
-      //   ② 不够长又没卡时啥也不做。
-      // 真正漏掉的是第三种：**模型自己写的卡**。实测同一条消息里挖出过 4 张
-      // `> **速览** · 原文 N 字`（607/890/309/1216 四个不同数字，而正文只有 1359 字），
-      // 而 replaceSummaryBlock 每次先剥再贴，绝不可能留下 4 张——能叠成这样只有一种解释：
-      // 模型在写正文时顺手写进去了。它甚至把字数也自己编一个。
-      // 所以清卡不能再依附于「够不够长」这个分支，得无条件执行。
-      const issuedByModel = (rawText.match(/^>[ \t]*\*\*(?:🌸[ \t]*)?(?:知意)?速览\*\*/gmu) || []).length;
-      const withoutCards = stripSummaryInMessage(invocation?.message);
-      const bodySource = readBodyText(withoutCards) ?? rawText;
-      const text = stripMoodBlock(bodySource);
-      const hadCards = withoutCards !== invocation?.message;
-      if (hadCards && issuedByModel > 1) {
-        // 超过一张说明不是我们贴的（我们永远只留一张），日志留个脚印好查。
-        await sdk.logger.info(`正文里有 ${issuedByModel} 张速览卡，不是知意贴的，已清掉`);
-      }
-
-      const userText = await lastUserMessageCached(invocation?.session);
-      check = shouldSummarize({ text, minChars: config.minChars, userText });
-      if (!check.ok) {
-        // 不够线就不该有卡：不管是早先贴的旧卡，还是模型自己写的，一并清掉。
-        if (hadCards) {
-          await sdk.logger.info(`撒掉不应存在的速览卡：${check.reason}（现 ${text.length} 字）`);
-          return { message: withoutCards };
-        }
-        // 不足阈值是最常见的路，每分钟说一次就够；以前每轮一条 info，光日志就占一个 RPC 仓。
-        if (logThrottled(`summary-under:${check.reason}`, 60_000)) {
-          safeLog.info(`长回复速览跳过：${check.reason}（${text.length} 字）`);
-        }
-        return undefined;
-      }
-
-      summarizing = true;
-      try {
-        // 模型配置也走内存快照：钩子里每多一次 RPC 等，就多一分被并发上限丢掉的可能。
-        const configuredModel = resolveSummaryModelRef(
-          peekConfig("summaryModel", null),
-          peekConfig("askJudgeModel", null),
-        );
-        const events = [];
-        const { lines, elapsedMs, effort, attempts, reasoningTokens, model, degraded } = await summarizeReply(sdk, text, configuredModel, (event) => {
-          events.push(event);
-        });
-        if (events.length) safeLog.debug("长回复速览模型流", events[events.length - 1]);
-        const sessionPath = typeof invocation?.session === "string"
-          ? invocation.session
-          : (invocation?.session?.sessionPath ?? invocation?.session?.path ?? "");
-        saveOriginalArchive(sdk.dataDir, { sessionPath, chars: check.chars, text, lines });
-        // 换过模型就在卡里写一行：不署名的替换，比失败更让人生气。
-        const modelNote = degraded
-          ? `这条是「${model?.name || "另一条模型"}」（${modelRoleLabel(model?.role)}）拟的，原本那条没接住。`
-          : "";
-        const next = replaceSummaryBlock(invocation.message, buildSummaryBlock(lines, check.chars, modelNote));
-        if (!next) return undefined;
-        // effort / reasoningTokens 记进日志：下次再空正文，日志会直接写“思考吃了多少”，不用猜。
-        await sdk.logger.info(`长回复已附速览小卡（${check.chars} 字，${lines.length} 行，耗时 ${elapsedMs}ms）`, { chars: check.chars, lines: lines.length, elapsedMs, model: invocation?.message?.model ?? null, effort: effort || "(默认档)", attempts, reasoningTokens, degraded, summaryModel: model?.name || null });
-        return { message: next };
-      } finally {
-        summarizing = false;
-      }
-    } catch (error) {
-      // 任何一步失败都保留原文，宁可啰嗦也不让内容丢失。
-      const detail = recordSummaryFailure(sdk.dataDir, error, { chars: check?.chars ?? null });
-      // 失败日志限流：短句、模型慢的时候这条会连着刷，刷到最后只剩噪音。
-      if (logThrottled(`summary-fail:${detail.code ?? "none"}`, 60_000)) {
-        safeLog.warn(`长回复速览失败，保留原文：${detail.code ?? "no-code"} ${detail.message}`);
-      }
-      return undefined;
-    }
+    // 伙伴仍可能模仿旧速览；仅剥旧块，其他情况下不触碰原消息。
+    if (hasSummaryBlock(readBodyText(invocation?.message))) return { message: stripSummaryInMessage(invocation.message) };
   });
 
   // 「球是不是用户想让它开着」这个意图必须落盘：App 重载会把子进程一起带走，
@@ -3011,6 +2906,7 @@ activeFusionServiceDispose = disposeFusionService;
   try {
     if (typeof sdk.bus?.subscribe === "function") {
       await sdk.bus.subscribe((event, sessionPath) => {
+        void readingCards.note(event, sessionPath);
         // 记账放在最前面：下面一堆分支都有 return，早退不能把账漏了。
         // 这里只记内存，不 await、不发请求。
         try {
@@ -3139,6 +3035,10 @@ activeFusionServiceDispose = disposeFusionService;
 
     registerMarketRoutes(app, sdk, createMarketCatalog(sdk));
     registerHandbookRoutes(app, sdk);
+    app.get("/reply-reading", async c => {
+      const record = await readingCards.read(c.req.query("id"));
+      return c.json({ record });
+    });
 
     app.get("/input-zoom", async (c) => {
       try {

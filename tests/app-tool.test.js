@@ -1963,7 +1963,7 @@ test("子代理会话不注入 Ask 引导：基础引导和预检都不跑", asy
   assert.equal(mock.modelCalls.length, 1, "带决策线索的 prompt 在用户窗口里要跑一次预检");
 });
 
-test("子代理会话不贴速览卡：正文再长也不叫速览模型", async () => {
+test("子代理不改正文；用户窗口的 post-assistant 也不再生成内嵌旧速览", async () => {
   // 快速档得先有一条模型：没配时速览本来就会 MODEL_NOT_FOUND 退出，那样两条都跑不过，钉不住东西。
   const mock = createContext({ storageSeed: { fastTaskModel: { provider: "test-provider", model: "test-model" } } });
   await registeredTool(mock);
@@ -1976,12 +1976,12 @@ test("子代理会话不贴速览卡：正文再长也不叫速览模型", async
   assert.equal(subagent, undefined, "子代理会话不贴卡、不改消息");
   assert.equal(mock.modelCalls.length, 0, "速览模型不该被子代理的长回复叫起来");
 
-  const baseline = mock.modelCalls.length;
-  await postAssistant({
+  const cleaned = await postAssistant({
     session: { sessionId: "sess_chat", sessionPath: CHAT_SESSION_PATH },
-    message: { content: [{ type: "text", text: LONG_REPLY }], stopReason: "stop" },
+    message: { content: [{ type: "text", text: `${LONG_REPLY}\n\n> **🌸 知意速览** · 原文 600 字\n> - 旧速览` }], stopReason: "stop" },
   });
-  assert.ok(mock.modelCalls.length > baseline, "同一段正文落在用户窗口里会跑速览模型");
+  assert.equal(cleaned.message.content[0].text, LONG_REPLY);
+  assert.equal(mock.modelCalls.length, 0, "整理版由轮末事件生成，不能在文字钩子里重复跑");
 });
 
 test("子代理会话里调 Ask 工具也只回「用户不在场」", async () => {

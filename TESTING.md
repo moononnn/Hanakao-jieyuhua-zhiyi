@@ -1,5 +1,10 @@
 # 测试
 
+## 2026-11-18 知意整理版
+
+- 定向：`node --test tests/reply-reading.test.js tests/length-summary.test.js tests/summary-payload.test.js tests/activity-ledger.test.js tests/app-tool.test.js`，132 通过 / 2 跳过 / 0 失败。覆盖单条与同轮多段、原文不被编辑稿覆盖、跳过子代理窗口和中断、轮间隔离、同轮只投一份、新轮开跑时取消旧投递，以及旧速览清洗。
+- App 已用管理入口重载；聊天页和 Code 页真实上屏、真实模型的事实与语气保真、跨独立回合的同任务归并尚未验证。
+
 ## 2026-11-07 发布 0.3.3（下线输入框图片放大、关机判定收紧、令牌进面板）
 
 - 全量：`node --test` 827 项 825 通过 / 0 失败 / 2 跳过（跳过项为原有）；`node tests/python-tests.mjs` 126 项 125 通过 / 1 跳过。
