@@ -1,5 +1,9 @@
 # 测试
 
+## 2026-11-18 整理版回到正文末尾
+
+- 定向：`node --test tests/reply-reading.test.js tests/length-summary.test.js tests/summary-payload.test.js tests/app-tool.test.js`，111 通过 / 2 跳过 / 0 失败。覆盖同轮只附一份、原文保留、已关闭不调用模型、下一轮抢先开始时不附旧稿，以及整理块不进入后续模型上下文。真实出卡改为文本显示，实机对话未触发验证。
+
 ## 2026-11-18 自动整理回复开关
 
 - 定向：`node --test tests/reply-reading.test.js tests/length-summary.test.js tests/summary-payload.test.js tests/app-tool.test.js`，111 通过 / 2 跳过 / 0 失败。覆盖默认关闭、明确开启才生效、短而分散结果不受字数拦截、简单问候跳过，以及设置页撤掉字数控件。整理质量和实际出卡仍待实机验证。

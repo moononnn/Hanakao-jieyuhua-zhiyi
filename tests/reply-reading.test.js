@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReadingPrompt, normalizeReadingConfig, parseReadingText, sourceFromAgentEnd } from '../lib/reply-reading.js';
-import { createReadingCards } from '../lib/reading-card.js';
+import { createInlineReading } from '../lib/reading-card.js';
+import { stripSummaryBlocks, stripSummaryFromPayload } from '../lib/length-summary.js';
 
 const u = content => ({ role: 'user', content });
 const a = content => ({ role: 'assistant', content, stopReason: 'stop' });
@@ -43,32 +44,28 @@ test('自动整理默认关闭，只认明确的开启', () => {
   assert.deepEqual(normalizeReadingConfig({ enabled: true, minChars: 600 }), { enabled: true });
 });
 
-test('一次挂一份，不开新回合，不把整理正文写回聊天；新轮开始则不误挂', async () => {
-  for (const advance of [false, true]) {
-    const calls = [];
-    const store = new Map();
-    const path = 'code-test.jsonl';
-    const flow = createReadingCards({ storage: { global: { set: (k, v) => store.set(k, v), get: k => store.get(k) } },
-      bus: { request: async (verb, data) => {
-        if (verb === 'session:context') return { isStreaming: false };
-        calls.push(data);
-        return { ok: true, entryId: 'one-card' };
-      } } }, {
-      readConfig: async () => ({ enabled: true, minChars: 2 }), readModel: () => null,
-      sessionForPath: async () => 'sess_example', ignoredPath: () => false, reportError: assert.fail,
-      wait: async () => {}, prepare: async (_sdk, source) => {
-        if (advance) await flow.note({ type: 'agent_start' }, path);
-        return { mode: source.mode, text: '留在卡片存储的整理正文' };
+test('同轮只附一份正文整理；关闭或开始下一轮时不附', async () => {
+  for (const mode of ['normal', 'disabled', 'advanced']) {
+    let calls = 0;
+    const flow = createInlineReading({}, {
+      readConfig: async () => ({ enabled: mode !== 'disabled' }), readModel: () => null, reportError: assert.fail,
+      prepare: async (_sdk, source) => {
+        calls++;
+        assert.equal(source.mode, 'result');
+        if (mode === 'advanced') flow.start('session', '新问题');
+        return { mode: source.mode, text: '测试通过。\n\n还没上屏。' };
       },
     });
-    await flow.note({ type: 'agent_start' }, path);
-    const first = end(u('查一下'), a('旧说法'), a('测试通过；还没上屏。'));
-    await Promise.all([flow.note(first, path), flow.note({ ...first }, path)]);
-    assert.equal(calls.length, advance ? 0 : 1);
-    if (!advance) {
-      assert.equal(calls[0].triggerTurn, false);
-      assert.doesNotMatch(JSON.stringify(calls[0]), /留在卡片存储的整理正文/);
-      assert.equal((await flow.read(calls[0].details.cardInstanceId)).mode, 'result');
-    }
+    flow.start('session', '查一下');
+    await flow.finish('session', { ...a('测试通过。'), stopReason: 'toolUse' });
+    const final = a('还没上屏。');
+    const reply = await flow.finish('session', final);
+    assert.equal(calls, mode === 'disabled' ? 0 : 1);
+    if (mode === 'normal') {
+      assert.match(reply.content, /这件事的结果/);
+      assert.equal(stripSummaryBlocks(reply.content), final.content);
+      assert.deepEqual(stripSummaryFromPayload({ content: reply.content }), { content: final.content });
+      assert.equal(await flow.finish('session', final), undefined);
+    } else assert.equal(reply, undefined);
   }
 });

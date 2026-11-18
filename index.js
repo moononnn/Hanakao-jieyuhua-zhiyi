@@ -28,7 +28,7 @@ import {
   stripSummaryInMessage,
   resolveSummaryModelRef,
 } from "./lib/length-summary.js";
-import { createReadingCards } from "./lib/reading-card.js";
+import { createInlineReading } from "./lib/reading-card.js";
 import { normalizeReadingConfig, READING_CONFIG_KEY } from "./lib/reply-reading.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
@@ -769,6 +769,7 @@ export default defineApp(async (sdk) => {
     const loopSessionId = String(invocation?.session?.sessionId || "");
     rememberSessionPath(invocation?.session?.path || invocation?.session?.sessionPath, loopSessionId);
     const incomingPrompt = String(invocation?.prompt || "");
+    inlineReading.start(invocation?.session, incomingPrompt);
     if (loopSessionId && loopRegistry.get(loopSessionId) && !isOwnResumePrompt(loopSessionId, incomingPrompt)) {
       const stoppedLoop = loopRegistry.onUserMessage(loopSessionId);
       if (stoppedLoop) {
@@ -869,18 +870,10 @@ export default defineApp(async (sdk) => {
     }
     return summaryConfigCache;
   }
-  const readingCards = createReadingCards(sdk, {
+  const inlineReading = createInlineReading(sdk, {
     readConfig: readSummaryConfig,
     readModel: () => resolveSummaryModelRef(peekConfig("summaryModel", null), peekConfig("askJudgeModel", null)),
-    sessionForPath: async (event, sessionPath) => {
-      const id = String(event.sessionId || "");
-      if (STABLE_SESSION_ID.test(id)) return id;
-      // Use the known event path, never the currently focused chat.
-      const target = await resolveResumeTargetLite({ sessionPath });
-      return STABLE_SESSION_ID.test(target?.sessionId || "") ? target.sessionId : "";
-    },
-    ignoredPath: isSubagentSessionPath,
-    reportError: code => { if (logThrottled(`reply-reading:${code}`, 60000)) safeLog.warn(`知意整理版未送达：${code}`); },
+    reportError: code => { if (logThrottled(`reply-reading:${code}`, 60000)) safeLog.warn(`知意整理版跳过：${code}`); },
   });
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
     // 子代理会话整条跳过：不贴速览卡、不跑速览模型、不记账。
@@ -927,8 +920,10 @@ export default defineApp(async (sdk) => {
         safeLog.warn(`循环续接钩子判定出错：${String(error?.message || error).slice(0, 160)}`);
       }
     }
-    // 伙伴仍可能模仿旧速览；仅剥旧块，其他情况下不触碰原消息。
-    if (hasSummaryBlock(readBodyText(invocation?.message))) return { message: stripSummaryInMessage(invocation.message) };
+    const original = invocation?.message;
+    const cleaned = hasSummaryBlock(readBodyText(original)) ? stripSummaryInMessage(original) : original;
+    const reading = await inlineReading.finish(invocation?.session, cleaned);
+    if (reading || cleaned !== original) return { message: reading || cleaned };
   });
 
   // 「球是不是用户想让它开着」这个意图必须落盘：App 重载会把子进程一起带走，
@@ -2903,7 +2898,6 @@ activeFusionServiceDispose = disposeFusionService;
   try {
     if (typeof sdk.bus?.subscribe === "function") {
       await sdk.bus.subscribe((event, sessionPath) => {
-        void readingCards.note(event, sessionPath);
         // 记账放在最前面：下面一堆分支都有 return，早退不能把账漏了。
         // 这里只记内存，不 await、不发请求。
         try {
@@ -3032,10 +3026,6 @@ activeFusionServiceDispose = disposeFusionService;
 
     registerMarketRoutes(app, sdk, createMarketCatalog(sdk));
     registerHandbookRoutes(app, sdk);
-    app.get("/reply-reading", async c => {
-      const record = await readingCards.read(c.req.query("id"));
-      return c.json({ record });
-    });
 
     app.get("/input-zoom", async (c) => {
       try {
