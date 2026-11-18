@@ -540,22 +540,17 @@ test("permission state appears in settings and the host function panel", async (
   });
 });
 
-test("summary settings use an accessible stepper and model picker without changing the original reply", async () => {
+test("自动整理设置只剩默认未选的开关，原文保留", async () => {
   const [html, panel] = await Promise.all([
     readFile(new URL("../ui/panel.html", import.meta.url), "utf8"),
     readFile(new URL("../ui/assets/panel.js", import.meta.url), "utf8"),
   ]);
-  assert.match(html, /id="summary-min-chars-down"/);
-  assert.match(html, /id="summary-min-chars-up"/);
-  assert.match(html, /<output id="summary-min-chars"/);
-  assert.match(html, /id="summary-retry"[^>]*hidden/);
-  assert.doesNotMatch(html, /<select\b|type="number"/);
-  assert.match(html, /原文一个字都不动/);
-  assert.match(panel, /已保留原设置/);
-  assert.match(panel, /let summaryLoaded = false;/);
-  assert.match(panel, /if \(!summaryLoaded \|\| summarySaving \|\| !summarySettingsDirty\(\)\) return;/);
-  assert.match(panel, /读取失败，设置已锁定/);
-  assert.match(panel, /summaryRetry\?\.addEventListener/);
+  assert.match(html, /id="summary-enabled" type="checkbox" disabled/);
+  assert.doesNotMatch(html, /summary-min-chars/);
+  assert.match(html, /原文保留/);
+  assert.ok(panel.includes('JSON.stringify({ enabled })'));
+  assert.doesNotMatch(panel, /pendingSummaryMinChars/);
+  assert.ok(panel.includes('summaryRetry?.addEventListener'));
 });
 
 test("one content model serves recommendation, Ask precheck and summary", async () => {

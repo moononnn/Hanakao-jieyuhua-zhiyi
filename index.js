@@ -21,18 +21,15 @@ import { ContinueLoopRegistry, describeLoop, planManualResume, shouldJudgeLoop }
 // 排队话单：球上写一句或一串话，等 ta 这一轮说完就送进去；一串话一轮一条往下推。
 import { QueuePlanRegistry, buildQueueItems, describeQueuePlan, normalizeQueueRounds } from "./lib/queue-plan.js";
 import {
-  DEFAULT_MIN_CHARS,
-  MAX_MIN_CHARS,
   hasSummaryBlock,
   hasToolCalls,
-  normalizeMinChars,
-  normalizeSummaryConfig,
   readBodyText,
   stripSummaryFromPayload,
   stripSummaryInMessage,
   resolveSummaryModelRef,
 } from "./lib/length-summary.js";
 import { createReadingCards } from "./lib/reading-card.js";
+import { normalizeReadingConfig, READING_CONFIG_KEY } from "./lib/reply-reading.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
@@ -717,7 +714,7 @@ export default defineApp(async (sdk) => {
     await sdk.storage.global.set(key, value);
     // 写成功立刻把快照换成新值：改完设置下一次钩子就按新值走，既不必等 TTL，也不发 RPC。
     configCache.set(key, { at: Date.now(), value });
-    if (key === "summaryConfig") summaryConfigCache = null;
+    if (key === READING_CONFIG_KEY) summaryConfigCache = null;
   }
   // 子代理会话不是用户窗口。知意挂在这两条会话钩子上的东西——Ask 引导注入、速览小卡、
   // 话单/循环/续接记账——全是给人看、等人回应的；落进伙伴派出去干活的那段会话里只剩噪音：
@@ -727,7 +724,7 @@ export default defineApp(async (sdk) => {
     String(invocation?.session?.path || invocation?.session?.sessionPath || ""),
   );
   // 载入时把钩子要用的配置一次读进快照，之后钩子主路径就不再排 RPC 队了。
-  for (const key of ["askConfig", "askJudgeModel", "summaryConfig", "summaryModel", "styleRefineRequested"]) {
+  for (const key of ["askConfig", "askJudgeModel", READING_CONFIG_KEY, "summaryModel", "styleRefineRequested"]) {
     try {
       configCache.set(key, { at: Date.now(), value: await sdk.storage.global.get(key, null) });
     } catch {
@@ -867,8 +864,8 @@ export default defineApp(async (sdk) => {
   });
   async function readSummaryConfig() {
     if (!summaryConfigCache) {
-      try { summaryConfigCache = normalizeSummaryConfig(await readConfig("summaryConfig", {})); }
-      catch { return { enabled: false, minChars: DEFAULT_MIN_CHARS }; }
+      try { summaryConfigCache = normalizeReadingConfig(await readConfig(READING_CONFIG_KEY, {})); }
+      catch { return { enabled: false }; }
     }
     return summaryConfigCache;
   }
@@ -3073,17 +3070,14 @@ activeFusionServiceDispose = disposeFusionService;
       }
     });
     app.get("/summary-config", async (c) => c.json({
-      ...normalizeSummaryConfig(await sdk.storage.global.get("summaryConfig", {})),
-      bounds: { min: 1, max: MAX_MIN_CHARS, default: DEFAULT_MIN_CHARS },
+      ...normalizeReadingConfig(await sdk.storage.global.get(READING_CONFIG_KEY, null)),
     }));
     app.put("/summary-config", async (c) => {
       let body;
       try { body = await c.req.json(); } catch { return c.json({ ok: false, error: "参数读不出来。" }, 400); }
-      const next = normalizeSummaryConfig({
-        enabled: body?.enabled,
-        minChars: body?.minChars,
-      });
-      await saveConfig("summaryConfig", next);
+      if (typeof body?.enabled !== "boolean") return c.json({ ok: false, error: "开关需要 true 或 false。" }, 400);
+      const next = normalizeReadingConfig(body);
+      await saveConfig(READING_CONFIG_KEY, next);
       summaryConfigCache = next;
       return c.json({ ok: true, ...next });
     });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReadingPrompt, parseReadingText, sourceFromAgentEnd } from '../lib/reply-reading.js';
+import { buildReadingPrompt, normalizeReadingConfig, parseReadingText, sourceFromAgentEnd } from '../lib/reply-reading.js';
 import { createReadingCards } from '../lib/reading-card.js';
 
 const u = content => ({ role: 'user', content });
@@ -29,9 +29,18 @@ test('中间轮、失败、缺边界、明确长文请求、普通短话都跳�
     end(u('查一下'), { ...a('还在查'), stopReason: 'toolUse' }), end(u('查一下'), { ...a('报错'), errorMessage: 'oops' }) ]) {
     assert.equal(sourceFromAgentEnd(event, 1), null);
   }
-  assert.equal(sourceFromAgentEnd(normal, 100), null);
+  assert.equal(sourceFromAgentEnd(end(u('早安'), a('早安呀！'))), null);
+  assert.equal(sourceFromAgentEnd(end(u('修好了吗'), a('启动过了。'), a('F1 没验。'))).mode, 'result');
+  assert.equal(sourceFromAgentEnd(normal).mode, 'single');
   assert.equal(parseReadingText('SKIP'), null);
   assert.equal(parseReadingText('结论。\n\n条件。'), '结论。\n\n条件。');
+});
+
+test('自动整理默认关闭，只认明确的开启', () => {
+  for (const raw of [undefined, {}, { enabled: false }, { enabled: 'true' }]) {
+    assert.deepEqual(normalizeReadingConfig(raw), { enabled: false });
+  }
+  assert.deepEqual(normalizeReadingConfig({ enabled: true, minChars: 600 }), { enabled: true });
 });
 
 test('一次挂一份，不开新回合，不把整理正文写回聊天；新轮开始则不误挂', async () => {

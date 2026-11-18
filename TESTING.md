@@ -1,5 +1,9 @@
 # 测试
 
+## 2026-11-18 自动整理回复开关
+
+- 定向：`node --test tests/reply-reading.test.js tests/length-summary.test.js tests/summary-payload.test.js tests/app-tool.test.js`，111 通过 / 2 跳过 / 0 失败。覆盖默认关闭、明确开启才生效、短而分散结果不受字数拦截、简单问候跳过，以及设置页撤掉字数控件。整理质量和实际出卡仍待实机验证。
+
 ## 2026-11-18 知意整理版
 
 - 定向：`node --test tests/reply-reading.test.js tests/length-summary.test.js tests/summary-payload.test.js tests/activity-ledger.test.js tests/app-tool.test.js`，132 通过 / 2 跳过 / 0 失败。覆盖单条与同轮多段、原文不被编辑稿覆盖、跳过子代理窗口和中断、轮间隔离、同轮只投一份、新轮开跑时取消旧投递，以及旧速览清洗。

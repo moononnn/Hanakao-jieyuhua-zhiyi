@@ -89,119 +89,52 @@ startButton?.addEventListener('click', async () => {
 });
 
 const summaryEnabled = document.querySelector('#summary-enabled');
-const summaryMinChars = document.querySelector('#summary-min-chars');
-const summaryMinCharsDown = document.querySelector('#summary-min-chars-down');
-const summaryMinCharsUp = document.querySelector('#summary-min-chars-up');
-const summarySave = document.querySelector('#summary-save');
 const summaryStatus = document.querySelector('#summary-status');
 const summaryRetry = document.querySelector('#summary-retry');
-const SUMMARY_MIN_CHARS_MIN = 1;
-const SUMMARY_MIN_CHARS_MAX = 20000;
-const SUMMARY_MIN_CHARS_STEP = 50;
-let summaryConfig = { enabled: true, minChars: 600 };
-let pendingSummaryMinChars = 600;
-let summaryLoaded = false;
-let summarySaving = false;
+let summarySaved = false;
 
-function summarySettingsDirty() {
-  if (!summaryLoaded) return false;
-  const enabled = summaryEnabled ? summaryEnabled.checked : summaryConfig.enabled;
-  return enabled !== summaryConfig.enabled || pendingSummaryMinChars !== summaryConfig.minChars;
-}
-
-function renderSummary() {
-  if (summaryMinChars) summaryMinChars.textContent = String(pendingSummaryMinChars);
-  if (summaryMinCharsDown) summaryMinCharsDown.disabled = !summaryLoaded || summarySaving || pendingSummaryMinChars < SUMMARY_MIN_CHARS_MIN + SUMMARY_MIN_CHARS_STEP;
-  if (summaryMinCharsUp) summaryMinCharsUp.disabled = !summaryLoaded || summarySaving || pendingSummaryMinChars > SUMMARY_MIN_CHARS_MAX - SUMMARY_MIN_CHARS_STEP;
-  if (summaryEnabled) summaryEnabled.disabled = !summaryLoaded || summarySaving;
-  if (summarySave) {
-    const dirty = summarySettingsDirty();
-    summarySave.disabled = !summaryLoaded || summarySaving || !dirty;
-    summarySave.classList.toggle('is-saved', !dirty);
-    summarySave.textContent = dirty ? '保存' : '已保存 ✓';
-  }
-  if (!summaryLoaded || !summaryStatus) return;
-  const enabled = summaryEnabled ? summaryEnabled.checked : summaryConfig.enabled;
-  summaryStatus.textContent = enabled === false
-    ? '已关闭，长回复不再附速览。'
-    : `正文达到 ${pendingSummaryMinChars} 字时会在末尾附一段速览；原文完整保留。`;
-}
-
-function stepSummaryMinChars(delta) {
-  if (!summaryLoaded || summarySaving) return;
-  const next = Math.trunc(pendingSummaryMinChars + delta);
-  if (next < SUMMARY_MIN_CHARS_MIN || next > SUMMARY_MIN_CHARS_MAX) return;
-  pendingSummaryMinChars = next;
-  renderSummary();
+function applySummarySetting(enabled) {
+  summarySaved = enabled;
+  summaryEnabled.checked = enabled;
+  summaryEnabled.disabled = false;
+  summaryRetry.hidden = true;
+  summaryStatus.textContent = enabled ? '已开启。有助于阅读时才会附上整理版。' : '已关闭。';
 }
 
 async function loadSummary() {
-  if (!summaryEnabled && !summaryMinChars) return;
-  summaryLoaded = false;
-  renderSummary();
-  if (summaryStatus) summaryStatus.textContent = '正在读取设置…';
-  if (summaryRetry) {
-    summaryRetry.hidden = true;
-    summaryRetry.disabled = true;
-    summaryRetry.textContent = '正在读取…';
-  }
+  if (!summaryEnabled) return;
+  summaryEnabled.disabled = true;
+  summaryRetry.hidden = true;
+  summaryStatus.textContent = '正在读取设置…';
   try {
     const response = await hana.api.fetch('/summary-config');
-    if (!response.ok) throw new Error('读取失败');
     const payload = await response.json();
-    summaryConfig = { enabled: payload.enabled !== false, minChars: Number(payload.minChars) || 600 };
-    pendingSummaryMinChars = summaryConfig.minChars;
-    if (summaryEnabled) summaryEnabled.checked = summaryConfig.enabled;
-    summaryLoaded = true;
-    if (summaryRetry) {
-      summaryRetry.hidden = true;
-      summaryRetry.disabled = false;
-      summaryRetry.textContent = '重试读取';
-    }
-    renderSummary();
+    if (!response.ok || typeof payload.enabled !== 'boolean') throw new Error('读取失败');
+    applySummarySetting(payload.enabled);
   } catch {
-    if (summaryStatus) summaryStatus.textContent = '读取失败，设置已锁定；重试成功后才能修改。';
-    if (summaryRetry) {
-      summaryRetry.hidden = false;
-      summaryRetry.disabled = false;
-      summaryRetry.textContent = '重试读取';
-    }
-    renderSummary();
+    summaryStatus.textContent = '读取失败，请重试。';
+    summaryRetry.hidden = false;
   }
 }
 
 async function saveSummary() {
-  if (!summaryLoaded || summarySaving || !summarySettingsDirty()) return;
-  summarySaving = true;
-  renderSummary();
-  if (summaryStatus) summaryStatus.textContent = '正在保存…';
+  const enabled = summaryEnabled.checked;
+  summaryEnabled.disabled = true;
+  summaryStatus.textContent = '正在保存…';
   try {
     const response = await hana.api.fetch('/summary-config', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        enabled: summaryEnabled ? summaryEnabled.checked : true,
-        minChars: pendingSummaryMinChars,
-      }),
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }),
     });
-    if (!response.ok) throw new Error('保存失败');
     const payload = await response.json();
-    summaryConfig = { enabled: payload.enabled !== false, minChars: Number(payload.minChars) || 600 };
-    pendingSummaryMinChars = summaryConfig.minChars;
-    if (summaryEnabled) summaryEnabled.checked = summaryConfig.enabled;
-    summarySaving = false;
-    renderSummary();
-    if (summaryStatus) summaryStatus.textContent = '已保存。';
+    if (!response.ok || payload.ok !== true || payload.enabled !== enabled) throw new Error('保存失败');
+    applySummarySetting(payload.enabled);
   } catch {
-    summarySaving = false;
-    renderSummary();
-    if (summaryStatus) summaryStatus.textContent = '保存失败，请重试。';
+    summaryEnabled.checked = summarySaved;
+    await loadSummary();
+    if (!summaryEnabled.disabled && summarySaved !== enabled) summaryStatus.textContent = '没保存成功，开关已恢复。';
   }
 }
 
-summaryMinCharsDown?.addEventListener('click', () => stepSummaryMinChars(-SUMMARY_MIN_CHARS_STEP));
-summaryMinCharsUp?.addEventListener('click', () => stepSummaryMinChars(SUMMARY_MIN_CHARS_STEP));
-summarySave?.addEventListener('click', saveSummary);
 summaryEnabled?.addEventListener('change', saveSummary);
 summaryRetry?.addEventListener('click', loadSummary);
 loadSummary();

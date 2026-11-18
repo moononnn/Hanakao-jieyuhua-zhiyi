@@ -209,10 +209,10 @@
             <div class="zy-ov" id="ov-summary" role="button" tabindex="0">
               <div class="zy-ov-mark" aria-hidden="true">简</div>
               <div class="zy-ov-copy">
-                <p class="zy-ov-title">太长不看总结一下</p>
-                <p class="zy-ov-desc">回复太长时，末尾加一段短的概括。原文一个字都不动。</p>
+                <p class="zy-ov-title">自动整理回复</p>
+                <p class="zy-ov-desc">重点难找时，在末尾放一份整理版。原文保留。</p>
               </div>
-              <button class="zy-tg" type="button" aria-label="切换：太长不看总结一下"><i></i></button>
+              <button class="zy-tg" type="button" aria-label="切换：自动整理回复"><i></i></button>
             </div>
 
             <div class="zy-ov" id="ov-voice" role="button" tabindex="0">
@@ -422,11 +422,11 @@
           </section>
         </section>
 
-        <!-- 太长不看总结一下 -->
-        <section class="view" id="view-summary" aria-labelledby="summary-title">
+        <!-- 自动整理回复 -->
+        <section class="view" id="view-summary" aria-labelledby="summary-page-title">
           <header class="view-head">
-            <h1>太长不看总结一下</h1>
-            <p>回复一长眼睛就累。超过你定的字数，末尾补一段短的。</p>
+            <h1 id="summary-page-title">自动整理回复</h1>
+            <p>只在整理能让这轮回复更好读时，加一份整理版。</p>
           </header>
 
           <section class="settings-section" aria-labelledby="summary-title">
@@ -434,32 +434,19 @@
               <span class="section-mark" aria-hidden="true">简</span>
               <div>
                 <p class="eyebrow">阅读负担</p>
-                <h2 id="summary-title">知意速览 · 读整理版</h2>
+                <h2 id="summary-title">什么时候整理</h2>
               </div>
             </div>
             <div class="setting-row ball-row">
               <div class="setting-copy">
-                <h3>开着</h3>
-                <p>长回复可在末尾点开整理版；同一轮散在几段的结果，会集中到最后。原文保留。整理沿用下方模型设置。</p>
+                <h3>需要时附上整理版</h3>
+                <p>回复结束后，知意自动判断值不值得整理。写得清楚就不加；重点散在几段时，收成一份放在末尾。原文保留。</p>
               </div>
               <div class="model-controls">
                 <label class="switch">
-                  <input id="summary-enabled" type="checkbox" checked disabled />
+                  <input id="summary-enabled" type="checkbox" disabled />
                   <span>开启</span>
                 </label>
-              </div>
-            </div>
-            <div class="setting-row ball-row">
-              <div class="setting-copy">
-                <h3>超过多少字算长</h3>
-                <p>这条线管单条长回复；分散在多段里的内容达到整理门槛，也可以在最后合成一份。</p>
-              </div>
-              <div class="model-controls threshold-controls" role="group" aria-label="速览字符阈值">
-                <button id="summary-min-chars-down" class="stepper-button" type="button" aria-label="减少 50 字" disabled>−</button>
-                <output id="summary-min-chars" class="stepper-value" aria-live="polite">600</output>
-                <span class="unit">字</span>
-                <button id="summary-min-chars-up" class="stepper-button" type="button" aria-label="增加 50 字" disabled>＋</button>
-                <button id="summary-save" class="model-save" type="button" disabled>保存</button>
               </div>
             </div>
             <div class="status-actions">

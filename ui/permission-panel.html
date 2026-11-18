@@ -139,7 +139,7 @@
     </button>
     <button type="button" data-view="summary">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 4.2h10M3 8h7M3 11.8h5"/></svg>
-      <span class="text">太长不看</span>
+      <span class="text">自动整理回复</span>
       <span class="dot" data-dot="summary" aria-hidden="true"></span>
     </button>
   </div>
@@ -253,7 +253,7 @@
       await Promise.allSettled([
         readJson('/ask-config').then((data) => setDot('ask', data?.enabled !== false)),
         readJson('/recommendation-config').then((data) => setDot('rec', data?.display !== 'off')),
-        readJson('/summary-config').then((data) => setDot('summary', data?.enabled !== false)),
+        readJson('/summary-config').then((data) => setDot('summary', data?.enabled === true)),
         readJson('/voice-config').then((data) => setDot('voice', data?.config?.enabled !== false)),
         readJson('/ball/status').then((data) => setDot('ball', data?.running === true)),
         readJson('/sleep-guard').then((data) => setDot('sleep', data?.armed === true)),
