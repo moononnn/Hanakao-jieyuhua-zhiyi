@@ -1,23 +1,23 @@
-/* 随手记（输入框面板 → 小工具 → 随手记）· A 版：纸白苔绿。
+/* 随手记（输入框面板 → 小工具 → 随手记）· B 版：暖奶油。
  *
  * 颜色自己定在 .notes-view 里：宿主换深浅时，我们跟着换一套，
  * 但不接管宿主的 --bg / --card，免得被别处的变量带跑。
- * 浅色：纸白纸面 + 苔绿点缀；暗色：深苔灰底 + 略亮纸面 + 浅暖字，
+ * 浅色：奶油纸面 + 苔绿点缀；暗色：深苔灰底 + 略亮纸面 + 浅暖字，
  * 苔绿只在小面积按钮上出现，不铺一大片。
  *
  * 布局规矩：只有列表（详情里是正文那一块）滚动，
  * 页面头、输入框、操作区一直钉在上面，长文本推不走它们。
  */
 
-/* 浅色 A 版色板：只在这里生效。 */
+/* 浅色 B 版色板：与确认的暖奶油预览保持一致。 */
 .notes-view {
-  --notes-ground: #e9ebdf;
-  --notes-paper: #f3f2e9;
+  --notes-ground: #f8f1df;
+  --notes-paper: #fcf8ed;
   --notes-ink: #455246;
   --notes-accent: #607b65;
   --notes-accent-ink: #f7f9f4;
   --notes-accent-soft: #d8ddcd;
-  --notes-line: #d0d3c5;
+  --notes-line: #e5ddc9;
   --notes-muted: #66715f;
   --notes-warn: #96583c;
   --notes-shadow: 0 1px 2px rgba(69, 82, 70, .06);
@@ -37,7 +37,7 @@
   color: var(--notes-ink);
 }
 
-/* 暗色 A 版：柔和深苔灰底、略亮的纸面、浅暖字。
+/* 暗色：柔和深苔灰底、略亮的纸面、浅暖字。
    苔绿按钮配深墨字（不是浅绿压白字），对比度要够。 */
 html[data-appearance="dark"] .notes-view {
   --notes-ground: #22271f;

@@ -84,8 +84,8 @@ try {
     for (const appearance of ['light','dark']) {
       const colors = await run(`window.postMessage({type:'hana.theme.changed',payload:{appearance:'${appearance}'}},'*');await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const v=document.querySelector('.notes-view'),p=document.querySelector('.is-detail'),b=document.querySelector('.notes-body');return {mode:document.documentElement.dataset.appearance,ground:getComputedStyle(v).backgroundColor,paper:getComputedStyle(p).backgroundColor,body:getComputedStyle(b).backgroundColor,ink:getComputedStyle(b).color,scheme:getComputedStyle(v).colorScheme,overflow:document.documentElement.scrollWidth>innerWidth};`);
       assert.equal(colors.mode, appearance);assert.equal(colors.scheme, appearance);assert.equal(colors.overflow, false, `horizontal overflow ${width}/${appearance}`);
-      assert.equal(colors.ground, appearance === 'dark' ? 'rgb(34, 39, 31)' : 'rgb(233, 235, 223)');
-      assert.equal(colors.paper, appearance === 'dark' ? 'rgb(43, 49, 42)' : 'rgb(243, 242, 233)');
+      assert.equal(colors.ground, appearance === 'dark' ? 'rgb(34, 39, 31)' : 'rgb(248, 241, 223)');
+      assert.equal(colors.paper, appearance === 'dark' ? 'rgb(43, 49, 42)' : 'rgb(252, 248, 237)');
       assert.equal(colors.body, 'rgba(0, 0, 0, 0)');
       const needed = await evaluate('window.measurePanelHeight()');
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:needed,deviceScaleFactor:1,mobile:false});
