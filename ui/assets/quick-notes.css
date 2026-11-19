@@ -11,13 +11,13 @@
 
 /* 浅色 A 版色板：只在这里生效。 */
 .notes-view {
-  --notes-ground: #eef1e9;
-  --notes-paper: #fffefb;
+  --notes-ground: #dedfd2;
+  --notes-paper: #eae8dc;
   --notes-ink: #455246;
   --notes-accent: #607b65;
   --notes-accent-ink: #f7f9f4;
-  --notes-accent-soft: #e7ece1;
-  --notes-line: #e4e9df;
+  --notes-accent-soft: #d8ddcd;
+  --notes-line: #d0d3c5;
   --notes-muted: #66715f;
   --notes-warn: #96583c;
   --notes-shadow: 0 1px 2px rgba(69, 82, 70, .06);
@@ -26,8 +26,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* 面板最高 640，页签和头部占掉一部分，这里留 470 给内容。 */
-  height: 470px;
+  /* 短笔记按内容收高；长列表和正文在内部滚，不再撑满宿主面板。 */
+  height: auto;
+  max-height: 360px;
   min-height: 0;
   padding: 10px 12px 12px;
   border: 1px solid var(--notes-line);
@@ -218,8 +219,9 @@ html[data-appearance="dark"] .notes-view {
 /* ── 列表：只有它滚 ─────────────────────────────────── */
 
 .notes-list {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 140px;
   overflow-y: auto;
   margin: 0;
   padding: 0;
@@ -303,11 +305,11 @@ html[data-appearance="dark"] .notes-view {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 18px;
+  gap: 6px;
+  padding: 12px 14px;
 }
 
-.notes-list:has(> .is-detail) { overflow: hidden; }
+.notes-list:has(> .is-detail) { overflow: hidden; max-height: none; }
 
 .notes-detail-head {
   display: flex;
@@ -342,11 +344,12 @@ html[data-appearance="dark"] .notes-view {
 
 /* 正文：默认阅读，保留原换行和空格，长文只在这一块里滚。 */
 .notes-body {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 1 auto;
+  min-height: 28px;
+  max-height: 140px;
   overflow-y: auto;
   margin: 0;
-  padding: 18px 2px;
+  padding: 10px 2px;
   border: 0;
   background: transparent;
   color: var(--notes-ink);
@@ -362,7 +365,7 @@ html[data-appearance="dark"] .notes-view {
   width: 100%;
   flex: 1 1 auto;
   min-height: 60px;
-  max-height: 220px;
+  max-height: 120px;
   padding: 7px 9px;
   border: 1px solid var(--notes-line);
   border-radius: 10px;

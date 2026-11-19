@@ -1004,8 +1004,9 @@ function measureToolsPageHeight() {
   const padBottom = panel ? (parseFloat(getComputedStyle(panel).paddingBottom) || 0) : 0;
   const need = Math.ceil(bottom + padBottom + 2);
   if (!Number.isFinite(need) || need <= 0) return TOOLS_PANEL_HEIGHT;
-  // 不小于原来那个值，也不超上限：只解决「装不下」，不把页面拉高。
-  return Math.max(TOOLS_PANEL_HEIGHT, Math.min(MAX_PANEL_HEIGHT, need));
+  // 随手记按实际内容收高；其他小工具保持原来的最低高度。
+  const minimum = toolsSubView === 'notes' ? 160 : TOOLS_PANEL_HEIGHT;
+  return Math.max(minimum, Math.min(MAX_PANEL_HEIGHT, need));
 }
 
 async function showToolsView(sub = 'grid') {

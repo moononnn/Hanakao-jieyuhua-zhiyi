@@ -12,6 +12,8 @@ const dist = path.join(root, 'dist', 'quick-notes-a');
 await mkdir(dist, { recursive: true });
 const source = await readFile(path.join(root, 'ui/suggest-panel.html'), 'utf8');
 const markup = source.slice(source.indexOf('<div id="notes-view"')).split('</section>')[0];
+const panelSource = await readFile(path.join(root, 'ui/assets/suggest-panel.js'), 'utf8');
+const measureSource = panelSource.slice(panelSource.indexOf('function measureToolsPageHeight()'), panelSource.indexOf('\nasync function showToolsView'));
 const harness = `<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/suggest-panel.css"><link rel="stylesheet" href="/assets/quick-notes.css"><script src="/assets/theme-follow.js"></script></head><body><main class="panel">${markup}</main><script>window.ready=new Promise(r=>window.readyResolve=r)</script><script type="module">
 import {initQuickNotes} from '/assets/quick-notes.js';
 let item={id:'note-1',revision:1,text:'茶话会生成的图片，先做一次内部审查。\\n确认没什么大问题，再发出来。',group:'茶话会',done:false,pinned:false,createdAt:1,updatedAt:1,delivery:{state:'none'}};
@@ -26,6 +28,7 @@ window.ui=initQuickNotes({hana:{clipboard:{writeText:async({text})=>window.copie
  else result={ok:false,error:'unexpected route'};
  return {ok:true,json:async()=>structuredClone(result)};
 }}},getSessionId:()=>window.currentSession});
+const toolsPage=document.getElementById('notes-view'),toolsGrid=toolsPage,TOOLS_PANEL_HEIGHT=300,MAX_PANEL_HEIGHT=640,toolsSubView='notes';window.measurePanelHeight=${measureSource};
 ui.show();await ui.controller.load();window.readyResolve();
 </script></body></html>`;
 const server = createServer(async (req, res) => {
@@ -81,13 +84,29 @@ try {
     for (const appearance of ['light','dark']) {
       const colors = await run(`window.postMessage({type:'hana.theme.changed',payload:{appearance:'${appearance}'}},'*');await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const v=document.querySelector('.notes-view'),p=document.querySelector('.is-detail'),b=document.querySelector('.notes-body');return {mode:document.documentElement.dataset.appearance,ground:getComputedStyle(v).backgroundColor,paper:getComputedStyle(p).backgroundColor,body:getComputedStyle(b).backgroundColor,ink:getComputedStyle(b).color,scheme:getComputedStyle(v).colorScheme,overflow:document.documentElement.scrollWidth>innerWidth};`);
       assert.equal(colors.mode, appearance);assert.equal(colors.scheme, appearance);assert.equal(colors.overflow, false, `horizontal overflow ${width}/${appearance}`);
-      assert.equal(colors.ground, appearance === 'dark' ? 'rgb(34, 39, 31)' : 'rgb(238, 241, 233)');
-      assert.equal(colors.paper, appearance === 'dark' ? 'rgb(43, 49, 42)' : 'rgb(255, 254, 251)');
+      assert.equal(colors.ground, appearance === 'dark' ? 'rgb(34, 39, 31)' : 'rgb(222, 223, 210)');
+      assert.equal(colors.paper, appearance === 'dark' ? 'rgb(43, 49, 42)' : 'rgb(234, 232, 220)');
       assert.equal(colors.body, 'rgba(0, 0, 0, 0)');
+      const needed = await evaluate('window.measurePanelHeight()');
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:needed,deviceScaleFactor:1,mobile:false});
+      const fit = await run(`const view=document.querySelector('.notes-view'),a=document.querySelector('.notes-detail-actions').getBoundingClientRect();return {height:view.getBoundingClientRect().height,pageOverflow:document.documentElement.scrollHeight>innerHeight+1,buttonsVisible:a.bottom<=innerHeight};`);
+      assert.ok(fit.height <= 360, `note exceeds compact height budget: ${JSON.stringify({width, ...fit})}`);
+      console.log('compact-height', JSON.stringify({width, appearance, measured:needed, ...fit}));
+      assert.equal(fit.pageOverflow,false, 'host-reported height must fit without scrolling the whole panel');
+      assert.equal(fit.buttonsVisible,true);
       if (width === 420) { const shot = await cdp('Page.captureScreenshot', {format:'png'});await writeFile(path.join(dist, `detail-${appearance}.png`), Buffer.from(shot.data, 'base64')); }
+      await run(`document.querySelector('.notes-edit-trigger').click();`);
+      const editHeight = await evaluate('window.measurePanelHeight()');
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:editHeight,deviceScaleFactor:1,mobile:false});
+      const editFit = await run(`const view=document.querySelector('.notes-view').getBoundingClientRect(),footer=document.querySelector('.notes-item-note').getBoundingClientRect();return {pageOverflow:document.documentElement.scrollHeight>innerHeight+1,footerBottom:footer.bottom,limit:view.bottom};`);
+      assert.equal(editFit.pageOverflow,false, 'editing must fit the host-reported height');
+      assert.ok(editFit.footerBottom<=editFit.limit, `editing footer clipped: ${JSON.stringify({width,...editFit})}`);
+      await run(`document.querySelectorAll('.notes-edit-actions button')[1].click();`);
       checks++;
     }
   }
+  const singleHeight = await run(`const item=ui.controller.state.items[0];ui.controller.mergeItem({...item,text:'给茶话会生图加一道内部审查，确认后再发。'});ui.controller.notify();return document.querySelector('.notes-view').getBoundingClientRect().height;`);
+  assert.ok(singleHeight<280, `single-line note must stay compact: ${singleHeight}`);checks++;
   await run(`document.querySelector('.notes-edit-trigger').click();const t=document.querySelector('.notes-edit-text');t.value='改稿\\n第二行  两空格';t.dispatchEvent(new Event('input'));ui.setSession('probe-one');`);
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '改稿\n第二行  两空格', 'same-session notifications preserve editor');
   await run(`document.querySelectorAll('.notes-detail-actions button')[1].click();await Promise.resolve();`);
@@ -108,7 +127,10 @@ try {
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '新会话编辑稿', 'old save response must not close a new session editor');checks++;
   await run(`window.waitUpdate=false;window.currentSession='probe-one';ui.setSession('probe-one');ui.controller.discardEdit('note-1');ui.controller.setExpanded('note-1');`);
   await run(`const item=ui.controller.state.items.find(x=>x.id==='note-1');ui.controller.mergeItem({...item,text:'长正文与空格  换行\\n'.repeat(1000)});ui.controller.notify();`);
-  const positions = await run(`const a=document.querySelector('.notes-detail-actions').getBoundingClientRect();const b=document.querySelector('.notes-body');const v=document.querySelector('.notes-view').getBoundingClientRect();return {bottom:a.bottom,limit:v.bottom,scroll:b.scrollHeight>b.clientHeight};`);
+  const longHeight = await evaluate('window.measurePanelHeight()');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:760,height:longHeight,deviceScaleFactor:1,mobile:false});
+  const positions = await run(`const a=document.querySelector('.notes-detail-actions').getBoundingClientRect();const b=document.querySelector('.notes-body');const v=document.querySelector('.notes-view').getBoundingClientRect();return {bottom:a.bottom,limit:v.bottom,scroll:b.scrollHeight>b.clientHeight,pageOverflow:document.documentElement.scrollHeight>innerHeight+1};`);
+  assert.equal(positions.pageOverflow,false, 'long note must not scroll the entire panel');
   assert.equal(positions.scroll, true);assert.ok(positions.bottom < positions.limit, 'long text cannot push actions out of view');checks++;
   await run(`document.querySelector('.notes-detail-actions button').click();await new Promise(r=>setTimeout(r,30));`);
   assert.equal(await evaluate("ui.controller.state.items.find(x=>x.id==='note-1').done"), true);
