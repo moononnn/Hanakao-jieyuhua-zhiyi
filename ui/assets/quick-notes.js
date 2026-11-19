@@ -238,7 +238,6 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       void controller.action(item, "send");
     }, "notes-btn notes-btn-primary", pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item));
     send.title = "发到当前对话；伙伴忙时等本轮结束后送入";
-    const copy = button("复制", () => void controller.copy(item), "notes-btn");
     const doneBtn = button(item.done ? "拿回来" : "收好", () => void controller.action(item, "done"), "notes-btn notes-btn-done",
       pending || item.delivery.state === "sending");
     const note = doc.createElement("p"); note.className = "notes-item-note";
@@ -258,7 +257,7 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       li.append(text, group, editRow);
       function refreshHint() {
         note.textContent = controller.dirty(item)
-          ? "有修改待保存，复制会带上修改后的原文。"
+          ? "有修改待保存，请先保存再发送。"
           : "改完点「保存修改」；不想要了就「取消编辑」。";
       }
       function changed() {
@@ -274,14 +273,14 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       const body = doc.createElement("div"); body.className = "notes-body";
       body.textContent = item.text;
       li.append(body);
-      note.textContent = locked ? "发送结果未确认，请先检查对话；可以复制或手动收好。"
-        : controller.dirty(item) ? "有修改待保存，复制会带上修改后的原文。"
+      note.textContent = locked ? "发送结果未确认，请先检查对话；可以手动收好。"
+        : controller.dirty(item) ? "有修改待保存，请先保存再发送。"
         : item.delivery.state === "sent" ? "宿主已接收这条消息。"
         : item.done ? "已经收好了。" : "发到当前对话，接收后自动收好；伙伴忙时会排队。";
     }
 
     const actions = doc.createElement("div"); actions.className = "notes-detail-actions";
-    actions.append(send, copy, doneBtn);
+    actions.append(send, doneBtn);
     const secondary = doc.createElement("div"); secondary.className = "notes-secondary-actions";
     secondary.append(button(item.pinned ? "取消置顶" : "置顶", () => void controller.action(item, "pin"), "notes-link", pending));
     li.append(actions, secondary, note);

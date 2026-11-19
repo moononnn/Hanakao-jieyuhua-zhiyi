@@ -18,8 +18,8 @@ const measureSource = panelSource.slice(panelSource.indexOf('function measureToo
 const harness = `<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/suggest-panel.css"><link rel="stylesheet" href="/assets/quick-notes.css"><script src="/assets/theme-follow.js"></script></head><body><main class="panel"><section id="palette-probe" style="position:fixed;left:-10000px;top:0;width:300px">${toolsMarkup}<div class="row">推荐结果</div><div class="reader-paper">朗读正文</div><textarea class="polish-input">理顺原稿</textarea><textarea class="polish-input queue-input">排队内容</textarea><button class="polish-run">理顺</button><button class="reader-speak">朗读</button><button class="gen">生成</button></section>${markup}</main><script>window.ready=new Promise(r=>window.readyResolve=r)</script><script type="module">
 import {initQuickNotes} from '/assets/quick-notes.js';
 let item={id:'note-1',revision:1,text:'茶话会生成的图片，先做一次内部审查。\\n确认没什么大问题，再发出来。',group:'茶话会',done:false,pinned:false,createdAt:1,updatedAt:1,delivery:{state:'none'}};
-window.calls=[];window.copied=[];window.failUpdate=false;window.currentSession='probe-one';
-window.ui=initQuickNotes({hana:{clipboard:{writeText:async({text})=>window.copied.push(text)},api:{fetch:async(route,init)=>{
+window.calls=[];window.clipboardCalls=0;window.failUpdate=false;window.currentSession='probe-one';
+window.ui=initQuickNotes({hana:{clipboard:{writeText:async()=>{window.clipboardCalls++;throw new Error('Plugin UI capability "clipboard.writeText" is not allowed in input-panel slots.')}},api:{fetch:async(route,init)=>{
  const body=init.body?JSON.parse(init.body):{};window.calls.push({route,body});let result;
  if(route==='/quick-notes')result={ok:true,items:[item]};
  else if(route.endsWith('/update')){if(window.waitUpdate)await new Promise(resolve=>window.releaseUpdate=resolve);if(window.failUpdate)result={ok:false,error:'测试保存失败'};else {item={...item,text:body.text,group:body.group,revision:item.revision+1};result={ok:true,item}}}
@@ -114,8 +114,7 @@ try {
   assert.ok(singleHeight<280, `single-line note must stay compact: ${singleHeight}`);checks++;
   await run(`document.querySelector('.notes-edit-trigger').click();const t=document.querySelector('.notes-edit-text');t.value='改稿\\n第二行  两空格';t.dispatchEvent(new Event('input'));ui.setSession('probe-one');`);
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '改稿\n第二行  两空格', 'same-session notifications preserve editor');
-  await run(`document.querySelectorAll('.notes-detail-actions button')[1].click();await Promise.resolve();`);
-  assert.equal(await evaluate('window.copied.at(-1)'), '改稿\n第二行  两空格');
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('.notes-detail-actions button')].map(x=>x.textContent)"), ['发送','收好'], 'unsupported clipboard button is absent');
   assert.equal(await evaluate("document.querySelector('.notes-detail-actions button').disabled"), true, 'dirty send blocked');
   await run(`window.failUpdate=true;document.querySelector('.notes-edit-actions button').click();await new Promise(r=>setTimeout(r,30));`);
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '改稿\n第二行  两空格');checks++;
@@ -140,6 +139,7 @@ try {
   await run(`document.querySelector('.notes-detail-actions button').click();await new Promise(r=>setTimeout(r,30));`);
   assert.equal(await evaluate("ui.controller.state.items.find(x=>x.id==='note-1').done"), true);
   assert.equal(await evaluate("window.calls.filter(x=>x.route==='/quick-notes/send').length"), 1);checks++;
+  assert.equal(await evaluate('window.clipboardCalls'), 0, 'input panel must not request the forbidden clipboard capability');
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({passed:checks, widths:[320,420,760], modes:['light','dark'], screenshots:dist, fakeHost:true},null,2));
   await send('Browser.close');
