@@ -1,7 +1,7 @@
 /* 随手记（输入框面板 → 小工具 → 随手记）· B 版：暖奶油。
  *
- * 颜色自己定在 .notes-view 里：宿主换深浅时，我们跟着换一套，
- * 但不接管宿主的 --bg / --card，免得被别处的变量带跑。
+ * 色板复用 suggest-panel.css 的共享变量，不再单独维护一套。
+ * 整个输入框面板由宿主 data-appearance 统一决定深浅。
  * 浅色：奶油纸面 + 苔绿点缀；暗色：深苔灰底 + 略亮纸面 + 浅暖字，
  * 苔绿只在小面积按钮上出现，不铺一大片。
  *
@@ -9,19 +9,19 @@
  * 页面头、输入框、操作区一直钉在上面，长文本推不走它们。
  */
 
-/* 浅色 B 版色板：与确认的暖奶油预览保持一致。 */
+/* 别名保留随手记组件边界，取值全部来自面板共用色板。 */
 .notes-view {
-  --notes-ground: #f8f1df;
-  --notes-paper: #fcf8ed;
-  --notes-ink: #455246;
-  --notes-accent: #607b65;
-  --notes-accent-ink: #f7f9f4;
-  --notes-accent-soft: #d8ddcd;
-  --notes-line: #e5ddc9;
-  --notes-muted: #66715f;
-  --notes-warn: #96583c;
-  --notes-shadow: 0 1px 2px rgba(69, 82, 70, .06);
-  color-scheme: light;
+  --notes-ground: var(--bg);
+  --notes-paper: var(--card);
+  --notes-ink: var(--ink);
+  --notes-accent: var(--primary-deep);
+  --notes-accent-ink: var(--primary-ink);
+  --notes-accent-soft: var(--primary-soft);
+  --notes-line: var(--line);
+  --notes-muted: var(--muted);
+  --notes-warn: var(--warn);
+  --notes-shadow: var(--shadow);
+  color-scheme: inherit;
 
   display: flex;
   flex-direction: column;
@@ -35,22 +35,6 @@
   border-radius: 14px;
   background: var(--notes-ground);
   color: var(--notes-ink);
-}
-
-/* 暗色：柔和深苔灰底、略亮的纸面、浅暖字。
-   苔绿按钮配深墨字（不是浅绿压白字），对比度要够。 */
-html[data-appearance="dark"] .notes-view {
-  --notes-ground: #22271f;
-  --notes-paper: #2b312a;
-  --notes-ink: #e8e5da;
-  --notes-accent: #7f9f86;
-  --notes-accent-ink: #141b15;
-  --notes-accent-soft: #333b31;
-  --notes-line: #3a4238;
-  --notes-muted: #a7ae9d;
-  --notes-warn: #d79a80;
-  --notes-shadow: none;
-  color-scheme: dark;
 }
 
 /* 滚动条也走自己的色板。 */

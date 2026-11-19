@@ -12,9 +12,10 @@ const dist = path.join(root, 'dist', 'quick-notes-a');
 await mkdir(dist, { recursive: true });
 const source = await readFile(path.join(root, 'ui/suggest-panel.html'), 'utf8');
 const markup = source.slice(source.indexOf('<div id="notes-view"')).split('</section>')[0];
+const toolsMarkup = source.slice(source.indexOf('<div id="tools-grid"'), source.indexOf('<div id="voice-list-view"'));
 const panelSource = await readFile(path.join(root, 'ui/assets/suggest-panel.js'), 'utf8');
 const measureSource = panelSource.slice(panelSource.indexOf('function measureToolsPageHeight()'), panelSource.indexOf('\nasync function showToolsView'));
-const harness = `<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/suggest-panel.css"><link rel="stylesheet" href="/assets/quick-notes.css"><script src="/assets/theme-follow.js"></script></head><body><main class="panel">${markup}</main><script>window.ready=new Promise(r=>window.readyResolve=r)</script><script type="module">
+const harness = `<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/suggest-panel.css"><link rel="stylesheet" href="/assets/quick-notes.css"><script src="/assets/theme-follow.js"></script></head><body><main class="panel"><section id="palette-probe" style="position:fixed;left:-10000px;top:0;width:300px">${toolsMarkup}<div class="row">推荐结果</div><div class="reader-paper">朗读正文</div><textarea class="polish-input">理顺原稿</textarea><textarea class="polish-input queue-input">排队内容</textarea><button class="polish-run">理顺</button><button class="reader-speak">朗读</button><button class="gen">生成</button></section>${markup}</main><script>window.ready=new Promise(r=>window.readyResolve=r)</script><script type="module">
 import {initQuickNotes} from '/assets/quick-notes.js';
 let item={id:'note-1',revision:1,text:'茶话会生成的图片，先做一次内部审查。\\n确认没什么大问题，再发出来。',group:'茶话会',done:false,pinned:false,createdAt:1,updatedAt:1,delivery:{state:'none'}};
 window.calls=[];window.copied=[];window.failUpdate=false;window.currentSession='probe-one';
@@ -82,11 +83,15 @@ try {
   for (const width of [320, 420, 760]) {
     await cdp('Emulation.setDeviceMetricsOverride', {width,height:700,deviceScaleFactor:1,mobile:false});
     for (const appearance of ['light','dark']) {
-      const colors = await run(`window.postMessage({type:'hana.theme.changed',payload:{appearance:'${appearance}'}},'*');await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const v=document.querySelector('.notes-view'),p=document.querySelector('.is-detail'),b=document.querySelector('.notes-body');return {mode:document.documentElement.dataset.appearance,ground:getComputedStyle(v).backgroundColor,paper:getComputedStyle(p).backgroundColor,body:getComputedStyle(b).backgroundColor,ink:getComputedStyle(b).color,scheme:getComputedStyle(v).colorScheme,overflow:document.documentElement.scrollWidth>innerWidth};`);
+      const colors = await run(`window.postMessage({type:'hana.theme.changed',payload:{appearance:'${appearance}'}},'*');await new Promise(r=>setTimeout(r,200));const v=document.querySelector('.notes-view'),p=document.querySelector('.is-detail'),b=document.querySelector('.notes-body');return {mode:document.documentElement.dataset.appearance,ground:getComputedStyle(v).backgroundColor,paper:getComputedStyle(p).backgroundColor,body:getComputedStyle(b).backgroundColor,ink:getComputedStyle(b).color,scheme:getComputedStyle(v).colorScheme,overflow:document.documentElement.scrollWidth>innerWidth};`);
       assert.equal(colors.mode, appearance);assert.equal(colors.scheme, appearance);assert.equal(colors.overflow, false, `horizontal overflow ${width}/${appearance}`);
       assert.equal(colors.ground, appearance === 'dark' ? 'rgb(34, 39, 31)' : 'rgb(248, 241, 223)');
       assert.equal(colors.paper, appearance === 'dark' ? 'rgb(43, 49, 42)' : 'rgb(252, 248, 237)');
       assert.equal(colors.body, 'rgba(0, 0, 0, 0)');
+      const common = await run(`const paper=getComputedStyle(document.querySelector('.is-detail')),accent=getComputedStyle(document.querySelector('.notes-btn-primary'));return {ground:getComputedStyle(document.querySelector('.panel')).backgroundColor,papers:[...document.querySelectorAll('#palette-probe .tool-tile,#palette-probe .row,#palette-probe .reader-paper,#palette-probe .polish-input')].map(x=>({bg:getComputedStyle(x).backgroundColor,ink:getComputedStyle(x).color})),buttons:[...document.querySelectorAll('#palette-probe .polish-run,#palette-probe .reader-speak,#palette-probe .gen')].map(x=>({bg:getComputedStyle(x).backgroundColor,ink:getComputedStyle(x).color})),paper:paper.backgroundColor,ink:paper.color,accent:accent.backgroundColor,accentInk:accent.color};`);
+      assert.equal(common.ground,colors.ground,'panel and notes grounds must match');
+      assert.ok(common.papers.every(x=>x.bg===common.paper&&x.ink===common.ink),`all page surfaces must share one palette: ${JSON.stringify(common)}`);
+      assert.ok(common.buttons.every(x=>x.bg===common.accent),'all primary buttons must share one accent');
       const needed = await evaluate('window.measurePanelHeight()');
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:needed,deviceScaleFactor:1,mobile:false});
       const fit = await run(`const view=document.querySelector('.notes-view'),a=document.querySelector('.notes-detail-actions').getBoundingClientRect();return {height:view.getBoundingClientRect().height,pageOverflow:document.documentElement.scrollHeight>innerHeight+1,buttonsVisible:a.bottom<=innerHeight};`);

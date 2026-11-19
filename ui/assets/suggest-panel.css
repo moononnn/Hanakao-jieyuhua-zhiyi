@@ -1,44 +1,51 @@
 /* 输入框上方的知意面板。
-   配色按晓玥的偏好走：薄荷绿主色、樱花粉只作点缀、米白暖底、正文薄荷灰；
+   共用已确认的暖奶油底、苔绿主色与暖灰绿正文，樱花粉只作状态点缀；
    标题用霞鹜文楷（随包内嵌，不依赖外部字体链接）；
    圆角跟着尺寸分档（小控件 8、中等 12、卡片 14、胶囊给内容长短不一的标签）；
-   按钮三档音量：主=实心深墨绿、次=浅薄荷底主色字、三=纯文字 hover 才有底。 */
+   按钮三档音量：主=实心苔绿、次=浅苔色底主色字、三=纯文字 hover 才有底。 */
 @font-face {
   font-family: 'LXGW WenKai';
   src: url('./fonts/lxgw-wenkai.woff2') format('woff2');
   font-display: swap;
 }
 
-:root {
-  color-scheme: light dark;
-  --primary: #5dae8e;
-  --primary-deep: #3d8a6d;
-  --primary-soft: #e9f4ef;
-  --primary-soft-2: #dceee5;
+/* 输入框面板共用 B 暖奶油色板。也在 .panel 上声明，隔离后加载的
+   宿主主题同名根变量；宿主仍通过 data-appearance 决定深浅。 */
+:root,
+.panel {
+  color-scheme: light;
+  --primary: #7b9273;
+  --primary-deep: #607b65;
+  --primary-ink: #f7f9f4;
+  --primary-soft: #e7e8d7;
+  --primary-soft-2: #dce2cc;
   --pink: #e89bb0;
-  --bg: #fbf8f2;
-  --card: #fffdf9;
-  --ink: #2f3a33;
-  --muted: #8b938a;
-  --line: #eae7de;
-  --shadow: 0 1px 2px rgba(45, 70, 58, .06);
+  --bg: #f8f1df;
+  --card: #fcf8ed;
+  --ink: #455246;
+  --muted: #66715f;
+  --line: #e5ddc9;
+  --shadow: 0 1px 2px rgba(69, 82, 70, .06);
   /* 提醒色：只用在「关机前存好别的东西」这类不可逆提醒上，
      跟主色（绿）区分开，免得被当成普通说明跳过。 */
   --warn: #b8730b;
 }
 
-html[data-appearance="dark"] {
-  --primary: #6fbfa0;
-  --primary-deep: #8fd3b6;
-  --primary-soft: #1f2f28;
-  --primary-soft-2: #263a31;
+html[data-appearance="dark"],
+html[data-appearance="dark"] .panel {
+  color-scheme: dark;
+  --primary: #7f9f86;
+  --primary-deep: #7f9f86;
+  --primary-ink: #141b15;
+  --primary-soft: #333b31;
+  --primary-soft-2: #3d483c;
   --pink: #d98a9f;
-  --bg: #1b1f1d;
-  --card: #2a3230;
-  --ink: #e6e9e3;
-  --muted: #949c93;
-  --line: #3f4a44;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  --bg: #22271f;
+  --card: #2b312a;
+  --ink: #e8e5da;
+  --muted: #a7ae9d;
+  --line: #3a4238;
+  --shadow: none;
   --warn: #e0a341;
 }
 
@@ -62,13 +69,14 @@ html, body {
 /* 细薄荷圆条滚动条，别用系统默认灰条 */
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #c9dfd3; border-radius: 99px; border: 2px solid var(--bg); }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; border: 2px solid var(--bg); }
 *::-webkit-scrollbar-thumb:hover { background: var(--primary); }
-* { scrollbar-width: thin; scrollbar-color: #c9dfd3 transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
 .panel {
   padding: 11px 14px 14px;
   background: var(--bg);
+  color: var(--ink);
   min-height: 100%;
 }
 
@@ -140,7 +148,7 @@ html[data-appearance="dark"] .slug-note.bad { color: #e09182; }
 html[data-appearance="dark"] .gen,
 html[data-appearance="dark"] .reader-speak,
 html[data-appearance="dark"] .player-toggle,
-html[data-appearance="dark"] .polish-run { color: #14201a; }
+html[data-appearance="dark"] .polish-run { color: var(--primary-ink); }
 html[data-appearance="dark"] .quick-btn.done,
 html[data-appearance="dark"] .send.done { color: #14201a; }
 
@@ -281,7 +289,7 @@ html[data-appearance="dark"] .send.done { color: #14201a; }
   transition: border-color .15s ease, opacity .15s ease;
 }
 
-.row:hover { border-color: #d8e7dd; }
+.row:hover { border-color: var(--primary); }
 .row.sent { opacity: .6; }
 
 .text {
@@ -297,7 +305,7 @@ html[data-appearance="dark"] .send.done { color: #14201a; }
 }
 
 .text:hover { background: var(--primary-soft); }
-.text:focus { background: var(--primary-soft); box-shadow: inset 0 0 0 1px #cfe3d8; }
+.text:focus { background: var(--primary-soft); box-shadow: inset 0 0 0 1px var(--primary-soft-2); }
 
 .actions {
   flex: 0 0 auto;

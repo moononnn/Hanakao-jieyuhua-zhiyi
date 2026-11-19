@@ -43,6 +43,17 @@ test("复制使用原文和编辑稿，不改变收好状态、不发消息", as
   assert.equal(c.state.items[0].done, false); assert.equal(calls.length, 0);
 });
 
+test("宿主拒绝输入框面板剪贴板时保留记录且不报告已复制", async () => {
+  const error = 'Plugin UI capability "clipboard.writeText" is not allowed in input-panel slots.';
+  const c = createQuickNotesController({ clipboard: { writeText: async () => { throw new Error(error); } } });
+  c.setSession("current"); c.mergeItem(note());
+  const result = await c.copy(c.state.items[0]);
+  assert.equal(result.ok, false);
+  assert.equal(c.state.status, error);
+  assert.equal(c.state.statusTone, "warn");
+  assert.equal(c.state.items[0].done, false);
+});
+
 test("新建保存失败保留草稿；再次成功才清空", async () => {
   let ok = false;
   const { controller: c } = fixture(() => ok ? { ok: true, item: note() } : { ok: false, error: "存储失败" });
