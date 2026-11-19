@@ -103,7 +103,11 @@ export function createQuickNotesController({ api, clipboard, storage, onChange =
     if (kind === "send") body.sessionId = sessionId;
     if (kind === "pin") body.pinned = !item.pinned;
     if (kind === "done") body.done = !item.done;
-    state.pending.add(item.id); status(kind === "send" ? "正在交给当前对话…" : "正在保存…"); notify();
+    state.pending.add(item.id);
+    status(kind === "send" ? "正在交给当前对话…" : kind === "done"
+      ? item.done ? "正在移回待处理…" : "正在标记已处理…"
+      : "正在保存…");
+    notify();
     let received = false;
     try {
       const payload = await api.request(`/quick-notes/${kind}`, { method: "POST", body });
@@ -120,9 +124,13 @@ export function createQuickNotesController({ api, clipboard, storage, onChange =
         delete state.edits[item.id]; writeDraft();
       }
       if (state.sessionId === sessionId && (kind === "send" || kind === "done")) state.expandedId = "";
-      if (state.sessionId === sessionId) status(kind === "send"
-        ? payload.archived ? "已交给当前对话，并收好。" : payload.error || "已发送，但收好状态未确认，请勿重发。"
-        : "已保存。", payload.archived === false ? "warn" : "ok");
+      if (state.sessionId === sessionId) {
+        const done = payload?.item?.done ?? body.done ?? !item.done;
+        status(kind === "send"
+          ? payload.archived ? "已交给当前对话，并标记已处理。" : payload.error || "已发送，但已处理状态未确认，请勿重发。"
+          : kind === "done" ? done ? "已移到『已处理』。" : "已移回待处理。"
+            : "已保存。", payload.archived === false ? "warn" : "ok");
+      }
       return payload;
     } catch (error) {
       // HTTP 断线时后台可能已经收到，前端同样先锁住，刷新后以持久化状态为准。
@@ -217,6 +225,7 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     const pending = controller.state.pending.has(item.id), locked = isLocked(item);
     const edit = controller.state.edits[item.id];
     const editing = editingId === item.id;
+    let selectionTarget;
 
     const head = doc.createElement("div"); head.className = "notes-detail-head";
     const back = button("‹ 返回记录", () => closeDetail(), "notes-detail-back");
@@ -238,14 +247,45 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       void controller.action(item, "send");
     }, "notes-btn notes-btn-primary", pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item));
     send.title = "发到当前对话；伙伴忙时等本轮结束后送入";
-    const doneBtn = button(item.done ? "拿回来" : "收好", () => void controller.action(item, "done"), "notes-btn notes-btn-done",
+    const doneBtn = button(item.done ? "移回待处理" : "标记已处理", () => void controller.action(item, "done"), "notes-btn notes-btn-done",
       pending || item.delivery.state === "sending");
+    const selectAll = button("全选", () => {
+      const target = selectionTarget;
+      if (!target || target.disabled) {
+        controller.state.status = "当前无法选中正文。";
+        controller.state.statusTone = "warn";
+        controller.notify();
+        return;
+      }
+      target.focus({ preventScroll: true });
+      if (editing) {
+        if (typeof target.select === "function") target.select();
+        else target.setSelectionRange(0, target.value.length);
+      } else {
+        const selection = doc.defaultView?.getSelection?.();
+        if (!selection) {
+          controller.state.status = "无法选中正文，请重试。";
+          controller.state.statusTone = "warn";
+          controller.notify();
+          return;
+        }
+        const range = doc.createRange();
+        range.selectNodeContents(target);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      controller.state.status = "正文已全选，按 Ctrl+C 复制。";
+      controller.state.statusTone = "ok";
+      controller.notify();
+    }, "notes-btn notes-select-all", editing && (pending || locked));
+    selectAll.title = "全选笔记正文，按 Ctrl+C 复制";
     const note = doc.createElement("p"); note.className = "notes-item-note";
 
     if (editing) {
       const text = doc.createElement("textarea"); text.className = "notes-edit-text"; text.rows = 6;
       text.value = edit?.text ?? item.text; text.spellcheck = false;
       text.setAttribute("aria-label", "笔记正文"); text.maxLength = QUICK_NOTES_TEXT_MAX;
+      selectionTarget = text;
       const group = doc.createElement("input"); group.className = "notes-edit-group";
       group.value = edit?.group ?? item.group;
       group.setAttribute("aria-label", "笔记分组"); group.placeholder = "分组（可不填）"; group.maxLength = QUICK_NOTES_GROUP_MAX;
@@ -271,16 +311,18 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       refreshHint();
     } else {
       const body = doc.createElement("div"); body.className = "notes-body";
+      body.tabIndex = 0; body.setAttribute("aria-label", "笔记正文");
       body.textContent = item.text;
+      selectionTarget = body;
       li.append(body);
-      note.textContent = locked ? "发送结果未确认，请先检查对话；可以手动收好。"
+      note.textContent = locked ? "发送结果未确认，请先检查对话；可以手动标记已处理。"
         : controller.dirty(item) ? "有修改待保存，请先保存再发送。"
         : item.delivery.state === "sent" ? "宿主已接收这条消息。"
-        : item.done ? "已经收好了。" : "发到当前对话，接收后自动收好；伙伴忙时会排队。";
+        : item.done ? "已处理。" : "发到当前对话，接收后自动标记已处理；伙伴忙时会排队。";
     }
 
     const actions = doc.createElement("div"); actions.className = "notes-detail-actions";
-    actions.append(send, doneBtn);
+    actions.append(send, selectAll, doneBtn);
     const secondary = doc.createElement("div"); secondary.className = "notes-secondary-actions";
     secondary.append(button(item.pinned ? "取消置顶" : "置顶", () => void controller.action(item, "pin"), "notes-link", pending));
     li.append(actions, secondary, note);
@@ -345,7 +387,7 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       lastListKey = key;
     }
     const empty = byId("empty"); empty.hidden = rows.length > 0;
-    empty.textContent = s.loading ? "正在读取…" : s.query ? "没找到，换个词试试。" : s.tab === "done" ? "处理好的想法会收在这里。" : "还没记东西，先把刚才的想法留下。";
+    empty.textContent = s.loading ? "正在读取…" : s.query ? "没找到，换个词试试。" : s.tab === "done" ? "已处理的想法会收在这里。" : "还没记东西，先把刚才的想法留下。";
     if (visible) onLayout?.();
   }
   input.addEventListener("input", () => controller.setDraft(input.value));

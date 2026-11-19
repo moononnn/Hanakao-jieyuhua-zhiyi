@@ -129,6 +129,27 @@ test("分组/正文搜索和待处理/已收好分开", () => {
   c.setQuery("不存在"); assert.equal(c.visibleItems().length, 0);
 });
 
+test("标记已处理与移回待处理给出明确反馈且不发送消息", async () => {
+  const item = note();
+  const { controller: c, calls } = fixture((path, init) => ({ ok: true, item: { ...item, done: init.body.done, revision: init.body.revision + 1 } }));
+  c.mergeItem(item);
+  await c.action(c.state.items[0], "done");
+  assert.equal(c.state.items[0].done, true); assert.match(c.state.status, /已处理/);
+  await c.action(c.state.items[0], "done");
+  assert.equal(c.state.items[0].done, false); assert.match(c.state.status, /待处理/);
+  assert.deepEqual(calls.map((call) => call.path), ["/quick-notes/done", "/quick-notes/done"]);
+});
+
+test("全选入口和处理状态文案不再使用隐晦命名", async () => {
+  const html = await readFile(new URL("../ui/suggest-panel.html", import.meta.url), "utf8");
+  const ui = await readFile(new URL("../ui/assets/quick-notes.js", import.meta.url), "utf8");
+  const store = await readFile(new URL("../lib/quick-notes.js", import.meta.url), "utf8");
+  const routes = await readFile(new URL("../lib/quick-notes-routes.js", import.meta.url), "utf8");
+  assert.match(html, /id="notes-tab-done"[^>]*>已处理/);
+  assert.match(ui, /notes-select-all/); assert.match(ui, /移回待处理/); assert.match(ui, /标记已处理/);
+  assert.doesNotMatch(ui + store + routes, /收好|拿回来/);
+});
+
 test("面板接线、宿主剪贴板、IME快捷键、固定操作区与安全文本渲染", async () => {
   const html = await readFile(new URL("../ui/suggest-panel.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../ui/assets/quick-notes.js", import.meta.url), "utf8");

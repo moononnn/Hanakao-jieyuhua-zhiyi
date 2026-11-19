@@ -427,7 +427,7 @@
 .notes-link:hover:not(:disabled) { color: var(--notes-accent); background: var(--notes-accent-soft); }
 .notes-link:disabled { opacity: .5; cursor: default; }
 
-/* 主操作一行：发送/复制在左，收好靠右；按钮不被长文本挤变形。 */
+/* 主操作一行：发送/全选在左，标记已处理靠右；按钮不被长文本挤变形。 */
 .notes-detail-actions {
   display: flex;
   align-items: center;

@@ -92,6 +92,10 @@ try {
       assert.equal(common.ground,colors.ground,'panel and notes grounds must match');
       assert.ok(common.papers.every(x=>x.bg===common.paper&&x.ink===common.ink),`all page surfaces must share one palette: ${JSON.stringify(common)}`);
       assert.ok(common.buttons.every(x=>x.bg===common.accent),'all primary buttons must share one accent');
+      const selected = await run(`const before=JSON.stringify([ui.controller.state.items,ui.controller.state.edits]);document.querySelector('.notes-select-all').click();const body=document.querySelector('.notes-body'),selection=getSelection();return {text:selection.toString(),expected:body.textContent,inside:body.contains(selection.anchorNode)&&body.contains(selection.focusNode),unchanged:before===JSON.stringify([ui.controller.state.items,ui.controller.state.edits]),hint:ui.controller.state.status};`);
+      assert.equal(selected.text,selected.expected,'reader selection must contain only the exact note text');
+      assert.equal(selected.inside,true);assert.equal(selected.unchanged,true);
+      assert.match(selected.hint,/Ctrl\+C/);assert.doesNotMatch(selected.hint,/已复制/);
       const needed = await evaluate('window.measurePanelHeight()');
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:needed,deviceScaleFactor:1,mobile:false});
       const fit = await run(`const view=document.querySelector('.notes-view'),a=document.querySelector('.notes-detail-actions').getBoundingClientRect();return {height:view.getBoundingClientRect().height,pageOverflow:document.documentElement.scrollHeight>innerHeight+1,buttonsVisible:a.bottom<=innerHeight};`);
@@ -110,11 +114,13 @@ try {
       checks++;
     }
   }
-  const singleHeight = await run(`const item=ui.controller.state.items[0];ui.controller.mergeItem({...item,text:'给茶话会生图加一道内部审查，确认后再发。'});ui.controller.notify();return document.querySelector('.notes-view').getBoundingClientRect().height;`);
+  const singleHeight = await run(`ui.controller.state.status='';const item=ui.controller.state.items[0];ui.controller.mergeItem({...item,text:'给茶话会生图加一道内部审查，确认后再发。'});ui.controller.notify();return document.querySelector('.notes-view').getBoundingClientRect().height;`);
   assert.ok(singleHeight<280, `single-line note must stay compact: ${singleHeight}`);checks++;
   await run(`document.querySelector('.notes-edit-trigger').click();const t=document.querySelector('.notes-edit-text');t.value='改稿\\n第二行  两空格';t.dispatchEvent(new Event('input'));ui.setSession('probe-one');`);
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '改稿\n第二行  两空格', 'same-session notifications preserve editor');
-  assert.deepEqual(await evaluate("[...document.querySelectorAll('.notes-detail-actions button')].map(x=>x.textContent)"), ['发送','收好'], 'unsupported clipboard button is absent');
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('.notes-detail-actions button')].map(x=>x.textContent)"), ['发送','全选','标记已处理'], 'selection replaces unsupported copy action');
+  const editSelection = await run(`const before=JSON.stringify([ui.controller.state.items,ui.controller.state.edits]);document.querySelector('.notes-select-all').click();const t=document.querySelector('.notes-edit-text');return {text:t.value.slice(t.selectionStart,t.selectionEnd),active:document.activeElement===t,unchanged:before===JSON.stringify([ui.controller.state.items,ui.controller.state.edits])};`);
+  assert.equal(editSelection.text,'改稿\n第二行  两空格');assert.equal(editSelection.active,true);assert.equal(editSelection.unchanged,true);checks++;
   assert.equal(await evaluate("document.querySelector('.notes-detail-actions button').disabled"), true, 'dirty send blocked');
   await run(`window.failUpdate=true;document.querySelector('.notes-edit-actions button').click();await new Promise(r=>setTimeout(r,30));`);
   assert.equal(await evaluate("document.querySelector('.notes-edit-text').value"), '改稿\n第二行  两空格');checks++;
@@ -139,6 +145,13 @@ try {
   await run(`document.querySelector('.notes-detail-actions button').click();await new Promise(r=>setTimeout(r,30));`);
   assert.equal(await evaluate("ui.controller.state.items.find(x=>x.id==='note-1').done"), true);
   assert.equal(await evaluate("window.calls.filter(x=>x.route==='/quick-notes/send').length"), 1);checks++;
+  await run(`ui.controller.setTab('done');document.querySelector('[data-id="note-1"] .notes-item-open').click();`);
+  assert.equal(await evaluate("document.querySelector('.notes-btn-done').textContent"),'移回待处理');
+  assert.equal(await evaluate("document.getElementById('notes-tab-done').textContent"),'已处理');
+  await run(`document.querySelector('.notes-btn-done').click();await new Promise(r=>setTimeout(r,30));`);
+  assert.equal(await evaluate("ui.controller.state.items.find(x=>x.id==='note-1').done"),false);
+  await run(`ui.controller.setTab('todo');document.querySelector('[data-id="note-1"] .notes-item-open').click();document.querySelector('.notes-btn-done').click();await new Promise(r=>setTimeout(r,30));`);
+  assert.equal(await evaluate("ui.controller.state.items.find(x=>x.id==='note-1').done"),true);checks++;
   assert.equal(await evaluate('window.clipboardCalls'), 0, 'input panel must not request the forbidden clipboard capability');
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({passed:checks, widths:[320,420,760], modes:['light','dark'], screenshots:dist, fakeHost:true},null,2));
