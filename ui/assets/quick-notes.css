@@ -1,0 +1,259 @@
+/* 随手记（输入框面板 → 小工具 → 随手记）。
+   配色沿用面板那套：薄荷绿主色、米白暖底、正文薄荷灰；
+   标题用霞鹜文楷（随包内嵌，不依赖外部字体链接）。
+   布局规矩：只有列表滚动，顶上的输入框和「记下」按钮一直看得见；
+   小屏上按钮自己占一行，不被长文本挤走。 */
+
+.notes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 面板最高 640，页签和头部占掉一部分，这里留 470 给内容。 */
+  height: 470px;
+  min-height: 0;
+}
+
+.notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notes-title {
+  font-family: "LXGW WenKai", "Noto Sans SC", serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.notes-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+
+.notes-input {
+  width: 100%;
+  min-height: 68px;
+  max-height: 132px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.notes-input:focus-visible,
+.notes-edit-text:focus-visible,
+.notes-edit-group:focus-visible,
+.notes-search:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.notes-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.notes-group {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.notes-save {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.notes-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.notes-note[data-tone="warn"] { color: var(--warn); }
+.notes-note[data-tone="ok"] { color: var(--primary-deep); }
+
+.notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.notes-tabs {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.notes-tab {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notes-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
+.notes-search {
+  flex: 1 1 100px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 列表：只有它滚。 */
+.notes-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notes-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 6px 8px;
+  box-shadow: var(--shadow);
+}
+
+.notes-item[data-pinned="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.notes-item-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  width: 100%;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.notes-item.is-done .notes-item-open {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.notes-item-meta {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.notes-edit-text {
+  width: 100%;
+  min-height: 60px;
+  max-height: 160px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.notes-edit-group {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 按钮自己占位：长文本不许把它们挤走。 */
+.notes-item-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.notes-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.notes-item-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.notes-empty {
+  flex: none;
+  margin: 0;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notes-primary-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.notes-send { flex: 1.5; }
+.notes-copy { flex: 1; }
+.notes-edit-text { display: block; margin-top: 10px; }
+.notes-edit-group { display: block; width: 100%; margin-top: 6px; }
+.notes-item-actions { margin-top: 6px; justify-content: space-between; }
+.notes-action { padding-inline: 6px; font-size: 12px; }
+.notes-item-note { overflow-wrap: anywhere; margin-top: 6px; }
+.notes-item-note:empty, .notes-note:empty { display: none; }
+.notes-save:disabled, .notes-action:disabled, .notes-send:disabled { opacity: .5; cursor: default; }
+.notes-view button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.notes-list > .notes-item { flex: none; }
+@media (max-width: 360px) {
+  .notes-toolbar { gap: 6px; }
+  .notes-action { padding-inline: 3px; font-size: 11px; }
+}

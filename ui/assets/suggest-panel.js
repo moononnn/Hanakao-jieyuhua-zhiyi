@@ -1,6 +1,7 @@
 import { hana } from './sdk.js';
 import { activeTimingIndex, buildReaderSegments, formatTimeLabel } from './voice-reader.js';
 import { buildPolishRequest, normalizePolishSuggestions, polishStatusText } from './polish-draft.js';
+import { initQuickNotes } from './quick-notes.js';
 import { followHostTheme } from './theme-report.js';
 
 // 跟着宿主的深浅走，顺手把深浅报给 App（它再转给传音樱）。
@@ -35,6 +36,8 @@ const ballButton = document.getElementById('toggle-ball');
 const ballLabel = document.getElementById('ball-label');
 const ballHint = document.getElementById('ball-hint');
 const queueBackButton = document.getElementById('queue-back');
+const openNotesButton = document.getElementById('open-notes');
+const notesBackButton = document.getElementById('notes-back');
 const queueView = document.getElementById('queue-view');
 const queueTarget = document.getElementById('queue-target');
 const queueInput = document.getElementById('queue-input');
@@ -211,6 +214,8 @@ function syncPanelContext(context) {
     renderQueueSendLabel();
     setQueueStatus('');
     if (queueStopButton) queueStopButton.hidden = true;
+    // 换了一段对话，随手记的草稿也跟着换（别把上一段的话带过来）。
+    quickNotes.setSession(nextSessionId);
     // 换了一段对话，上一段的起名结果不能跟过来（那句话说的是别的窗口）。
     renaming = false;
     renameButton.disabled = false;
@@ -1004,13 +1009,17 @@ function measureToolsPageHeight() {
 }
 
 async function showToolsView(sub = 'grid') {
-  const next = sub === 'voice' ? 'voice' : sub === 'queue' ? 'queue' : 'grid';
+  const next = sub === 'voice' ? 'voice' : sub === 'queue' ? 'queue' : sub === 'notes' ? 'notes' : 'grid';
   toolsSubView = next;
   const inVoice = next === 'voice';
   const inQueue = next === 'queue';
-  if (toolsGrid) toolsGrid.hidden = inVoice || inQueue;
+  const inNotes = next === 'notes';
+  if (toolsGrid) toolsGrid.hidden = inVoice || inQueue || inNotes;
   voiceListView.hidden = !inVoice;
   if (queueView) queueView.hidden = !inQueue;
+  // 随手记那一层自己管显隐：进来就加载，出去就收起来。
+  if (inNotes) quickNotes.show();
+  else quickNotes.hide();
   if (!inVoice) {
     // 离开朗读：朗读器收起来，别把上一段稿子留在那儿。
     voiceReaderView.hidden = true;
@@ -1032,6 +1041,11 @@ async function showToolsView(sub = 'grid') {
     await setPanelHeight(QUEUE_PANEL_HEIGHT);
     await refreshQueueState();
     startQueuePolling();
+    return;
+  }
+  if (inNotes) {
+    // 随手记那层自己有多高：量真实高度，超了也不许超过宿主上限。
+    await setPanelHeight(measureToolsPageHeight());
     return;
   }
   const reading = !voiceReaderView.hidden;
@@ -1101,6 +1115,7 @@ async function showPage(page) {
   }
   toolsSubView = 'grid';
   if (toolsGrid) toolsGrid.hidden = false;
+  quickNotes.hide();
   if (showPolish) {
     await setPanelHeight(polishPageHeight());
     schedulePanelHeight();
@@ -1118,6 +1133,20 @@ polishTab.addEventListener('click', () => void showPage('polish'));
 openVoiceButton?.addEventListener('click', () => void showToolsView('voice'));
 voiceBackButton?.addEventListener('click', () => void showToolsView('grid'));
 openQueueButton?.addEventListener('click', () => void showToolsView('queue'));queueBackButton?.addEventListener('click', () => void showToolsView('grid'));
+openNotesButton?.addEventListener('click', () => void showToolsView('notes'));
+notesBackButton?.addEventListener('click', () => void showToolsView('grid'));
+
+// 随手记：控制器在 ui/assets/quick-notes.js 那边，这里只把它接到面板上。
+// 面板只管两件事：给它一个「此刻是哪段对话」，以及内容变了重量一次高度。
+const quickNotes = initQuickNotes({
+  hana,
+  getSessionId: () => panelSessionId(),
+  onLayout: () => {
+    if (activePage === 'tools' && toolsSubView === 'notes') {
+      void setPanelHeight(measureToolsPageHeight());
+    }
+  },
+});
 
 // 关机那格：点一下开，再点一下取消。
 // 它不自己维护一套状态，读的是设置页、提示条同一个 /sleep-guard。

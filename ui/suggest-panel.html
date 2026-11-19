@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>知意</title>
   <link rel="stylesheet" href="./assets/suggest-panel.css">
+  <link rel="stylesheet" href="./assets/quick-notes.css">
   <script src="./assets/theme-follow.js"></script>
 </head>
 <body>
@@ -101,7 +102,18 @@
           </span>
         </button>
 
-        <button id="toggle-shutdown" class="tool-tile tool-tile-wide" type="button" data-armed="0">
+        <!-- 随手记：先把话记下来，之后想发再发（默认不自动发任何消息）。 -->
+        <button id="open-notes" class="tool-tile" type="button">
+          <span class="tool-tile-mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M4.5 3.5h11v13h-11z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path><path d="M7 7.5h6M7 10.5h6M7 13.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></svg>
+          </span>
+          <span class="tool-tile-body">
+            <span class="tool-tile-label">随手记</span>
+            <span class="tool-tile-hint">先记下来，之后再说</span>
+          </span>
+        </button>
+
+        <button id="toggle-shutdown" class="tool-tile" type="button" data-armed="0">
           <span class="tool-tile-mark" aria-hidden="true">
             <svg viewBox="0 0 20 20"><path d="M10 3.4v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path><path d="M6.3 5.7a6.1 6.1 0 1 0 7.4 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
           </span>
@@ -236,6 +248,42 @@
           <button id="queue-send" class="polish-run" type="button">就这么发</button>
           <button id="queue-cancel" class="polish-send" type="button">取消</button>
         </div>
+      </div>
+
+      <!-- 随手记：先记下来，想发再发。默认什么都不发出去。 -->
+      <div id="notes-view" class="notes-view" hidden>
+        <div class="notes-head">
+          <div>
+            <button id="notes-back" class="reader-back" type="button" aria-label="返回小工具">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              <span>小工具</span>
+            </button>
+            <strong class="notes-title">随手记</strong>
+          </div>
+          <button id="notes-refresh" class="link-btn" type="button">刷新</button>
+        </div>
+
+        <div class="notes-editor">
+          <textarea id="notes-input" class="notes-input" rows="3" spellcheck="false" maxlength="20000" placeholder="刚才想到了什么？先记下来…" aria-label="随手记内容"></textarea>
+          <div class="notes-editor-row">
+            <input id="notes-group" class="notes-group" type="text" maxlength="40" placeholder="分组（可不填）" aria-label="随手记分组">
+            <button id="notes-save" class="polish-run notes-save" type="button">记下</button>
+          </div>
+          <p class="notes-note">Ctrl+Enter 记下 · 发送到当前对话，伙伴忙时等本轮结束后送入</p>
+        </div>
+        <p id="notes-status" class="notes-note" role="status" aria-live="polite"></p>
+        <p id="notes-storage-note" class="notes-note" role="status" aria-live="polite" hidden></p>
+
+        <div class="notes-toolbar">
+          <div class="notes-tabs" role="group" aria-label="随手记分类">
+            <button id="notes-tab-todo" class="notes-tab active" type="button" aria-pressed="true">待处理</button>
+            <button id="notes-tab-done" class="notes-tab" type="button" aria-pressed="false">已收好</button>
+          </div>
+          <input id="notes-search" class="notes-search" type="search" placeholder="找一条…" aria-label="搜索随手记">
+        </div>
+
+        <ul id="notes-list" class="notes-list" aria-live="polite"></ul>
+        <p id="notes-empty" class="notes-empty" hidden>还没记东西。</p>
       </div>
     </section>
 
