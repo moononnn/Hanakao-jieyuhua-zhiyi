@@ -11,8 +11,8 @@
 
 /* 浅色 A 版色板：只在这里生效。 */
 .notes-view {
-  --notes-ground: #dedfd2;
-  --notes-paper: #eae8dc;
+  --notes-ground: #e9ebdf;
+  --notes-paper: #f3f2e9;
   --notes-ink: #455246;
   --notes-accent: #607b65;
   --notes-accent-ink: #f7f9f4;
