@@ -150,13 +150,24 @@ export function createQuickNotesController({ api, clipboard, storage, onChange =
   };
 }
 
+/* 面板这一层：业务归控制器，这里只管长什么样。
+ *
+ * 结构分两层：
+ *   列表 —— 页面头、输入框、操作区钉着不动，只有列表滚；
+ *   详情 —— 默认是阅读（正文原样显示，保留换行和空格），
+ *           点「编辑」才出正文框和分组框，保存/还原在编辑态里；
+ *           详情里再点「返回记录」回到列表，列表里的「小工具」回到格子页。
+ *
+ * editingId 只活在这一次打开面板里，不进控制器：切会话就清掉，
+ * 免得把上一段对话的编辑态带过来。
+ */
 export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
   const doc = document;
   const byId = (id) => doc.getElementById(`notes-${id}`);
   const view = byId("view"), input = byId("input"), groupInput = byId("group"), save = byId("save"), list = byId("list");
   let storage = null;
   try { storage = globalThis.localStorage; } catch { /* 控制器显示草稿不可持久化提示 */ }
-  let visible = false, lastListKey = "";
+  let visible = false, lastListKey = "", editingId = "";
   const controller = createQuickNotesController({
     api: { async request(path, init = {}) {
       const response = await hana.api.fetch(path, { method: init.method || "GET",
@@ -167,55 +178,148 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
       return payload;
     } }, clipboard: hana.clipboard, storage, onChange: render,
   });
-  function button(text, run, className = "mini-btn notes-action", disabled = false) {
+  function button(text, run, className = "notes-btn", disabled = false) {
     const node = doc.createElement("button"); node.type = "button"; node.className = className;
     node.textContent = text; node.disabled = disabled; node.addEventListener("click", run); return node;
   }
-  function buildItem(item) {
-    const li = doc.createElement("li"); li.className = "notes-item"; li.dataset.id = item.id;
-    li.classList.toggle("is-done", item.done); li.dataset.pinned = String(item.pinned);
-    const open = button(controller.state.expandedId === item.id ? "‹ 返回记录" : item.text.trim().split("\n")[0].slice(0, 80),
-      () => controller.setExpanded(item.id), "notes-item-open");
-    open.setAttribute("aria-expanded", String(controller.state.expandedId === item.id)); li.append(open);
-    const meta = doc.createElement("p"); meta.className = "notes-item-meta";
-    meta.textContent = [item.pinned ? "置顶" : "", item.group, new Date(item.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })].filter(Boolean).join(" · "); li.append(meta);
-    if (controller.state.expandedId !== item.id) return li;
-    const edit = controller.state.edits[item.id] || item;
-    const text = doc.createElement("textarea"); text.className = "notes-edit-text"; text.rows = 4; text.value = edit.text;
-    text.setAttribute("aria-label", "笔记正文"); text.maxLength = QUICK_NOTES_TEXT_MAX;
-    const group = doc.createElement("input"); group.className = "notes-edit-group"; group.value = edit.group;
-    group.setAttribute("aria-label", "笔记分组"); group.placeholder = "分组（可不填）"; group.maxLength = QUICK_NOTES_GROUP_MAX;
-    const pending = controller.state.pending.has(item.id), locked = isLocked(item);
-    text.disabled = pending || locked; group.disabled = pending || locked; li.append(text, group);
-    const note = doc.createElement("p"); note.className = "notes-item-note";
-    const sending = item.delivery.state === "sending" || pending;
-    const hint = () => {
-      note.textContent = locked ? "发送结果未确认，请先检查对话；可以复制或手动收好。"
-        : controller.dirty(item) ? "有修改待保存，复制会带上修改后的原文。" : item.delivery.state === "sent" ? "宿主已接收这条消息。" : "";
-    };
-    const primary = doc.createElement("div"); primary.className = "notes-primary-actions";
-    const send = button(pending ? "处理中…" : "发送", () => {
-      controller.setSession(getSessionId());
-      void controller.action(item, "send");
-    }, "polish-run notes-send", pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item));
-    send.title = "发到当前对话；伙伴忙时等本轮结束后送入";
-    const copy = button("复制", () => void controller.copy(item), "mini-btn notes-copy"); primary.append(send, copy);
-    const secondary = doc.createElement("div"); secondary.className = "notes-item-actions";
-    const saveEdit = button("保存修改", () => void controller.action(item, "update"), "mini-btn notes-action", pending || locked || !controller.dirty(item));
-    const discard = button("还原", () => controller.discardEdit(item.id), "link-btn notes-action", pending || !controller.dirty(item));
-    secondary.append(saveEdit, discard,
-      button(item.pinned ? "取消置顶" : "置顶", () => void controller.action(item, "pin"), "link-btn notes-action", pending),
-      button(item.done ? "拿回来" : "收好", () => void controller.action(item, "done"), "link-btn notes-action", sending));
-    function changed() {
-      controller.editDraft(item, { text: text.value, group: group.value });
-      saveEdit.disabled = pending || locked || !controller.dirty(item);
-      discard.disabled = pending || !controller.dirty(item);
-      send.disabled = pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item);
-      hint();
-    }
-    text.addEventListener("input", changed); group.addEventListener("input", changed);
-    hint(); li.append(note, primary, secondary); return li;
+  function chip(text, variant = "") {
+    const node = doc.createElement("span"); node.className = variant ? `notes-chip ${variant}` : "notes-chip";
+    node.textContent = text; return node;
   }
+  function timeLabel(item) {
+    const date = new Date(item.createdAt);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  const firstLine = (text) => String(text || "").trim().split("\n")[0].slice(0, 80);
+
+  /* 列表里的一条：标题一行，下面是标签、时间、置顶这些小字。 */
+  function buildListItem(item) {
+    const li = doc.createElement("li"); li.className = "notes-item"; li.dataset.id = item.id;
+    li.classList.toggle("is-done", !!item.done); li.dataset.pinned = String(!!item.pinned);
+    const open = button(firstLine(item.text), () => openDetail(item.id), "notes-item-open");
+    open.setAttribute("aria-expanded", "false");
+    li.append(open);
+    const meta = doc.createElement("div"); meta.className = "notes-item-meta";
+    if (item.group) meta.append(chip(item.group));
+    const time = doc.createElement("span"); time.className = "notes-time"; time.textContent = timeLabel(item);
+    meta.append(time);
+    if (item.pinned) meta.append(chip("置顶", "notes-chip-pin"));
+    if (controller.dirty(item)) meta.append(chip("未保存", "notes-chip-dirty"));
+    li.append(meta);
+    return li;
+  }
+
+  /* 详情：默认阅读态，正文用 textContent 写进去，换行和空格都留着。 */
+  function buildDetail(item) {
+    const li = doc.createElement("li"); li.className = "notes-item is-detail"; li.dataset.id = item.id;
+    li.dataset.pinned = String(!!item.pinned);
+    const pending = controller.state.pending.has(item.id), locked = isLocked(item);
+    const edit = controller.state.edits[item.id];
+    const editing = editingId === item.id;
+
+    const head = doc.createElement("div"); head.className = "notes-detail-head";
+    const back = button("‹ 返回记录", () => closeDetail(), "notes-detail-back");
+    back.setAttribute("aria-label", "返回记录列表");
+    const meta = doc.createElement("div"); meta.className = "notes-detail-meta";
+    if (item.group) meta.append(chip(item.group));
+    const time = doc.createElement("span"); time.className = "notes-time"; time.textContent = timeLabel(item);
+    meta.append(time);
+    if (item.pinned) meta.append(chip("置顶", "notes-chip-pin"));
+    head.append(back, meta);
+    if (!editing) {
+      const editBtn = button("编辑", () => { editingId = item.id; controller.notify(); }, "notes-btn notes-edit-trigger");
+      head.append(editBtn);
+    }
+    li.append(head);
+
+    const send = button(pending ? "处理中…" : "发送", () => {
+      applySession(getSessionId());
+      void controller.action(item, "send");
+    }, "notes-btn notes-btn-primary", pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item));
+    send.title = "发到当前对话；伙伴忙时等本轮结束后送入";
+    const copy = button("复制", () => void controller.copy(item), "notes-btn");
+    const doneBtn = button(item.done ? "拿回来" : "收好", () => void controller.action(item, "done"), "notes-btn notes-btn-done",
+      pending || item.delivery.state === "sending");
+    const note = doc.createElement("p"); note.className = "notes-item-note";
+
+    if (editing) {
+      const text = doc.createElement("textarea"); text.className = "notes-edit-text"; text.rows = 6;
+      text.value = edit?.text ?? item.text; text.spellcheck = false;
+      text.setAttribute("aria-label", "笔记正文"); text.maxLength = QUICK_NOTES_TEXT_MAX;
+      const group = doc.createElement("input"); group.className = "notes-edit-group";
+      group.value = edit?.group ?? item.group;
+      group.setAttribute("aria-label", "笔记分组"); group.placeholder = "分组（可不填）"; group.maxLength = QUICK_NOTES_GROUP_MAX;
+      text.disabled = pending || locked; group.disabled = pending || locked;
+      const saveEdit = button("保存修改", () => void saveEditDraft(item), "notes-btn notes-btn-primary", pending || locked || !controller.dirty(item));
+      const discard = button("取消编辑", () => discardEdit(item), "notes-btn", pending);
+      const editRow = doc.createElement("div"); editRow.className = "notes-edit-actions";
+      editRow.append(saveEdit, discard);
+      li.append(text, group, editRow);
+      function refreshHint() {
+        note.textContent = controller.dirty(item)
+          ? "有修改待保存，复制会带上修改后的原文。"
+          : "改完点「保存修改」；不想要了就「取消编辑」。";
+      }
+      function changed() {
+        controller.editDraft(item, { text: text.value, group: group.value });
+        saveEdit.disabled = pending || locked || !controller.dirty(item);
+        discard.disabled = pending;
+        send.disabled = pending || locked || item.done || item.delivery.state === "sent" || controller.dirty(item);
+        refreshHint();
+      }
+      text.addEventListener("input", changed); group.addEventListener("input", changed);
+      refreshHint();
+    } else {
+      const body = doc.createElement("div"); body.className = "notes-body";
+      body.textContent = item.text;
+      li.append(body);
+      note.textContent = locked ? "发送结果未确认，请先检查对话；可以复制或手动收好。"
+        : controller.dirty(item) ? "有修改待保存，复制会带上修改后的原文。"
+        : item.delivery.state === "sent" ? "宿主已接收这条消息。"
+        : item.done ? "已经收好了。" : "发到当前对话，接收后自动收好；伙伴忙时会排队。";
+    }
+
+    const actions = doc.createElement("div"); actions.className = "notes-detail-actions";
+    actions.append(send, copy, doneBtn);
+    const secondary = doc.createElement("div"); secondary.className = "notes-secondary-actions";
+    secondary.append(button(item.pinned ? "取消置顶" : "置顶", () => void controller.action(item, "pin"), "notes-link", pending));
+    li.append(actions, secondary, note);
+    return li;
+  }
+
+  function openDetail(id) {
+    const item = controller.state.items.find((row) => row.id === id);
+    // 恢复出来的草稿还挂在这条上，就直接回到编辑态。
+    editingId = item && controller.state.edits[id] ? id : "";
+    if (controller.state.expandedId !== id) controller.setExpanded(id);
+    else controller.notify();
+  }
+  function closeDetail() {
+    editingId = "";
+    if (controller.state.expandedId) controller.setExpanded(controller.state.expandedId);
+    else controller.notify();
+  }
+  async function saveEditDraft(item) {
+    const sessionId = controller.state.sessionId;
+    const result = await controller.action(item, "update");
+    // 只收起本次保存的编辑器；旧会话的回包不能关闭后来打开的稿子。
+    if (result?.ok === true && controller.state.sessionId === sessionId
+      && editingId === item.id && !controller.state.edits[item.id]) {
+      editingId = ""; controller.notify();
+    }
+  }
+  function discardEdit(item) {
+    editingId = "";
+    controller.discardEdit(item.id);
+  }
+  function applySession(id) {
+    // 换会话就清掉局部编辑态：上一段对话的编辑不该跟着走。
+    const next = typeof id === "string" ? id.trim() : "";
+    if (next !== controller.state.sessionId) editingId = "";
+    controller.setSession(next);
+  }
+
   function render() {
     const s = controller.state;
     // 草稿状态只在用户操作或会话切换时变化，保存后立即清空可见输入框。
@@ -232,14 +336,16 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     const expanded = rows.find((item) => item.id === s.expandedId);
     view.querySelector('.notes-editor').hidden = !!expanded;
     view.querySelector('.notes-toolbar').hidden = !!expanded;
-    // 新草稿输入和复制提示不重建列表，保护正在编辑的光标与滚动位置。
-    const key = JSON.stringify([s.items, s.tab, s.query, s.expandedId, [...s.pending], s.sessionId, Object.keys(s.edits)]);
+    // 只有列表内容真的变了才重建：编辑草稿不进 key，
+    // 否则每敲一个字都会换掉 textarea，光标和滚动就没了。
+    const key = JSON.stringify([s.items, s.tab, s.query, s.expandedId, [...s.pending].sort(), s.sessionId, editingId]);
     if (key !== lastListKey) {
       const scrollTop = list.scrollTop;
-      list.replaceChildren(...(expanded ? [expanded] : rows).map(buildItem)); list.scrollTop = scrollTop;
+      list.replaceChildren(...(expanded ? [buildDetail(expanded)] : rows.map(buildListItem)));
+      list.scrollTop = scrollTop;
       lastListKey = key;
     }
-    const empty = byId("empty"); empty.hidden = controller.visibleItems().length > 0;
+    const empty = byId("empty"); empty.hidden = rows.length > 0;
     empty.textContent = s.loading ? "正在读取…" : s.query ? "没找到，换个词试试。" : s.tab === "done" ? "处理好的想法会收在这里。" : "还没记东西，先把刚才的想法留下。";
     if (visible) onLayout?.();
   }
@@ -253,8 +359,16 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
   byId("search").addEventListener("input", (event) => controller.setQuery(event.target.value));
   byId("refresh").addEventListener("click", () => void controller.load());
   return { controller,
-    show() { visible = true; view.hidden = false; controller.setSession(getSessionId()); render(); void controller.load(); input.focus(); },
+    show() {
+      visible = true; view.hidden = false;
+      applySession(getSessionId());
+      const expandedId = controller.state.expandedId;
+      editingId = expandedId && controller.state.edits[expandedId] ? expandedId : "";
+      render();
+      if (!expandedId) input.focus();
+      void controller.load();
+    },
     hide() { visible = false; view.hidden = true; },
-    setSession(id) { controller.setSession(id); },
+    setSession(id) { applySession(id); },
   };
 }
