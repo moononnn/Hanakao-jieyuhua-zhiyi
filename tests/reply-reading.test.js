@@ -124,6 +124,169 @@ test('中性化的短进度与自足回复调用真实 prepareReading 时不碰�
   assert.equal(sdk.calls(), 0);
 });
 
+test('诊断只记事件名：短内容、SKIP、坏输出、压缩不足、重复、成功各自分开', async () => {
+  const longSource = {
+    question: '检查是否值得整理',
+    earlier: ['前段记录了检查进度和已经确认的材料。'.repeat(15)],
+    final: '最后一段已经完整、自足地交代答案和必要条件。'.repeat(15),
+    mode: 'result',
+  };
+
+  const shortEvents = [];
+  const shortSdk = createForbiddenReadingSdk();
+  const shortSource = { question: '提问'.repeat(500), earlier: [], final: `${'甲'.repeat(299)} \n\t`, mode: 'single' };
+  assert.equal(await prepareReading(shortSdk, shortSource, readingModel, 'under-300', event => shortEvents.push(event)), null);
+  assert.deepEqual(shortEvents, ['under_300'], '不到 300 字要能认出来');
+  assert.equal(shortSdk.calls(), 0, '短内容不碰模型与存储');
+
+  const skipEvents = [];
+  const skipSdk = createReadingSdk('SKIP');
+  assert.equal(await prepareReading(skipSdk, longSource, readingModel, 'skip', event => skipEvents.push(event)), null);
+  assert.deepEqual(skipEvents, ['model_start', 'model_done', 'model_skip'], '模型说跳过不是坏输出');
+  assert.equal(skipSdk.calls.stream.length, 1);
+
+  const badEvents = [];
+  const badSdk = createReadingSdk('<details>不该出现的块</details>正文');
+  assert.equal(await prepareReading(badSdk, longSource, readingModel, 'bad', event => badEvents.push(event)), null);
+  assert.deepEqual(badEvents, ['model_start', 'model_done', 'output_invalid'], '坏输出要与模型跳过分开');
+
+  const fatEvents = [];
+  const fatSdk = createReadingSdk('整'.repeat(701));
+  assert.equal(await prepareReading(fatSdk, { question: '整理散落信息', earlier: [], final: '原'.repeat(1000), mode: 'single' },
+    readingModel, 'fat', event => fatEvents.push(event)), null);
+  assert.deepEqual(fatEvents, ['model_start', 'model_done', 'insufficient_reduction'], '压缩不足要能认出来');
+
+  const duplicateFinal = '最后回复明确写出的答案和必要条件。'.repeat(5);
+  const dupEvents = [];
+  const dupSdk = createReadingSdk(duplicateFinal.split('').join(' '));
+  assert.equal(await prepareReading(dupSdk, {
+    question: '检查重复', earlier: ['前段独立记录的验证背景和过程。'.repeat(30)], final: duplicateFinal, mode: 'result',
+  }, readingModel, 'dup', event => dupEvents.push(event)), null);
+  assert.deepEqual(dupEvents, ['model_start', 'model_done', 'duplicate'], '与原文重复要能认出来');
+
+  const okEvents = [];
+  const okSdk = createReadingSdk('连接器 A 2.4.1 在 Windows 11 本机通过：先小范围观察一天。');
+  const okSource = {
+    question: '汇总验证结果',
+    earlier: ['已经确认，本轮验证的是连接器 A 的 2.4.1 版本，运行环境为 Windows 11。'.repeat(10)],
+    final: '建议先在一个小范围内启用，观察一天后再决定是否扩大。'.repeat(10),
+    mode: 'result',
+  };
+  assert.ok(await prepareReading(okSdk, okSource, readingModel, 'ok', event => okEvents.push(event)));
+  assert.deepEqual(okEvents, ['model_start', 'model_done', 'prepared'], '整理成功要能认出来');
+});
+
+test('轮次层面的诊断分得清：没有这一轮、已收尾、缺消息、开关关掉、新一轮盖掉、成功附加', async () => {
+  const events = [];
+  const flow = createInlineReading({}, {
+    readConfig: async () => ({ enabled: true }),
+    readModel: () => readingModel,
+    reportError: assert.fail,
+    reportDecision: event => events.push(event),
+    prepare: async () => ({ mode: 'single', text: '整理好了。' }),
+  });
+
+  await flow.finish('sess-none', a('说完了。'));
+  assert.ok(events.includes('no_turn'), '没有这一轮要能认出来');
+
+  flow.start('sess-done', '查一下');
+  await flow.finish('sess-done', a('说完了。'));
+  await flow.finish('sess-done', a('又说完了。'));
+  assert.ok(events.includes('already_ended'), '同一轮只收一次');
+
+  flow.start('sess-missing', '查一下');
+  await flow.finish('sess-missing', null);
+  assert.ok(events.includes('missing_message'), '缺消息要能认出来');
+
+  flow.start('sess-over', '查一下');
+  flow.start('sess-over', '换个问题');
+  assert.ok(events.includes('superseded'), '新一轮盖掉还在等的那轮要能认出来');
+
+  const disabled = [];
+  const disabledFlow = createInlineReading({}, {
+    readConfig: async () => ({ enabled: false }),
+    readModel: () => readingModel,
+    reportError: assert.fail,
+    reportDecision: event => disabled.push(event),
+  });
+  disabledFlow.start('sess-off', '查一下');
+  assert.equal(await disabledFlow.finish('sess-off', a('原始正文。')), undefined);
+  assert.ok(disabled.includes('disabled'), '开关关掉要能认出来');
+
+  const applied = [];
+  const appliedFlow = createInlineReading({}, {
+    readConfig: async () => ({ enabled: true }),
+    readModel: () => readingModel,
+    reportError: assert.fail,
+    reportDecision: event => applied.push(event),
+    prepare: async () => ({ mode: 'single', text: '整理好了。' }),
+  });
+  appliedFlow.start('sess-ok', '查一下');
+  const reply = await appliedFlow.finish('sess-ok', a('原始正文。'));
+  assert.ok(reply, '能整理时要把整理块附上');
+  assert.match(reply.content, /整理好了/);
+  assert.ok(applied.includes('applied'), '附加成功要能认出来');
+});
+
+test('取材失败要分清：空正文与超长是两回事，诊断不能指错方向', () => {
+  const emptyEvents = [];
+  assert.equal(sourceFromAgentEnd(end(u('问题'), { role: 'assistant', content: '', stopReason: 'stop' }), emptyEvents.push.bind(emptyEvents)), null);
+  assert.ok(emptyEvents.includes('source_rejected_empty'), '空正文单独记');
+  assert.ok(emptyEvents.includes('source_rejected'));
+  assert.equal(emptyEvents.includes('source_overflow'), false, '空正文不是超长');
+
+  const overflowEvents = [];
+  const huge = { role: 'assistant', content: '甲'.repeat(12001), stopReason: 'stop' };
+  assert.equal(sourceFromAgentEnd(end(u('问题'), huge), overflowEvents.push.bind(overflowEvents)), null);
+  assert.ok(overflowEvents.includes('source_overflow'), '超长记溢出');
+  assert.ok(overflowEvents.includes('source_rejected'));
+  assert.equal(overflowEvents.includes('source_rejected_empty'), false, '超长不是空正文');
+});
+
+test('子代理会话一步都不走：不读配置、不跑模型、连诊断都不记', async () => {
+  const sessions = [
+    { sessionId: 'sess-win', path: 'C:\\Users\\me\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl' },
+    { sessionId: 'sess-posix', sessionPath: '/home/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl' },
+    { sessionId: 'sess-kind', kind: 'subagent_child' },
+    { sessionId: 'sess-prov', provenance: { createdBy: 'subagent' } },
+    // 直接给一串路径（会话标识是字符串）也要认得出来。
+    'C:\\Users\\me\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl',
+    '/home/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl',
+  ];
+  for (const session of sessions) {
+    let configCalls = 0;
+    let modelCalls = 0;
+    const events = [];
+    const flow = createInlineReading({}, {
+      readConfig: async () => { configCalls++; return { enabled: true }; },
+      readModel: () => { modelCalls++; return readingModel; },
+      reportError: assert.fail,
+      reportDecision: event => events.push(event),
+      prepare: async () => { modelCalls++; return { mode: 'single', text: '不该出现。' }; },
+    });
+    flow.start(session, '这个问题');
+    const reply = await flow.finish(session, a('很长的一段回复。'.repeat(200)));
+    assert.equal(reply, undefined, '子代理会话不附整理块');
+    assert.equal(configCalls, 0, '子代理不读配置');
+    assert.equal(modelCalls, 0, '子代理不跑模型');
+    assert.deepEqual(events, [], '子代理连诊断都不记');
+  }
+});
+
+test('诊断回调自己炸了也不影响正常产出', async () => {
+  const flow = createInlineReading({}, {
+    readConfig: async () => ({ enabled: true }),
+    readModel: () => readingModel,
+    reportError: assert.fail,
+    reportDecision: () => { throw new Error('诊断挂了'); },
+    prepare: async () => ({ mode: 'single', text: '整理好了。' }),
+  });
+  flow.start('sess-boom', '查一下');
+  const reply = await flow.finish('sess-boom', a('原始正文。'));
+  assert.ok(reply, '诊断坏了不能连正事一起坏');
+  assert.match(reply.content, /整理好了/);
+});
+
 test('300 字底线剔除空白且不把提问算入助手正文', async () => {
   const tooShort = createForbiddenReadingSdk();
   const source299 = { question: '提问'.repeat(500), earlier: [], final: `${'甲'.repeat(299)} \n\t`, mode: 'single' };

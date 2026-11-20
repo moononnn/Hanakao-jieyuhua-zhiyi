@@ -29,6 +29,7 @@ import {
   resolveSummaryModelRef,
 } from "./lib/length-summary.js";
 import { createInlineReading } from "./lib/reading-card.js";
+import { createReadingDiagnostics } from "./lib/reading-diagnostics.js";
 import { normalizeReadingConfig, READING_CONFIG_KEY } from "./lib/reply-reading.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
@@ -721,9 +722,8 @@ export default defineApp(async (sdk) => {
   // 话单/循环/续接记账——全是给人看、等人回应的；落进伙伴派出去干活的那段会话里只剩噪音：
   // 模型要逐字读完，用户拿不到它，Ask 预检还要白跑一次模型调用。
   // 2026-10-26 实测：子代理的收尾回复被贴上「🌸 知意速览」，会话文件里能看到那张卡。
-  const isSubagentHook = (invocation) => isSubagentSessionPath(
-    String(invocation?.session?.path || invocation?.session?.sessionPath || ""),
-  );
+  // 复用现成的识别口径：路径、kind、provenance 三条都认，不另造规则。
+  const isSubagentHook = (invocation) => isSubagentSessionTarget(invocation?.session);
   // 载入时把钩子要用的配置一次读进快照，之后钩子主路径就不再排 RPC 队了。
   for (const key of ["askConfig", "askJudgeModel", READING_CONFIG_KEY, "summaryModel", "styleRefineRequested"]) {
     try {
@@ -871,10 +871,16 @@ export default defineApp(async (sdk) => {
     }
     return summaryConfigCache;
   }
+  // 自动整理的诊断：只后台，不进前端，只记整数计数，不含聊天正文。
+  // 每个事件单独发一条日志会把宿主的 RPC 仓占满，所以攒一批再写一条；
+  // 没有事件就不排定时器，也就什么都不会写。
+  const readingDiagnostics = createReadingDiagnostics((fields) => safeLog.info("知意整理诊断", fields));
+  safeLog.info("知意整理诊断", { schema: 1 });
   const inlineReading = createInlineReading(sdk, {
     readConfig: readSummaryConfig,
     readModel: () => resolveSummaryModelRef(peekConfig("summaryModel", null), peekConfig("askJudgeModel", null)),
     reportError: code => { if (logThrottled(`reply-reading:${code}`, 60000)) safeLog.warn(`知意整理版跳过：${code}`); },
+    reportDecision: event => readingDiagnostics.record(event),
   });
   await sdk.hooks.onDecision("messages/post-assistant", async (invocation) => {
     // 子代理会话整条跳过：不贴速览卡、不跑速览模型、不记账。

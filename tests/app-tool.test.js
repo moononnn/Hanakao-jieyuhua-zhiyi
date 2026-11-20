@@ -16,6 +16,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
   // 每次造一份新目录，避免用例之间串味。
   const dataDir = mkdtempSync(path.join(tmpdir(), "zhiyi-app-test-"));
   const storage = new Map(Object.entries(storageSeed));
+  const storageCalls = [];
   const modelCalls = [];
   const questions = [];
   const stagedFiles = [];
@@ -150,6 +151,8 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     storage: {
       global: {
         get: (key, fallback = undefined) => {
+          // storageCalls 用来数“这一轮额外读了几次存储”：子代理会话一步都不该多读。
+          storageCalls.push({ op: 'get', key });
           // storageError 用来模拟宿主 RPC 满仓（APP_RPC_BUSY）。
           // 传函数时按调用时刻取值：apply 阶段本身也要读 storage，
           // 所以得能「装完再开始报错」，否则测不到工具那一层。
@@ -177,6 +180,7 @@ function createContext({ answer, askError, capabilityError, modelText = '{"mustA
     context,
     questions,
     modelCalls,
+    storageCalls,
     stagedFiles,
     capabilityCalls,
     historyCalls,
@@ -2010,6 +2014,65 @@ test("自动整理真实钩子接线：短进度零模型、SKIP和重复不附�
       assert.match(result.message.content[0].text, /知意整理/);
     } else assert.equal(result, undefined, "无实际阅读收益时不追加整理版");
   }
+});
+
+test("同一套配置下：用户窗口会整理并调用模型，子代理三种标记都零调用零诊断", async (t) => {
+  // 诊断默认攒 30 秒才写一条；这里只 mock setTimeout，用 tick 跨过去，不真等。
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const final = "30项测试通过；当前安装版没有修改，F1尚未真机验证。";
+  const earlier = "正在检查隔离开发版的截图与手拖流程，结果晚到时不得覆盖已固定的选区。".repeat(18);
+  const concise = "30项测试通过；F1尚未真机验证，当前安装版未改。";
+  const storageSeed = {
+    autoReplyReading: { enabled: true }, askConfig: { enabled: false },
+    summaryModel: { provider: "test-provider", model: "test-model" },
+  };
+  const diagLogs = mock => mock.logs.info.filter(row => row.message === "知意整理诊断" && row.detail?.counts);
+  // 一、用户自己的窗口：同一套配置下确实会调用模型、确实会附上整理块。
+  // 这一条是“子代理那几条不是因为开关关了才跳过”的凭据。
+  const chat = createContext({ modelText: concise, storageSeed });
+  await app.apply(chat.context);
+  const chatSession = { sessionId: "sess_chat", sessionPath: CHAT_SESSION_PATH };
+  await chat.hook("agent/before-start")({ session: chatSession, prompt: "核对这轮结果。", systemPrompt: "" });
+  await chat.hook("messages/post-assistant")({
+    session: chatSession,
+    message: { role: "assistant", phase: "commentary", stopReason: "toolUse", content: [{ type: "text", text: earlier }] },
+  });
+  const attached = await chat.hook("messages/post-assistant")({
+    session: chatSession,
+    message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: final }] },
+  });
+  assert.equal(chat.modelCalls.length, 1, "用户窗口确实调用了模型");
+  assert.match(attached.message.content[0].text, /知意整理/);
+  t.mock.timers.tick(30_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(diagLogs(chat).length, 1, "用户窗口这一轮留下一条后台诊断汇总");
+  assert.ok(diagLogs(chat)[0].detail.counts.applied >= 1);
+
+  // 二、子代理：同一套配置、同样长的正文，三种标记都早退——零模型、零存储、零诊断。
+  // 首尾都要走：只调 post 会被“没有这一轮”挡掉，遮住真正的早退。
+  const sub = createContext({ modelText: concise, storageSeed });
+  await app.apply(sub.context);
+  const beforeStart = sub.hook("agent/before-start");
+  const post = sub.hook("messages/post-assistant");
+  for (const session of [
+    { sessionId: "sess_sub_path", sessionPath: SUBAGENT_SESSION_PATH },
+    { sessionId: "sess_sub_kind", kind: "subagent_child" },
+    { sessionId: "sess_sub_prov", provenance: { createdBy: "subagent" } },
+  ]) {
+    const storageBefore = sub.storageCalls.length;
+    const started = await beforeStart({ session, prompt: "核对这轮结果。", systemPrompt: "" });
+    assert.equal(started, undefined, "子代理会话在钩子最前面就整条跳过");
+    const result = await post({
+      session,
+      message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: final }] },
+    });
+    assert.equal(result, undefined, "子代理会话不贴整理块");
+    assert.equal(sub.modelCalls.length, 0, "子代理不跑模型");
+    assert.equal(sub.storageCalls.length, storageBefore, "子代理不额外读存储");
+  }
+  t.mock.timers.tick(30_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(diagLogs(sub).length, 0, "子代理连诊断都不该留下");
 });
 
 test("子代理会话里调 Ask 工具也只回「用户不在场」", async () => {
