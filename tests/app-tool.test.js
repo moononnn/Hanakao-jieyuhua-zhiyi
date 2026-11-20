@@ -2026,7 +2026,7 @@ test("同一套配置下：用户窗口会整理并调用模型，子代理三�
     autoReplyReading: { enabled: true }, askConfig: { enabled: false },
     summaryModel: { provider: "test-provider", model: "test-model" },
   };
-  const diagLogs = mock => mock.logs.info.filter(row => row.message === "知意整理诊断" && row.detail?.counts);
+  const diagLogs = mock => mock.logs.info.filter(row => row.message.startsWith("知意整理诊断 ") && row.detail?.counts);
   // 一、用户自己的窗口：同一套配置下确实会调用模型、确实会附上整理块。
   // 这一条是“子代理那几条不是因为开关关了才跳过”的凭据。
   const chat = createContext({ modelText: concise, storageSeed });
@@ -2047,6 +2047,8 @@ test("同一套配置下：用户窗口会整理并调用模型，子代理三�
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(diagLogs(chat).length, 1, "用户窗口这一轮留下一条后台诊断汇总");
   assert.ok(diagLogs(chat)[0].detail.counts.applied >= 1);
+  assert.deepEqual(JSON.parse(diagLogs(chat)[0].message.slice("知意整理诊断 ".length)), diagLogs(chat)[0].detail,
+    "即使宿主丢弃日志第二参数，文本行仍须保留完整整数计数");
 
   // 二、子代理：同一套配置、同样长的正文，三种标记都早退——零模型、零存储、零诊断。
   // 首尾都要走：只调 post 会被“没有这一轮”挡掉，遮住真正的早退。

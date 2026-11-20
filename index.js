@@ -874,8 +874,9 @@ export default defineApp(async (sdk) => {
   // 自动整理的诊断：只后台，不进前端，只记整数计数，不含聊天正文。
   // 每个事件单独发一条日志会把宿主的 RPC 仓占满，所以攒一批再写一条；
   // 没有事件就不排定时器，也就什么都不会写。
-  const readingDiagnostics = createReadingDiagnostics((fields) => safeLog.info("知意整理诊断", fields));
-  safeLog.info("知意整理诊断", { schema: 1 });
+  // 宿主文本日志不保证保存第二参数，计数同时序列化进日志行。
+  const readingDiagnostics = createReadingDiagnostics((fields) => safeLog.info(`知意整理诊断 ${JSON.stringify(fields)}`, fields));
+  safeLog.info('知意整理诊断 {"schema":1}');
   const inlineReading = createInlineReading(sdk, {
     readConfig: readSummaryConfig,
     readModel: () => resolveSummaryModelRef(peekConfig("summaryModel", null), peekConfig("askJudgeModel", null)),
