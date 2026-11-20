@@ -1979,6 +1979,39 @@ test("子代理不改正文；用户窗口的 post-assistant 也不再生成内�
   assert.equal(mock.modelCalls.length, 0, "整理版由轮末事件生成，不能在文字钩子里重复跑");
 });
 
+test("自动整理真实钩子接线：短进度零模型、SKIP和重复不附、有效浓缩才附", async () => {
+  const final = "30项测试通过；当前安装版没有修改，F1尚未真机验证。";
+  const earlier = "正在检查隔离开发版的截图与手拖流程，结果晚到时不得覆盖已固定的选区。".repeat(18);
+  const concise = "30项测试通过；F1尚未真机验证，当前安装版未改。";
+  const longFinal = "确认截图流程的行为与预期一致，但还需要完成真机手动拖动和迟到结果保护的验证。".repeat(15);
+  for (const scenario of [
+    { earlier: "先让截图和手拖正常可用，检测结果随后补进来，不得覆盖现有选区。", final: "正在接入隔离开发版，重点验证检测未返回时能手拖、迟到结果不改固定选区。当前安装版没动，无需重启。", modelText: concise, calls: 0 },
+    { earlier, final, modelText: "SKIP", calls: 1 },
+    { earlier, final, modelText: final, calls: 1 },
+    { earlier: "", final: longFinal, modelText: longFinal.slice(0, -10), calls: 1 },
+    { earlier, final, modelText: concise, calls: 1, append: true },
+  ]) {
+    const mock = createContext({ modelText: scenario.modelText, storageSeed: {
+      autoReplyReading: { enabled: true }, askConfig: { enabled: false },
+      summaryModel: { provider: "test-provider", model: "test-model" },
+    } });
+    await app.apply(mock.context);
+    const session = { sessionId: "sess_chat", sessionPath: CHAT_SESSION_PATH };
+    await mock.hook("agent/before-start")({ session, prompt: "核对这轮结果。", systemPrompt: "" });
+    const post = mock.hook("messages/post-assistant");
+    if (scenario.earlier) {
+      await post({ session, message: { role: "assistant", phase: "commentary", stopReason: "toolUse", content: [{ type: "text", text: scenario.earlier }] } });
+    }
+    const result = await post({ session, message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: scenario.final }] } });
+    assert.equal(mock.modelCalls.length, scenario.calls);
+    if (scenario.append) {
+      assert.ok(result.message.content[0].text.startsWith(scenario.final), "原正文必须原样保留");
+      assert.ok(result.message.content[0].text.includes(concise));
+      assert.match(result.message.content[0].text, /知意整理/);
+    } else assert.equal(result, undefined, "无实际阅读收益时不追加整理版");
+  }
+});
+
 test("子代理会话里调 Ask 工具也只回「用户不在场」", async () => {
   const mock = createContext();
   const tool = await registeredTool(mock);
