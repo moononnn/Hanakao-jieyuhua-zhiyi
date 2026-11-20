@@ -1,5 +1,15 @@
 # 测试
 
+## 2026-11-20 发布 0.4.0（随手记、自动整理回复）
+
+- 发布材料：`manifest.json` 0.4.0、`description` 补上随手记与自动整理回复；README 新增「随手记」一节，把「太长不看」改写为「自动整理回复」，并修正速览归档、整理数据去向等过时描述；`CHANGELOG.md` 新增 0.4.0 条目；发行说明 `release-notes-v0.4.0.md`。
+- 发布边界：工作树有六个长期未提交的实验文件（`PENDING_CHANGES.md`、`PUBLISHING.md`、`recipes/zhiyi-ask/SKILL.md`、`recipes/zhiyi-ask/assets/ask.card.html`、`skills/zhiyi-ask-handoff/SKILL.md`、`tests/card-template.test.js`），本轮未获合并或改写授权。按「优先干净发布副本按已批准源码组包」，发布前用 `git stash` 暂存这六个文件（`hold-6-experiment-files-for-release-0.4.0`），发布完成后恢复并核对 SHA-256 一致；另有一份内容副本在本机工作台外的备份目录。包内 `recipes/` 与 `skills/` 与 tag v0.3.3 对象级相同。
+- 正式入口 preflight 通过，只有既有的「README 没提到的 capability」提醒，无阻断。
+- 正式入口 verify：`node --test` 876 项，874 通过 / 0 失败 / 2 既有跳过；`node tests/python-tests.mjs` 126 项，125 通过 / 1 既有跳过。
+- 本地官方 pack：126 个文件，解压 4,707,920 字节；ZIP 3,026,893 字节，SHA-256 `6397506491c8c5538f6f4baa9315c1bf0ab9e44482ab7c031fd1d2fa94abc53c`；entry 202,345 字节，SHA-256 `ebcdb20c3c6f51a3825fa287c087e27696bf8d0ded7d01a5f5a0e05276699026`。
+- release-tests：在最终包运行文件上跑一遍，874 项全过。
+- 未验证：真实宿主里随手记的实际发送与系统剪贴板（Ctrl+C 由使用者按下）、真实模型对「值不值得整理」的语义判断、安装与升级流程；截图沿用仓库旧图，本版新界面未出实机截图。
+
 ## 2026-11-20 自动整理收益判定收紧
 
 - 授权：作者针对短进度被再整理的截图，确认默认跳过、末段已完整则不复述、重要信息分散且明显省阅读时才展示。实现限定 `lib/reply-reading.js`，开发号 `0.3.3-dev.9`；不修改开关、原文、配方或随手记。
