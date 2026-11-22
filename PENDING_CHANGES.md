@@ -1,13 +1,13 @@
 # 未发布改动
 
-发布完成后清空已发布条目，格式头保留。上一次发布：0.3.3（2026-11-07），内容见 `CHANGELOG.md`。
+发布完成后清空已发布条目，格式头保留。上一次发布：0.4.1（2026-11-22），内容见 `CHANGELOG.md`。
 
 ## 待发
 
 ## 记着但不在待发里的
 
 - 输入框图片放大只下了 UI：`index.js` 的 `/input-zoom` 三条路由、`lib/input-zoom.js`、`assets/install-input-zoom.ps1`、`assets/input-zoom-script.js` 都还在包里，但已无调用方。安装那条会以 `-ExecutionPolicy Bypass` 起 `powershell.exe` 往 Hana 的 renderer 目录写脚本，属没有用处的特权写入路径，下一版该删净。
-- 发布包从 0.3.3 起按 `package.trackedOnly` 只带真实 import 的 5 个 sdk 文件。以后宿主升级 SDK，要手工同步这 5 个，否则会悄悄落后于宿主版本。
+- 发布包里的 `sdk/` 只带真实 import 的 5 个文件（server-client / bus-requests / model-stream / sdk-error / rpc-error），与仓库跟踪范围一致；宿主升级 SDK 时要手工同步这 5 个，否则会悄悄落后于宿主版本。整箱备份在本机工作台外的备份目录。
 - README 里的 8 张 `attachments/*.png` 与 `TESTING.md`、`PUBLISHING.md`、`旧版功能迁移清单.md` 链接指向的文件不在包内，装好后从包内读 README 会看到死链（0.3.2 起就这样）。
 - `python/test_*.py` 6 个仍在包内（0.1.46 起遗留）。想剥掉得先让发布小工坊的测试支架认识 `python/` 目录：现在副本测试只补 `tests/`、`scripts/`、`node_modules/`、`package*.json`，一排除 `python/` 下的测试，副本里就没有 python 用例，pytest 以「NO TESTS RAN」exit 5，整条 release-tests 断掉。
 - 降级链只用单元测试模拟过额度、限流、服务商不可用三类错误；真实限额下的端到端降级没跑过。

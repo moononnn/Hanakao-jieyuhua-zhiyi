@@ -245,12 +245,12 @@ test('取材失败要分清：空正文与超长是两回事，诊断不能指�
 
 test('子代理会话一步都不走：不读配置、不跑模型、连诊断都不记', async () => {
   const sessions = [
-    { sessionId: 'sess-win', path: 'C:\\Users\\me\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl' },
+    { sessionId: 'sess-win', path: 'D:\\hana-home\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl' },
     { sessionId: 'sess-posix', sessionPath: '/home/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl' },
     { sessionId: 'sess-kind', kind: 'subagent_child' },
     { sessionId: 'sess-prov', provenance: { createdBy: 'subagent' } },
     // 直接给一串路径（会话标识是字符串）也要认得出来。
-    'C:\\Users\\me\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl',
+    'D:\\hana-home\\.hanako\\agents\\hanako\\subagent-sessions\\direct\\case.jsonl',
     '/home/me/.hanako/agents/hanako/subagent-sessions/direct/case.jsonl',
   ];
   for (const session of sessions) {

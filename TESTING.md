@@ -1,5 +1,16 @@
 # 测试
 
+## 2026-11-22 发布 0.4.1（整理版先给结论、子代理不再附整理）
+
+- 发布材料：`manifest.json` 0.4.1；`CHANGELOG.md` 新增 0.4.1 条目；`PENDING_CHANGES.md` 清空待发并把头部更新为上次发布 0.4.1；发行说明 `release-notes-v0.4.1.md`。另修一处会被隐私红线拦下的测试夹具：`tests/reply-reading.test.js` 里两条子代理路径样例从 `C:\Users\me\...` 改成 `D:\hana-home\...`，断言语义不变。
+- 发布边界：工作树有七项长期未提交的本地改动（`PENDING_CHANGES.md`、`PUBLISHING.md`、`recipes/zhiyi-ask/SKILL.md`、`recipes/zhiyi-ask/assets/ask.card.html`、`skills/zhiyi-ask-handoff/SKILL.md`、`tests/card-template.test.js`、`ui/assets/input-icon-pink.png`），本轮未获合并或改写授权。按 0.4.0 的做法先用 `git stash` 暂存（`hold-7-local-files-for-release-0.4.1`），发布完成后按发布前记录的 SHA-256 逐一恢复并核对；包内配方三文件与 HEAD、v0.4.0 tag 逐字节一致，实验改动没进包。
+- 正式入口 preflight 通过，只有既有的「README 没提到的 capability」提醒，无阻断。
+- 正式入口 verify：`node --test` 892 项，890 通过 / 0 失败 / 2 既有跳过；`node tests/python-tests.mjs` 126 项，125 通过 / 1 既有跳过。
+- 本地官方 pack：127 个文件，ZIP 3,032,454 字节，SHA-256 `c5e948f809c2321904629ed89990f0cb67323c18eb0896e5209778afc5f08a22`；entry 202,345 字节，SHA-256 `20848be6c8b4a880880e361c3ef5bd69dd0b0ccb7b46044de92072f30dc1f8af`。
+- release-tests：在最终包运行文件上跑一遍，890 项通过。
+- 独立审包：pass（independent）。实算双指纹与四口记录一致；自行解包 127 文件与 unpacked/stage/audit 清单 0 差异；配方三文件与 HEAD、v0.4.0 逐字节相同；私有名字、本机路径、非授权邮箱、密钥扫描 0 命中；读码判断新版式经引用包装后仍能被 `stripSummaryBlocks` 整块清除，诊断只写白名单整数，子代理识别不误伤主会话。非阻断项：`python/test_*.py` 6 个与 `/input-zoom` 特权残留随包（均为本版之前已登记）、README 对 `attachments/*.png` 的死链（0.3.2 起）、`ui/reply-reading.html` 为不可达孤儿页。
+- 未验证：真实模型是否每次都照新版式写（提示词约束非硬排版）；宿主里 `> - ` 列表的实际渲染观感；真实宿主中的安装与升级流程。
+
 ## 2026-11-22 整理版阅读层级
 
 - 作者看过真实密集整理样例后，确认粗体结论、空行短条、语义表情和重点加粗方案。开发号 `0.4.0-dev.2`；仅改 `buildReadingPrompt` 的生成表达段，第一段判定、300 字/70%/SKIP、诊断和子代理过滤不变。
