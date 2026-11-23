@@ -406,6 +406,11 @@ test('实际送模型的提示词改成粗体结论加短列表，判定段与�
   // 旧的宽泛格式要求与新的要求冲突，已经去掉。
   assert.doesNotMatch(prompt, /输出自然段或短列表/);
   assert.doesNotMatch(prompt, /不限制三行/);
+
+  // 表达质量小改：先答提问、未知原因不硬凑、执行者不漂移，判定段不受影响。
+  assert.match(prompt, /先答提问对应的判断或结果/);
+  assert.match(prompt, /未知或候选原因不能写成确定因果/);
+  assert.match(prompt, /原文由助手负责的排查不推给作者/);
 });
 
 test('真实 prepareReading 把粗体、表情和短条原样带过门禁，待验与窗口范围不被改写', async () => {
