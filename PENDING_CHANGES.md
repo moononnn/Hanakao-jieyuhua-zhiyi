@@ -4,6 +4,8 @@
 
 ## 待发
 
+- 自动整理独立模型隔离（0.4.1-dev.2）：新增 `lib/reading-model.js` 与正式业务工具 `jiegehua_zhiyi_reading_model`，自动整理有自己的模型键 `replyReadingModel`（本机已合法设为目录内既有的 DeepSeek Flash），设了不再被共用快速档盖过，没设沿用旧速览链；主对话模型、共用快速档、内容/备用模型、会话起名、Ask 判断与任何 Provider/凭据均未改，工具只读写自己那一个键，set/reset 需 `confirm:true` 且写后回读核对。真实模型请求 4 次：短源 0 次调用；一份已分条的验证方案未被跳过（生成的总览被 70% 压缩门槛拦下）；两篇长文生成总览成功（5.667 秒 / 2.164 秒）；边界样例 4.701 秒生成。候选提示词未达标（该跳过的仍被整理、摘要仍保留大量像素/透明度细节），**不入运行源码**，临时候选 helper 与临时评测探针连同注册块已删除；生产判定段、300 字/70% 门槛、10 秒超时与子代理隔离均未改；宿主内附加卡观感未实机验。本轮不是新旧提示词的 A/B 对照。版本 dev2 仅表示独立模型隔离完成。**仅本机开发存档，未发布**：未推送、未打 tag、未上市场，不改已发布 0.4.1；实验配方、配套交接 skill、卡片模板与图标改动原样保留。详见 TESTING.md。
+
 ## 记着但不在待发里的
 
 - 输入框图片放大只下了 UI：`index.js` 的 `/input-zoom` 三条路由、`lib/input-zoom.js`、`assets/install-input-zoom.ps1`、`assets/input-zoom-script.js` 都还在包里，但已无调用方。安装那条会以 `-ExecutionPolicy Bypass` 起 `powershell.exe` 往 Hana 的 renderer 目录写脚本，属没有用处的特权写入路径，下一版该删净。

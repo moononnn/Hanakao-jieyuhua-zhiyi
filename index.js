@@ -31,6 +31,7 @@ import {
 import { createInlineReading } from "./lib/reading-card.js";
 import { createReadingDiagnostics } from "./lib/reading-diagnostics.js";
 import { normalizeReadingConfig, READING_CONFIG_KEY } from "./lib/reply-reading.js";
+import { registerReadingModelTool } from "./lib/reading-model.js";
 import { chatModelOptions, hasDecisionCue, normalizeModelRef, reviewAskNeed, testAskModelConnection } from "./lib/ask-model.js";
 import { FAST_TASK_MODEL_KEY, invokeFastTextModel, resolveFastModel } from "./lib/fast-model.js";
 import { POLISH_LEVEL_OPTIONS, polishText, suggestPolishFixes } from "./lib/polish.js";
@@ -5347,6 +5348,10 @@ activeFusionServiceDispose = disposeFusionService;
       }
     },
   });
+
+  // 自动整理专用模型：只动知意自己的 replyReadingModel 键，不碰主对话/共用快速档。
+  // 配置变更只能由用户明确要求后经此正规工具发生；注册本身不读配置、不读模型目录。
+  await registerReadingModelTool(sdk);
 
   // GitHub 令牌：启动时解一次进内存，顺手把老位置（Hana 的 App 设置）里的值迁过来。
   // 十几处 GitHub 请求都靠同步读它，不能在请求路径上现解密。
