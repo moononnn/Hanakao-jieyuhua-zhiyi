@@ -825,6 +825,48 @@ test("fast-model test refuses a missing selected model without silently using sa
   assert.deepEqual(mock.stored("fastTaskModel"), saved);
 });
 
+test("fast-model test preserves spaced provider IDs and explains a host identifier rejection", async () => {
+  const saved = { provider: "fixture-provider", model: "saved-model" };
+  const selected = { provider: "fixture cloud", model: "sample/text-model" };
+  const mock = createContext({ storageSeed: { fastTaskModel: saved } });
+  const requests = [];
+  mock.context.models.list = async () => ({ models: [saved, selected] });
+  mock.context.models.stream = async (request) => {
+    requests.push(request);
+    throw Object.assign(new Error("provider must be 1-128 ASCII identifier characters."), { code: "APP_MODEL_INVALID_REQUEST" });
+  };
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/fast-model/test")({
+    req: { json: async () => ({ modelRef: selected }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(result.status, 502);
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.code, "APP_MODEL_INVALID_REQUEST");
+  assert.match(result.data.error, /App 模型接口.*通道标识/);
+  assert.match(result.data.error, /宿主修复/);
+  assert.equal(requests.length, 1, "do not retry a host validation error or switch models");
+  assert.equal(requests[0].provider, selected.provider, "preserve internal spaces, never guess a provider slug");
+  assert.equal(requests[0].model, selected.model, "preserve slashes in the model ID");
+  assert.deepEqual(mock.stored("fastTaskModel"), saved, "testing must not rewrite the configured model");
+});
+
+test("fast-model test does not mislabel other invalid-request errors as provider incompatibility", async () => {
+  const selected = { provider: "fixture-provider", model: "sample-model" };
+  const mock = createContext();
+  mock.context.models.list = async () => ({ models: [selected] });
+  mock.context.models.stream = async () => {
+    throw Object.assign(new Error("messages are invalid"), { code: "APP_MODEL_INVALID_REQUEST" });
+  };
+  await registeredTool(mock);
+  const result = await mock.route("POST", "/fast-model/test")({
+    req: { json: async () => ({ modelRef: selected }) },
+    json: (data, status) => ({ data, status }),
+  });
+  assert.equal(result.data.ok, false);
+  assert.doesNotMatch(result.data.error, /通道标识|宿主修复/);
+});
+
 test("the recommendation display setting only offers the ball and off", async () => {
   const mock = createContext();
   await registeredTool(mock);
@@ -1997,6 +2039,7 @@ test("自动整理真实钩子接线：短进度零模型、SKIP和重复不附�
   ]) {
     const mock = createContext({ modelText: scenario.modelText, storageSeed: {
       autoReplyReading: { enabled: true }, askConfig: { enabled: false },
+      fastTaskModel: { provider: "test-provider", model: "test-model" },
       summaryModel: { provider: "test-provider", model: "test-model" },
     } });
     await app.apply(mock.context);
@@ -2024,6 +2067,7 @@ test("同一套配置下：用户窗口会整理并调用模型，子代理三�
   const concise = "30项测试通过；F1尚未真机验证，当前安装版未改。";
   const storageSeed = {
     autoReplyReading: { enabled: true }, askConfig: { enabled: false },
+    fastTaskModel: { provider: "test-provider", model: "test-model" },
     summaryModel: { provider: "test-provider", model: "test-model" },
   };
   const diagLogs = mock => mock.logs.info.filter(row => row.message.startsWith("知意整理诊断 ") && row.detail?.counts);

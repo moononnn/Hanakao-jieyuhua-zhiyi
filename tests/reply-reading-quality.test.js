@@ -18,7 +18,7 @@ function createReadingSdk(text) {
   const calls = { storage: 0, list: 0, stream: [] };
   return {
     calls,
-    storage: { global: { get: async (_key, fallback = null) => { calls.storage++; return fallback; } } },
+    storage: { global: { get: async (key, fallback = null) => { calls.storage++; return key === 'fastTaskModel' ? readingModel : fallback; } } },
     models: {
       list: async () => { calls.list++; return [{ ...readingModel, name: '本地测试模型' }]; },
       stream: async request => {
