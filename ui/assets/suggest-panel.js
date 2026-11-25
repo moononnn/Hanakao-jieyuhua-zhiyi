@@ -1159,9 +1159,9 @@ function renderShutdownTile() {
   shutdownButton.dataset.armed = shutdownArmed ? '1' : '0';
   if (shutdownLabel) shutdownLabel.textContent = shutdownArmed ? '关机中' : '关机';
   if (shutdownHint) {
-    // 提示只写「现在这个状态在干什么」，不把保存警告塞进小字里——
-    // 那句话在按钮下面单独有一行（.shutdown-warning），比这里显眼。
-    shutdownHint.textContent = shutdownArmed ? '点一下取消，不关了' : 'Hana 干完才关';
+    // 平时小字只顶一句提前量（先存好别的），完整警告收在 .shutdown-warning，
+    // 点了关机（已开启）才在关机正下方展开，不占整行、不误导成说整页。
+    shutdownHint.textContent = shutdownArmed ? '点一下取消，不关了' : 'Hana 干完才关 · 先存好别的';
   }
 }
 

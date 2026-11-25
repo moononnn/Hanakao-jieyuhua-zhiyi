@@ -416,6 +416,7 @@ html[data-appearance="dark"] .send.done { color: #14201a; }
    所以这句话必须看起来像一句提醒，而不是一行说明。 */
 .shutdown-warning {
   grid-column: 1 / -1;
+  display: none;
   margin: 0;
   padding: 7px 10px;
   border: 1px solid color-mix(in oklab, var(--warn, #b8730b) 34%, transparent);
@@ -430,6 +431,12 @@ html[data-appearance="dark"] .send.done { color: #14201a; }
 .shutdown-warning strong {
   font-weight: 600;
   color: color-mix(in oklab, var(--warn, #b8730b) 72%, var(--ink));
+}
+
+/* 保存提醒只属于关机：平时收着，点了关机（已开启）才以整行长条展开在格子下方。
+   不用悬停触发（作者嫌跳）；既然点了才出现，整行就不会再被误读成说整页。 */
+#toggle-shutdown[data-armed="1"] + .shutdown-warning {
+  display: block;
 }
 
 /* 关机开着的时候，这张卡就一直是高亮的那一格 */

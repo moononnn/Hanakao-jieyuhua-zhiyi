@@ -211,3 +211,19 @@ test("排队发完不清稿，稿子改了按钮变「重新排队」", async ()
   // 发送成功后不再清空输入框。
   assert.doesNotMatch(script, /queueLastSent = text;[\s\S]{0,120}queueInput\.value = ''/);
 });
+
+test("关机保存提醒只属关机：平时收着、点了关机才整行展开", async () => {
+  const html = await read("ui/suggest-panel.html");
+  const css = await read("ui/assets/suggest-panel.css");
+  const script = await read("ui/assets/suggest-panel.js");
+  // 整行长条（1 / -1）但默认隐藏，点了关机才展开——平时不显示就不会被误读成说整页。
+  assert.match(css, /\.shutdown-warning \{[^}]*grid-column: 1 \/ -1/);
+  assert.match(css, /\.shutdown-warning \{[^}]*display: none/);
+  // 点了关机（armed）才展开，且紧跟关机按钮（相邻兄弟）；不用悬停/聚焦触发（作者嫌跳）。
+  assert.match(css, /#toggle-shutdown\[data-armed="1"\] \+ \.shutdown-warning/);
+  assert.doesNotMatch(css, /#toggle-shutdown:hover \+ \.shutdown-warning/);
+  assert.doesNotMatch(css, /#toggle-shutdown:focus-visible \+ \.shutdown-warning/);
+  // 平时小字顶一句提前量；armed 变化的高度回落走 refreshShutdownState 既有重量。
+  assert.match(html, /Hana 干完才关 · 先存好别的/);
+  assert.doesNotMatch(script, /'mouseenter', 'mouseleave', 'focus', 'blur'/);
+});

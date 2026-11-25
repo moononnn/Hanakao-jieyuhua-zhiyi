@@ -88,11 +88,28 @@
 
 /* ── 新建区 ─────────────────────────────────────────── */
 
+/* 新建区：列表往下滚时，整片高度从 1fr 收到 0fr，过渡由浏览器算，不用 JS 量。 */
 .notes-editor {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  flex: none;
+  opacity: 1;
+  transition: grid-template-rows .3s ease, opacity .18s ease;
+}
+
+.notes-editor-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 收起：整片高度收到 0，同时淡出；minmax(0, 0fr) 是必要的，光写 0fr 会被内容撑回去。 */
+.notes-view.is-collapsed .notes-editor {
+  grid-template-rows: minmax(0, 0fr);
+  opacity: 0;
 }
 
 .notes-input {
@@ -200,6 +217,52 @@
   font-size: 12px;
 }
 
+/* 收起后仍然摆在明显位置的入口：一整条「＋ 记一笔」。 */
+.notes-newbar {
+  flex: none;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transition: height .3s ease, opacity .18s ease, visibility .3s;
+}
+
+.notes-view.is-collapsed .notes-newbar {
+  height: 34px;
+  opacity: 1;
+  visibility: visible;
+}
+
+.notes-newbar-btn {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px dashed var(--notes-line);
+  border-radius: 10px;
+  background: var(--notes-paper);
+  color: var(--notes-accent);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.notes-newbar-btn:hover {
+  border-style: solid;
+  background: var(--notes-accent-soft);
+}
+
+/* 分组筛选：跟搜索挤在同一行，不另占高度。 */
+.notes-group-filter {
+  flex: 0 0 auto;
+  max-width: 104px;
+  padding: 4px 6px;
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
 /* ── 列表：只有它滚 ─────────────────────────────────── */
 
 .notes-list {
@@ -214,6 +277,9 @@
   flex-direction: column;
   gap: 6px;
 }
+
+/* 新建区收起后，把让出来的高度给列表（不然帽子 140 会把它吃掉）。 */
+.notes-view.is-collapsed .notes-list { max-height: 282px; }
 
 .notes-item {
   border: 1px solid var(--notes-line);
@@ -279,6 +345,11 @@
 
 .notes-chip-pin { color: var(--notes-accent); }
 .notes-chip-dirty { color: var(--notes-warn); background: transparent; }
+
+/* 列表里的分组标记是个按钮：点一下只看该组，再点取消。 */
+.notes-chip-group { font: inherit; cursor: pointer; }
+.notes-chip-group:hover { border-color: var(--notes-accent); color: var(--notes-accent); }
+.notes-chip-group[aria-pressed="true"] { border-color: var(--notes-accent); background: var(--notes-accent); color: var(--notes-accent-ink); }
 
 .notes-time { color: var(--notes-muted); font-size: 10.5px; }
 
@@ -475,6 +546,16 @@
   color: var(--notes-muted);
 }
 
+/* 分页提示：列表末尾那一行，不抢眼。 */
+.notes-more {
+  flex: none;
+  margin: 0;
+  padding: 6px 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--notes-muted);
+}
+
 /* ── 焦点与禁用 ─────────────────────────────────────── */
 
 .notes-view :is(button, input, textarea):focus-visible {
@@ -496,4 +577,9 @@
   .notes-item.is-detail { padding: 12px; }
   .notes-detail-head { gap: 4px; }
   .notes-detail-back { padding-inline: 0; border: 0; }
+}
+
+/* 效果留着，动画可以不播。 */
+@media (prefers-reduced-motion: reduce) {
+  .notes-editor, .notes-newbar { transition: none; }
 }

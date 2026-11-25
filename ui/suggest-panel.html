@@ -6,7 +6,595 @@
   <meta name="color-scheme" content="light dark">
   <title>知意</title>
   <link rel="stylesheet" href="./assets/suggest-panel.css">
-  <link rel="stylesheet" href="./assets/quick-notes.css">
+  <!-- 随手记样式内联：面板的 HTML 会更新，但外部 .css 会被缓存（本机实测），所以关键布局跟着 HTML 走。
+       内容与 assets/quick-notes.css 必须一致，有测试盯着；改动只改那个文件，再同步到这里。 -->
+  <style data-notes-layout>
+/* 随手记（输入框面板 → 小工具 → 随手记）· B 版：暖奶油。
+ *
+ * 色板复用 suggest-panel.css 的共享变量，不再单独维护一套。
+ * 整个输入框面板由宿主 data-appearance 统一决定深浅。
+ * 浅色：奶油纸面 + 苔绿点缀；暗色：深苔灰底 + 略亮纸面 + 浅暖字，
+ * 苔绿只在小面积按钮上出现，不铺一大片。
+ *
+ * 布局规矩：只有列表（详情里是正文那一块）滚动，
+ * 页面头、输入框、操作区一直钉在上面，长文本推不走它们。
+ */
+
+/* 别名保留随手记组件边界，取值全部来自面板共用色板。 */
+.notes-view {
+  --notes-ground: var(--bg);
+  --notes-paper: var(--card);
+  --notes-ink: var(--ink);
+  --notes-accent: var(--primary-deep);
+  --notes-accent-ink: var(--primary-ink);
+  --notes-accent-soft: var(--primary-soft);
+  --notes-line: var(--line);
+  --notes-muted: var(--muted);
+  --notes-warn: var(--warn);
+  --notes-shadow: var(--shadow);
+  color-scheme: inherit;
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 短笔记按内容收高；长列表和正文在内部滚，不再撑满宿主面板。 */
+  height: auto;
+  max-height: 360px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--notes-line);
+  border-radius: 14px;
+  background: var(--notes-ground);
+  color: var(--notes-ink);
+}
+
+/* 滚动条也走自己的色板。 */
+.notes-view *::-webkit-scrollbar { width: 8px; height: 8px; }
+.notes-view *::-webkit-scrollbar-track { background: transparent; }
+.notes-view *::-webkit-scrollbar-thumb { background: var(--notes-line); border-radius: 99px; }
+.notes-view *::-webkit-scrollbar-thumb:hover { background: var(--notes-accent); }
+.notes-view * { scrollbar-width: thin; scrollbar-color: var(--notes-line) transparent; }
+
+/* ── 页头 ───────────────────────────────────────────── */
+
+.notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+}
+
+.notes-title {
+  font-family: 'LXGW WenKai', 'KaiTi', '楷体', serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--notes-ink);
+}
+
+/* 两层退路都留着，但都弱化成小字，不跟正文抢眼。 */
+.notes-back,
+.notes-view .reader-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--notes-muted);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.notes-back:hover,
+.notes-view .reader-back:hover {
+  color: var(--notes-accent);
+  background: var(--notes-accent-soft);
+}
+
+.notes-view .reader-back svg { width: 13px; height: 13px; }
+
+/* ── 新建区 ─────────────────────────────────────────── */
+
+/* 新建区：列表往下滚时，整片高度从 1fr 收到 0fr，过渡由浏览器算，不用 JS 量。 */
+.notes-editor {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  flex: none;
+  opacity: 1;
+  transition: grid-template-rows .3s ease, opacity .18s ease;
+}
+
+.notes-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 收起：整片高度收到 0，同时淡出；minmax(0, 0fr) 是必要的，光写 0fr 会被内容撑回去。 */
+.notes-view.is-collapsed .notes-editor {
+  grid-template-rows: minmax(0, 0fr);
+  opacity: 0;
+}
+
+.notes-input {
+  width: 100%;
+  min-height: 68px;
+  max-height: 132px;
+  padding: 7px 9px;
+  border: 1px solid var(--notes-line);
+  border-radius: 10px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.notes-input::placeholder,
+.notes-group::placeholder,
+.notes-edit-group::placeholder,
+.notes-search::placeholder {
+  color: var(--notes-muted);
+  opacity: .9;
+}
+
+.notes-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.notes-group {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.notes-view .notes-save {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  background: var(--notes-accent);
+  color: var(--notes-accent-ink);
+  border-color: var(--notes-accent);
+}
+
+.notes-view #notes-refresh { color: var(--notes-muted); }
+
+.notes-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--notes-muted);
+}
+
+.notes-note[data-tone="warn"] { color: var(--notes-warn); }
+.notes-note[data-tone="ok"] { color: var(--notes-accent); }
+
+/* ── 工具条（页签 + 搜索） ───────────────────────────── */
+
+.notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.notes-tabs {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.notes-tab {
+  padding: 3px 9px;
+  border: 1px solid var(--notes-line);
+  border-radius: 99px;
+  background: var(--notes-paper);
+  color: var(--notes-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notes-tab.active {
+  border-color: var(--notes-accent);
+  background: var(--notes-accent-soft);
+  color: var(--notes-ink);
+}
+
+.notes-search {
+  flex: 1 1 100px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 收起后仍然摆在明显位置的入口：一整条「＋ 记一笔」。 */
+.notes-newbar {
+  flex: none;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transition: height .3s ease, opacity .18s ease, visibility .3s;
+}
+
+.notes-view.is-collapsed .notes-newbar {
+  height: 34px;
+  opacity: 1;
+  visibility: visible;
+}
+
+.notes-newbar-btn {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px dashed var(--notes-line);
+  border-radius: 10px;
+  background: var(--notes-paper);
+  color: var(--notes-accent);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.notes-newbar-btn:hover {
+  border-style: solid;
+  background: var(--notes-accent-soft);
+}
+
+/* 分组筛选：跟搜索挤在同一行，不另占高度。 */
+.notes-group-filter {
+  flex: 0 0 auto;
+  max-width: 104px;
+  padding: 4px 6px;
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ── 列表：只有它滚 ─────────────────────────────────── */
+
+.notes-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 新建区收起后，把让出来的高度给列表（不然帽子 140 会把它吃掉）。 */
+.notes-view.is-collapsed .notes-list { max-height: 282px; }
+
+.notes-item {
+  border: 1px solid var(--notes-line);
+  border-radius: 10px;
+  background: var(--notes-paper);
+  padding: 7px 9px;
+  box-shadow: var(--notes-shadow);
+}
+
+.notes-item[data-pinned="true"] {
+  border-color: var(--notes-accent);
+}
+
+.notes-item-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.notes-item-open:hover { color: var(--notes-accent); }
+
+.notes-item.is-done .notes-item-open {
+  text-decoration: line-through;
+  color: var(--notes-muted);
+}
+
+/* 列表行的小字：标签、时间、置顶、未保存。 */
+.notes-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--notes-muted);
+}
+
+.notes-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--notes-line);
+  border-radius: 99px;
+  background: var(--notes-accent-soft);
+  color: var(--notes-ink);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-chip-pin { color: var(--notes-accent); }
+.notes-chip-dirty { color: var(--notes-warn); background: transparent; }
+
+/* 列表里的分组标记是个按钮：点一下只看该组，再点取消。 */
+.notes-chip-group { font: inherit; cursor: pointer; }
+.notes-chip-group:hover { border-color: var(--notes-accent); color: var(--notes-accent); }
+.notes-chip-group[aria-pressed="true"] { border-color: var(--notes-accent); background: var(--notes-accent); color: var(--notes-accent-ink); }
+
+.notes-time { color: var(--notes-muted); font-size: 10.5px; }
+
+/* ── 详情 ───────────────────────────────────────────── */
+
+.notes-item.is-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.notes-list:has(> .is-detail) { overflow: hidden; max-height: none; }
+
+.notes-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.notes-detail-back {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--notes-line);
+  border-radius: 7px;
+  background: none;
+  color: var(--notes-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.notes-detail-back:hover { color: var(--notes-accent); border-color: var(--notes-accent); }
+
+.notes-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 正文：默认阅读，保留原换行和空格，长文只在这一块里滚。 */
+.notes-body {
+  flex: 0 1 auto;
+  min-height: 28px;
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--notes-ink);
+  font-family: 'LXGW WenKai', 'KaiTi', '楷体', serif;
+  font-size: 15px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes-edit-text {
+  display: block;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 60px;
+  max-height: 120px;
+  padding: 7px 9px;
+  border: 1px solid var(--notes-line);
+  border-radius: 10px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  line-height: 1.7;
+  resize: none;
+}
+
+.notes-edit-group {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  background: var(--notes-paper);
+  color: var(--notes-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ── 按钮 ───────────────────────────────────────────── */
+
+.notes-btn {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--notes-ink);
+  background: var(--notes-paper);
+  border: 1px solid var(--notes-line);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.notes-btn:hover:not(:disabled) {
+  border-color: var(--notes-accent);
+  color: var(--notes-accent);
+}
+
+.notes-btn:disabled { opacity: .5; cursor: default; }
+
+.notes-btn-primary {
+  color: var(--notes-accent-ink);
+  background: var(--notes-accent);
+  border-color: var(--notes-accent);
+  font-weight: 600;
+}
+
+.notes-btn-primary:hover:not(:disabled) {
+  color: var(--notes-accent-ink);
+  filter: brightness(1.06);
+}
+
+/* 次级轻量操作：纯文字，hover 才有底。 */
+.notes-link {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--notes-muted);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 2px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.notes-link:hover:not(:disabled) { color: var(--notes-accent); background: var(--notes-accent-soft); }
+.notes-link:disabled { opacity: .5; cursor: default; }
+
+/* 主操作一行：发送/全选在左，标记已处理靠右；按钮不被长文本挤变形。 */
+.notes-detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--notes-line);
+}
+
+.notes-detail-actions .notes-btn-done { margin-left: auto; }
+
+.notes-secondary-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: none;
+}
+
+.notes-edit-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex: none;
+}
+
+.notes-item-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--notes-muted);
+  overflow-wrap: anywhere;
+}
+
+.notes-item-note:empty, .notes-note:empty { display: none; }
+
+.notes-empty {
+  flex: none;
+  margin: 0;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--notes-muted);
+}
+
+/* 分页提示：列表末尾那一行，不抢眼。 */
+.notes-more {
+  flex: none;
+  margin: 0;
+  padding: 6px 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--notes-muted);
+}
+
+/* ── 焦点与禁用 ─────────────────────────────────────── */
+
+.notes-view :is(button, input, textarea):focus-visible {
+  outline: 2px solid var(--notes-accent);
+  outline-offset: 2px;
+}
+
+.notes-view :is(input, textarea):disabled {
+  opacity: .6;
+  cursor: default;
+}
+
+/* ── 窄屏 ───────────────────────────────────────────── */
+
+@media (max-width: 360px) {
+  .notes-toolbar { gap: 6px; }
+  .notes-btn, .notes-link { padding-inline: 7px; font-size: 11px; }
+  .notes-detail-actions { gap: 4px; }
+  .notes-item.is-detail { padding: 12px; }
+  .notes-detail-head { gap: 4px; }
+  .notes-detail-back { padding-inline: 0; border: 0; }
+}
+
+/* 效果留着，动画可以不播。 */
+@media (prefers-reduced-motion: reduce) {
+  .notes-editor, .notes-newbar { transition: none; }
+}
+  </style>
   <script src="./assets/theme-follow.js"></script>
 </head>
 <body>
@@ -119,15 +707,15 @@
           </span>
           <span class="tool-tile-body">
             <span class="tool-tile-label" id="shutdown-label">关机</span>
-            <span class="tool-tile-hint" id="shutdown-hint">Hana 干完才关</span>
+            <span class="tool-tile-hint" id="shutdown-hint">Hana 干完才关 · 先存好别的</span>
           </span>
         </button>
 
-        <!-- 保存提醒单独占一行，不藏在按钮的小字里。
-             这个功能只保证「Hana 干完」和「到点关机」两件事，
-             别的内容有没有存盘它管不了——那就得在人动手之前把这句话说清楚。 -->
+        <!-- 保存提醒只属于关机：平时收着，点了关机（已开启）才以整行长条展开在格子下方。
+             平时不显示，就不会再压在「随手记＋关机」底下被误读成说整页；也不用悬停触发（太跳）。
+             这个功能只保证「Hana 干完」和「到点关机」两件事，别的内容有没有存盘它管不了。 -->
         <p class="shutdown-warning" role="note">
-          <strong>开之前请先存好别的：</strong>它只等 Hana 的窗口和任务跑完，不会替你保存 Word、PS、浏览器里没提交的内容。
+          <strong>关机前请先存好别的：</strong>它只等 Hana 的窗口和任务跑完，不会替你保存 Word、PS、浏览器里没提交的内容。
         </p>
       </div>
 
@@ -264,15 +852,22 @@
         </div>
 
         <div class="notes-editor">
-          <textarea id="notes-input" class="notes-input" rows="3" spellcheck="false" maxlength="20000" placeholder="刚才想到了什么？先记下来…" aria-label="随手记内容"></textarea>
-          <div class="notes-editor-row">
-            <input id="notes-group" class="notes-group" type="text" maxlength="40" placeholder="分组（可不填）" aria-label="随手记分组">
-            <button id="notes-save" class="polish-run notes-save" type="button">记下</button>
+          <div class="notes-editor-body">
+            <textarea id="notes-input" class="notes-input" rows="3" spellcheck="false" maxlength="20000" placeholder="刚才想到了什么？先记下来…" aria-label="随手记内容"></textarea>
+            <div class="notes-editor-row">
+              <input id="notes-group" class="notes-group" type="text" maxlength="40" placeholder="分组（可不填）" aria-label="随手记分组">
+              <button id="notes-save" class="polish-run notes-save" type="button">记下</button>
+            </div>
+            <p class="notes-note">Ctrl+Enter 记下 · 发送到当前对话，伙伴忙时等本轮结束后送入</p>
           </div>
-          <p class="notes-note">Ctrl+Enter 记下 · 发送到当前对话，伙伴忙时等本轮结束后送入</p>
         </div>
         <p id="notes-status" class="notes-note" role="status" aria-live="polite"></p>
         <p id="notes-storage-note" class="notes-note" role="status" aria-live="polite" hidden></p>
+
+        <!-- 列表往下滚时，上面那一片新建区缩成这一条；点它展开。 -->
+        <div id="notes-newbar" class="notes-newbar">
+          <button id="notes-newbar-btn" class="notes-newbar-btn" type="button">＋ 记一笔</button>
+        </div>
 
         <div class="notes-toolbar">
           <div class="notes-tabs" role="group" aria-label="随手记分类">
@@ -280,6 +875,7 @@
             <button id="notes-tab-done" class="notes-tab" type="button" aria-pressed="false">已处理</button>
           </div>
           <input id="notes-search" class="notes-search" type="search" placeholder="找一条…" aria-label="搜索随手记">
+          <select id="notes-group-filter" class="notes-group-filter" aria-label="按分组筛选"></select>
         </div>
 
         <ul id="notes-list" class="notes-list" aria-live="polite"></ul>

@@ -1,6 +1,7 @@
 export const QUICK_NOTES_DRAFT_PREFIX = "zhiyi.quickNotes.draft.";
 export const QUICK_NOTES_TEXT_MAX = 20000;
 export const QUICK_NOTES_GROUP_MAX = 40;
+export const QUICK_NOTES_PAGE_SIZE = 10;
 export const quickNotesDraftKey = (sessionId) => QUICK_NOTES_DRAFT_PREFIX + (sessionId || "none");
 const isLocked = (item) => ["sending", "uncertain"].includes(item?.delivery?.state);
 const sortItems = (items) => [...items].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
@@ -8,6 +9,7 @@ const sortItems = (items) => [...items].sort((a, b) => Number(b.pinned) - Number
 // 控制器不依赖 DOM，测试不会真的发消息或写系统剪贴板。
 export function createQuickNotesController({ api, clipboard, storage, onChange = () => {} } = {}) {
   const state = { items: [], sessionId: "", draft: "", draftGroup: "", edits: {}, tab: "todo", query: "",
+    group: "", limit: QUICK_NOTES_PAGE_SIZE,
     expandedId: "", status: "", statusTone: "plain", storageWarning: storage ? "" : "草稿暂时只能留在内存，关闭页面前请记下或复制。",
     loading: false, saving: false, pending: new Set() };
   const memoryDrafts = new Map();
@@ -61,6 +63,9 @@ export function createQuickNotesController({ api, clipboard, storage, onChange =
       const payload = await api.request("/quick-notes");
       if (payload?.ok !== true) throw new Error(payload?.error || "随手记暂时读不出来，原稿还留着。");
       state.items = sortItems(payload.items);
+      // 重新打开面板时列表回到第一页；分组筛选用完就丢，跟滚动一样不存。
+      state.limit = QUICK_NOTES_PAGE_SIZE;
+      if (state.group && !state.items.some((item) => item.group === state.group)) state.group = "";
       if (payload.storageOk === false) status("有状态尚未存好，请稍后重试；不要重复发送。", "warn");
       return payload;
     } catch (error) { status(error.message || "读取失败，请重试。", "warn"); }
@@ -148,13 +153,28 @@ export function createQuickNotesController({ api, clipboard, storage, onChange =
       status("已复制，可以粘贴到输入框修改。", "ok"); notify(); return { ok: true };
     } catch (error) { status(error.message || "复制失败，请重试。", "warn"); notify(); return { ok: false }; }
   }
+  const visibleItems = () => {
+    const query = state.query.toLowerCase().trim();
+    return state.items.filter((item) => item.done === (state.tab === "done")
+      && (!state.group || item.group === state.group)
+      && `${item.text}\n${item.group}`.toLowerCase().includes(query));
+  };
+  const hasMore = () => visibleItems().length > state.limit;
   return { state, load, save, copy, action, setSession, dirty, editDraft, mergeItem, notify,
     setDraft(text) { state.draft = text; writeDraft(); },
     setDraftGroup(group) { state.draftGroup = group; writeDraft(); },
     discardEdit(id) { delete state.edits[id]; writeDraft(); notify(); },
-    setTab(tab) { state.tab = tab; notify(); }, setQuery(query) { state.query = query; notify(); },
+    setTab(tab) { state.tab = tab; state.limit = QUICK_NOTES_PAGE_SIZE; notify(); },
+    setQuery(query) { state.query = query; state.limit = QUICK_NOTES_PAGE_SIZE; notify(); },
+    setGroup(group) { state.group = group; state.limit = QUICK_NOTES_PAGE_SIZE; notify(); },
     setExpanded(id) { state.expandedId = state.expandedId === id ? "" : id; notify(); },
-    visibleItems() { const query = state.query.toLowerCase().trim(); return state.items.filter((item) => item.done === (state.tab === "done") && `${item.text}\n${item.group}`.toLowerCase().includes(query)); },
+    visibleItems, groups() {
+      const seen = [];
+      for (const item of state.items) if (item.group && !seen.includes(item.group)) seen.push(item.group);
+      return seen;
+    },
+    pagedItems() { return visibleItems().slice(0, state.limit); }, hasMore,
+    more() { if (!hasMore()) return; state.limit += QUICK_NOTES_PAGE_SIZE; notify(); },
   };
 }
 
@@ -173,9 +193,17 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
   const doc = document;
   const byId = (id) => doc.getElementById(`notes-${id}`);
   const view = byId("view"), input = byId("input"), groupInput = byId("group"), save = byId("save"), list = byId("list");
+  const editor = view.querySelector(".notes-editor"), newbar = byId("newbar"), groupFilter = byId("group-filter");
   let storage = null;
   try { storage = globalThis.localStorage; } catch { /* 控制器显示草稿不可持久化提示 */ }
   let visible = false, lastListKey = "", editingId = "";
+  // 滚轮收起新建区：往下滚就收，滚回顶或点「＋ 记一笔」才展开（中途向上抖几下不弹回）。
+  // 只活在这一次面板里，不写存储、不进控制器，打开面板总是能写的样子。
+  let collapsed = false, armed = true, lastTop = 0, ticking = false, collapseTimer = 0, collapseFocus = null;
+  // 点分组标记主动收起后的一小段保护期：筛选会把列表夹回顶、补一个 top<=1 的滚动事件，
+  // 不护一下就会刚收起又被「滚回顶展开」弹回。
+  let holdExpandUntil = 0;
+  const COLLAPSE_AFTER = 24;
   const controller = createQuickNotesController({
     api: { async request(path, init = {}) {
       const response = await hana.api.fetch(path, { method: init.method || "GET",
@@ -209,7 +237,17 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     open.setAttribute("aria-expanded", "false");
     li.append(open);
     const meta = doc.createElement("div"); meta.className = "notes-item-meta";
-    if (item.group) meta.append(chip(item.group));
+    if (item.group) {
+      // 分组标记可点：点一下只看该组，再点一下取消（跟「全部分组」下拉同步）。
+      const g = button(item.group, () => {
+        controller.setGroup(controller.state.group === item.group ? "" : item.group);
+        // 点分组意味着想看记录：主动收起新建区，把高度让给列表（保护期躲开筛选夹顶的弹回）。
+        armed = false; holdExpandUntil = Date.now() + 400; setCollapsed(true);
+      }, "notes-chip notes-chip-group");
+      g.title = controller.state.group === item.group ? `取消只看「${item.group}」` : `只看「${item.group}」组`;
+      g.setAttribute("aria-pressed", String(controller.state.group === item.group));
+      meta.append(g);
+    }
     const time = doc.createElement("span"); time.className = "notes-time"; time.textContent = timeLabel(item);
     meta.append(time);
     if (item.pinned) meta.append(chip("置顶", "notes-chip-pin"));
@@ -361,6 +399,57 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     controller.setSession(next);
   }
 
+  function setCollapsed(next) {
+    if (collapsed === next) return;
+    collapsed = next;
+    // 收之前记住光标在哪，展开时还回去：草稿不动，写字的也不被打断。
+    collapseFocus = next && doc.activeElement && editor.contains(doc.activeElement) ? doc.activeElement : null;
+    view.classList.toggle("is-collapsed", next);
+    if (!next && collapseFocus) {
+      const target = collapseFocus;
+      collapseFocus = null;
+      try { target.focus({ preventScroll: true }); } catch { input.focus(); }
+    }
+    // 高度过渡完再报一次面板高度，免得宿主按中间值算高。
+    clearTimeout(collapseTimer);
+    collapseTimer = setTimeout(() => onLayout?.(), 320);
+  }
+  function onListScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const top = list.scrollTop;
+      const dir = top - lastTop;
+      lastTop = top;
+      if (!collapsed && armed && dir > 0 && top > COLLAPSE_AFTER) { armed = false; setCollapsed(true); }
+      // 只有真正滚回顶才展开：收起后列表长高、面板高度跟着变，会补出几个像素的
+      // 向上抖动，若见 dir<0 就展开，会被这点抖动骗得反复弹回，看着像「收不起」。
+      else if (collapsed && top <= 1 && Date.now() > holdExpandUntil) { armed = true; setCollapsed(false); }
+      else if (!collapsed && top <= 1) armed = true;
+      // 分页：快到底就续一页；没有更多时 more() 自己不做声。
+      if (list.scrollTop + list.clientHeight >= list.scrollHeight - 80) controller.more();
+    });
+  }
+  let lastGroupsKey = "";
+  function paintGroupFilter() {
+    const groups = controller.groups();
+    const key = JSON.stringify(groups);
+    if (key !== lastGroupsKey) {
+      lastGroupsKey = key;
+      groupFilter.replaceChildren();
+      const all = doc.createElement("option"); all.value = ""; all.textContent = "全部分组";
+      groupFilter.append(all);
+      for (const name of groups) {
+        const option = doc.createElement("option"); option.value = name; option.textContent = name;
+        groupFilter.append(option);
+      }
+    }
+    // 选项只在分组集合变时重建，但选中值每次都跟：点列表分组标记筛选时下拉也要同步。
+    const current = controller.state.group;
+    groupFilter.value = groups.includes(current) ? current : "";
+  }
+
   function render() {
     const s = controller.state;
     // 草稿状态只在用户操作或会话切换时变化，保存后立即清空可见输入框。
@@ -375,14 +464,21 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     }
     const rows = controller.visibleItems();
     const expanded = rows.find((item) => item.id === s.expandedId);
-    view.querySelector('.notes-editor').hidden = !!expanded;
+    editor.hidden = !!expanded;
+    newbar.hidden = !!expanded;
     view.querySelector('.notes-toolbar').hidden = !!expanded;
+    paintGroupFilter();
     // 只有列表内容真的变了才重建：编辑草稿不进 key，
     // 否则每敲一个字都会换掉 textarea，光标和滚动就没了。
-    const key = JSON.stringify([s.items, s.tab, s.query, s.expandedId, [...s.pending].sort(), s.sessionId, editingId]);
+    const key = JSON.stringify([s.items, s.tab, s.query, s.group, s.limit, s.expandedId, [...s.pending].sort(), s.sessionId, editingId]);
     if (key !== lastListKey) {
       const scrollTop = list.scrollTop;
-      list.replaceChildren(...(expanded ? [buildDetail(expanded)] : rows.map(buildListItem)));
+      list.replaceChildren(...(expanded ? [buildDetail(expanded)] : controller.pagedItems().map(buildListItem)));
+      if (!expanded && controller.hasMore()) {
+        const moreRow = doc.createElement("li"); moreRow.className = "notes-more";
+        moreRow.textContent = `还有 ${rows.length - s.limit} 条，往下滚继续`;
+        list.append(moreRow);
+      }
       list.scrollTop = scrollTop;
       lastListKey = key;
     }
@@ -390,6 +486,16 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
     empty.textContent = s.loading ? "正在读取…" : s.query ? "没找到，换个词试试。" : s.tab === "done" ? "已处理的想法会收在这里。" : "还没记东西，先把刚才的想法留下。";
     if (visible) onLayout?.();
   }
+  list.addEventListener("scroll", onListScroll, { passive: true });
+  byId("newbar-btn").addEventListener("click", () => {
+    // 点「＋ 记一笔」展开后重新武装：作者要求这时再往下滚仍能收回去，
+    // 不是展开一次就锁死。展开本身只会把列表帽子压回 140、scrollTop 向下夹，
+    // 补出的是 dir<0，不会刚展开就又被收走。
+    armed = true;
+    setCollapsed(false);
+    input.focus();
+  });
+  groupFilter.addEventListener("change", (event) => controller.setGroup(event.target.value));
   input.addEventListener("input", () => controller.setDraft(input.value));
   groupInput.addEventListener("input", () => controller.setDraftGroup(groupInput.value));
   save.addEventListener("click", () => void controller.save());
@@ -402,6 +508,8 @@ export function initQuickNotes({ hana, getSessionId, onLayout } = {}) {
   return { controller,
     show() {
       visible = true; view.hidden = false;
+      // 收起状态不记住：每次打开都是能写的样子。
+      collapsed = false; armed = true; view.classList.remove("is-collapsed");
       applySession(getSessionId());
       const expandedId = controller.state.expandedId;
       editingId = expandedId && controller.state.edits[expandedId] ? expandedId : "";
