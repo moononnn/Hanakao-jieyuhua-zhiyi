@@ -1,5 +1,16 @@
 # 测试
 
+## 2026-11-25 发布 0.5.0（随手记翻记录、Ask 到期反馈、关机提醒归属）
+
+- 发布材料：manifest 0.5.0；CHANGELOG 0.5.0 条目；发行说明 `release-notes-v0.5.0.md`（SHA 已回写）；PENDING_CHANGES 清空待发、头部更新为上次发布 0.5.0。
+- 隐私门禁：拦下 0.4.1 测试记录里一处本机路径样例，改中性描述后过（单独提交）；包内红线词表 0 命中，邮箱 4 处全在豁免登记行。
+- 正式 verify：`node --test` 923 项 921 过 0 失败 2 既有跳过；`node tests/python-tests.mjs` 126 项过 1 既有跳过。release-tests 副本 921 过。
+- 本地官方 pack：128 文件；ZIP SHA-256 `86f929f20fd9266cdb27f78ac58140198199b4a241624b10a9ac9379cd866a9b`；entry SHA-256 `9ef40d387ff1f410c8cb9c5a2fe3f7ad47ffcab51c1a9df9533830a44aab0c36`。bind-commit 绑定提交 `1c2d3a1`。
+- 独立审包（hana-artisan，independent=true）：pass；自解 ZIP 与 unpacked/stage 三树 128 文件逐哈希 0 差异；配方三件套与 HEAD 逐字节一致、相对 v0.4.1 仅 Ask 到期反馈（授权 2026-11-12、2026-11-25 复核）；非阻断残留与登记一致。
+- CI：moononnn/Hanakao-jieyuhua-zhiyi run 45539200559（commit 1c2d3a1）全绿。Release v0.5.0 附 ZIP+entry；回下载实算双指纹与包一致。
+- 市场：复用 PR #174（head 分支 register/jiegehua-zhiyi-v0.2.1），approvals.json 登记 v0.5.0 + 新 sha + 当前 README；head `2b038e3` 的 validate-pr（run 45539744299 / job 138955066160）success，evidence -MarketPr 复核 pass。**PR 未合并、未上架，待市场审核。**
+- 未验证：安装/升级实机流程、收起过渡与窄屏观感、几百条滚动性能、Ask 十分钟服务端到期本轮未重跑（依赖作者先前实机）。
+
 ## 2026-11-25 关机提醒恢复整行长条（0.4.1-dev.11，未发布）
 
 - 作者看 dev.10 实机（右列半宽、左下留白）后拍板：改回整行长条，反正点了关机才出现。`.shutdown-warning` `grid-column: 2 → 1 / -1`；默认隐藏与仅 armed 展开不变。
