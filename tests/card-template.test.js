@@ -6,12 +6,16 @@ import { Script } from 'node:vm';
 const source = new URL('../recipes/zhiyi-ask/assets/ask.card.html', import.meta.url);
 
 class FakeElement {
-  constructor() { this.children = []; this.listeners = new Map(); this.attributes = new Map(); this.disabled = false; this.hidden = false; this.textContent = ''; this.value = ''; }
+  constructor() { this.children = []; this.listeners = new Map(); this.attributes = new Map(); this.disabled = false; this.hidden = false; this.className = ''; this.textContent = ''; this.value = ''; }
   append(...items) { this.children.push(...items); }
   addEventListener(name, handler) { this.listeners.set(name, handler); }
   setAttribute(name, value) { this.attributes.set(name, value); }
   click() { if (!this.disabled) this.listeners.get('click')?.({ target: this }); }
 }
+
+// 卡片现在自带一块每秒一行表（倒计时 / 过期提示）。测试里换成空壳，
+// 别让真的定时器把测试进程拖住；要验过期的用例自己把回调取出来手动拨。
+const cardGlobals = (extra = {}) => ({ Date, Set, Number, Array, String, Promise, setInterval: () => 0, clearInterval: () => {}, ...extra });
 
 test('recipe template is self-contained, has a readable snapshot and valid client JavaScript', async () => {
   const html = await readFile(source, 'utf8');
@@ -43,6 +47,19 @@ test('recipe template is self-contained, has a readable snapshot and valid clien
   assert.match(scripts[0][1], /aria-checked/);
   assert.match(scripts[0][1], /selected\.size<minSelections/);
   assert.match(scripts[0][1], /confirm\.addEventListener\('click'/);
+  // 2026-11-12 实机：到期后不点任何东西就没人刷新，确认键自己变成灰的，
+  // 状态栏还写着「选好后点确认发送」。卡片必须自己走表、到点自己换脸。
+  assert.match(scripts[0][1], /setInterval\(tick,1000\)/, '必须自己走表，不能等用户点一下才刷新');
+  assert.match(scripts[0][1], /function stopClock\(\)/, '停表要做成单独一票，离开/过期/已发都收得掉');
+  assert.match(scripts[0][1], /deadline\.className='deadline expired'/, '过期要在卡面上留一块看得见的提示');
+  assert.match(scripts[0][1], /card\.emit\('zhiyi_ask_expired'/, '过期后只能请求重新发一道，不能把旧卡当答案发出去');
+  assert.match(scripts[0][1], /addEventListener\('pagehide',stopClock\)/, '卡片卸下时要收掉定时器');
+});
+
+test('recipe template tells the reader how long the card stays answerable', async () => {
+  const html = await readFile(source, 'utf8');
+  assert.match(html, /id="deadline"/);
+  assert.match(html, /class="deadline expired"|deadline\.urgent/);
 });
 
 test('restored recipe keeps the original flat layout instead of hiding options in a height-limited region', async () => {
@@ -81,7 +98,7 @@ for (const wrapped of [false, true]) test(`multi-select recipe waits for confirm
       emit: async (...args) => { emitted = args; return { ok: true }; },
     },
   };
-  new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise });
+  new Script(script).runInNewContext({ document, window, ...cardGlobals() });
   await new Promise((resolve) => setImmediate(resolve));
   const buttons = elements.get('options').children;
   buttons[0].click();
@@ -115,7 +132,7 @@ async function answerCard(selectionMode, { fail = false, minSelections = 1 } = {
     state: { get: async () => ({ ok: true, result: { value: false } }), set: async (key, value) => { reports.push({ key, value }); return { ok: true }; } },
     emit: async (...args) => { emitted.push(args); return { ok: !fail }; },
   } };
-  new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise });
+  new Script(script).runInNewContext({ document, window, ...cardGlobals() });
   await new Promise((resolve) => setImmediate(resolve));
   return { elements, emitted, reports, buttons: elements.get('options').children,
     async hostUpdate(data) { hostData = data; changeHandler?.(); await new Promise((resolve) => setImmediate(resolve)); },
@@ -215,7 +232,7 @@ test('card pulls host data again when it starts before the binding data arrives'
     state: { get: async () => ({ ok: true, result: { value: false } }), set: async () => ({ ok: true }) },
     emit: async (...args) => { emitted.push(args); return { ok: true }; },
   } };
-  new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise, setInterval, clearInterval });
+  new Script(script).runInNewContext({ document, window, ...cardGlobals() });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(elements.get('options').children[0].disabled, true, '还没绑定时选项不能点');
 
@@ -248,7 +265,7 @@ test('card accepts a stringified ready flag from host data', async () => {
     state: { get: async () => ({ ok: true, result: { value: false } }), set: async () => ({ ok: true }) },
     emit: async () => ({ ok: true }),
   } };
-  new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise, setInterval, clearInterval });
+  new Script(script).runInNewContext({ document, window, ...cardGlobals() });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(elements.get('options').children[0].disabled, false, '字符串 "true" 也必须解锁');
   assert.match(elements.get('status').textContent, /选好后点/);
@@ -275,7 +292,83 @@ test('card unwraps options wrapped in several item layers', async () => {
     state: { get: async () => ({ ok: true, result: { value: false } }), set: async () => ({ ok: true }) },
     emit: async () => ({ ok: true }),
   } };
-  new Script(script).runInNewContext({ document, window, Date, Set, Number, Array, String, Promise, setInterval, clearInterval });
+  new Script(script).runInNewContext({ document, window, ...cardGlobals() });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(elements.get('options').children.length, 2, '多层 item 包裹也要拆出两个选项');
+});
+
+// 2026-11-12 事故：有效期到了，卡片没有定时器，界面停在「选好后点确认发送」，
+// 用户点选项只等来一颗灰按钮，看着像卡坏了。这组用例锁三件事：到点自己换脸、
+// 换脸后一个字都交不出去、过期后唯一能发的是「请重新发一道」。
+async function expiryCard({ expiresIn, emit = true }) {
+  const html = await readFile(source, 'utf8');
+  const script = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
+    .find(([tag]) => !tag.includes('type="application/json"'))[1];
+  const clock = { now: Date.now() };
+  class FakeDate extends Date { static now() { return clock.now; } }
+  const state = { askId: 'expiring', title: '还删吗', question: '要删掉这几条消息吗？', selectionMode: 'single',
+    minSelections: 1, maxSelections: 1, expiresAt: clock.now + expiresIn, options: [{ label: '删掉' }, { label: '留着' }] };
+  const elements = new Map(), emitted = [];
+  let tick = null, started = 0, stopped = 0;
+  const document = {
+    querySelector: () => ({ textContent: JSON.stringify(state) }),
+    getElementById: (id) => { if (!elements.has(id)) elements.set(id, new FakeElement()); return elements.get(id); },
+    createElement: () => new FakeElement(),
+  };
+  const hostData = { askId: 'expiring', ready: true, homeSessionId: 'session-1' };
+  const window = { card: {
+    capabilities: async () => ({ ok: true, result: { capabilities: { emit: emit ? 'available' : 'requires_host' } } }),
+    data: { get: async () => ({ ok: true, result: { data: hostData } }), onChange() {} },
+    state: { get: async () => ({ ok: true, result: { value: false } }), set: async () => ({ ok: true }) },
+    emit: async (...args) => { emitted.push(args); return { ok: true }; },
+  }, addEventListener() {} };
+  new Script(script).runInNewContext({ document, window, ...cardGlobals({
+    Date: FakeDate,
+    setInterval: (fn) => { tick = fn; return ++started; },
+    clearInterval: () => { stopped++; tick = null; },
+  }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  return { elements, emitted, clock, tick: () => tick, stopped: () => stopped };
+}
+
+test('an expired card explains itself without waiting for a click', async () => {
+  const h = await expiryCard({ expiresIn: -1_000 });
+  assert.equal(h.elements.get('confirm').disabled, true);
+  assert.equal(h.elements.get('options').children[0].disabled, true, '过期后选项不能点');
+  assert.match(h.elements.get('deadline').textContent, /过期/);
+  assert.match(h.elements.get('deadline').className, /expired/);
+  assert.match(h.elements.get('status').textContent, /过期/);
+  assert.equal(h.elements.get('renew').hidden, false, '过期后要给出重新发一道的入口');
+});
+
+test('the countdown flips the card to expired on its own when time runs out', async () => {
+  const h = await expiryCard({ expiresIn: 3_000 });
+  assert.match(h.elements.get('deadline').textContent, /还剩/);
+  assert.equal(h.elements.get('options').children[0].disabled, false, '有效期内选项可点');
+  h.clock.now += 4_000;
+  h.tick()?.();
+  assert.match(h.elements.get('status').textContent, /过期/);
+  assert.match(h.elements.get('deadline').className, /expired/);
+  assert.equal(h.elements.get('confirm').disabled, true);
+  assert.ok(h.stopped() > 0, '到点必须停表，不能空转');
+});
+
+test('an expired card can ask for a fresh one but never resend the old question', async () => {
+  const h = await expiryCard({ expiresIn: -1_000 });
+  h.elements.get('renew').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.emitted.length, 1);
+  assert.equal(h.emitted[0][0], 'zhiyi_ask_expired');
+  assert.equal(h.emitted[0][1].askId, 'expiring');
+  h.elements.get('confirm').click();
+  h.elements.get('decline').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.emitted.length, 1, '过期后旧卡不能再提交任何答案');
+  assert.match(h.elements.get('deadline').textContent, /重新发一道/);
+});
+
+test('an expired card without emit support still explains itself', async () => {
+  const h = await expiryCard({ expiresIn: -1_000, emit: false });
+  assert.equal(h.elements.get('renew').hidden, true, '回传不了就不摆按钮');
+  assert.match(h.elements.get('deadline').textContent, /过期/);
 });

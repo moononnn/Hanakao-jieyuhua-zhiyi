@@ -5,7 +5,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>知意 · 等你决定</title>
 <style>
-:root{--paper:#f8f5ed;--surface:#fffdfa;--ink:#345547;--muted:#687b70;--mint:#e8f2e9;--line:#dbe7dc;--deep:#477a66;font-family:'LXGW WenKai','Microsoft YaHei',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{max-width:600px;margin:auto;padding:34px 20px 20px}.eyebrow{font-size:12px;color:var(--deep);letter-spacing:.07em}h1{margin:6px 0 4px;font-size:20px;line-height:1.45;overflow-wrap:anywhere}.question{font-size:15px;font-weight:600;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}.background{font-size:12.5px;color:var(--muted);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}.recommend{background:var(--mint);border-radius:14px;padding:12px 14px;margin:0 0 12px;font-size:12.5px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.recommend strong{color:var(--deep)}.options{display:grid;gap:10px}button{font:inherit;cursor:pointer}.option{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;padding:14px 16px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink)}.option:hover,.option:focus-visible{border-color:var(--deep);outline:none}.option[aria-checked="true"]{border-color:var(--deep);border-width:2px;background:var(--mint);box-shadow:inset 3px 0 0 var(--deep);outline:none}.option b{display:block;font-size:15px;line-height:1.5;overflow-wrap:anywhere}.option small{display:block;margin-top:5px;color:var(--muted);font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}.badge{flex:none;color:var(--deep);font-size:11px}.choice-mark{flex:none;min-width:18px;text-align:center;color:var(--deep);font-weight:700}.selection-hint{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.5}.write{display:block;margin-top:16px;color:var(--deep);font-size:13px;font-weight:600}.write span{color:var(--muted);font-weight:400}textarea{display:block;margin:7px 0;width:100%;min-height:62px;resize:vertical;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--ink);font:inherit;font-size:13px}.actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap}.actions button{border:0;border-radius:11px;padding:10px 15px;color:var(--deep);background:var(--mint);font-size:13px}.actions .confirm{background:var(--deep);color:#fff;font-weight:600}.actions .decline{background:transparent;color:var(--muted)}button:disabled,textarea:disabled{cursor:not-allowed;opacity:.55}.status{font-size:12px;color:var(--muted);margin:12px 0 0;min-height:16px}*[hidden]{display:none!important}*{scrollbar-width:thin;scrollbar-color:#c9dfd3 transparent}
+:root{--paper:#f8f5ed;--surface:#fffdfa;--ink:#345547;--muted:#687b70;--mint:#e8f2e9;--line:#dbe7dc;--deep:#477a66;font-family:'LXGW WenKai','Microsoft YaHei',sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{max-width:600px;margin:auto;padding:34px 20px 20px}.eyebrow{font-size:12px;color:var(--deep);letter-spacing:.07em}h1{margin:6px 0 4px;font-size:20px;line-height:1.45;overflow-wrap:anywhere}.question{font-size:15px;font-weight:600;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}.background{font-size:12.5px;color:var(--muted);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}.recommend{background:var(--mint);border-radius:14px;padding:12px 14px;margin:0 0 12px;font-size:12.5px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.recommend strong{color:var(--deep)}.options{display:grid;gap:10px}button{font:inherit;cursor:pointer}.option{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;padding:14px 16px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink)}.option:hover,.option:focus-visible{border-color:var(--deep);outline:none}.option[aria-checked="true"]{border-color:var(--deep);border-width:2px;background:var(--mint);box-shadow:inset 3px 0 0 var(--deep);outline:none}.option b{display:block;font-size:15px;line-height:1.5;overflow-wrap:anywhere}.option small{display:block;margin-top:5px;color:var(--muted);font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}.badge{flex:none;color:var(--deep);font-size:11px}.choice-mark{flex:none;min-width:18px;text-align:center;color:var(--deep);font-weight:700}.selection-hint{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.5}.write{display:block;margin-top:16px;color:var(--deep);font-size:13px;font-weight:600}.write span{color:var(--muted);font-weight:400}textarea{display:block;margin:7px 0;width:100%;min-height:62px;resize:vertical;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--ink);font:inherit;font-size:13px}.actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap}.actions button{border:0;border-radius:11px;padding:10px 15px;color:var(--deep);background:var(--mint);font-size:13px}.actions .confirm{background:var(--deep);color:#fff;font-weight:600}.actions .decline{background:transparent;color:var(--muted)}.actions .renew{background:#fbeee0;color:#8a5215;border:1px solid #eccfa8}.deadline{margin:12px 0 0;font-size:12px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}.deadline.urgent{color:#a4661f;font-weight:600}.deadline.expired{margin-top:14px;padding:10px 12px;border:1px solid #eccfa8;border-radius:12px;background:#fbeee0;color:#8a5215;font-size:12.5px;font-weight:600;line-height:1.65}button:disabled,textarea:disabled{cursor:not-allowed;opacity:.55}.status{font-size:12px;color:var(--muted);margin:12px 0 0;min-height:16px}*[hidden]{display:none!important}*{scrollbar-width:thin;scrollbar-color:#c9dfd3 transparent}
 </style>
 </head>
 <body>
@@ -19,7 +19,8 @@
   <p class="selection-hint" id="selection-hint" hidden aria-live="polite"></p>
   <label class="write" for="note">补充说明 <span>可不填</span></label>
   <textarea id="note" maxlength="500" placeholder="还想补充什么？" disabled></textarea>
-  <div class="actions"><button type="button" class="confirm" id="confirm" disabled>确认发送</button><button type="button" class="decline" id="decline" disabled>暂不决定</button></div>
+  <p class="deadline" id="deadline" hidden></p>
+  <div class="actions"><button type="button" class="renew" id="renew" hidden>请重新发一道</button><button type="button" class="confirm" id="confirm" disabled>确认发送</button><button type="button" class="decline" id="decline" disabled>暂不决定</button></div>
   <p class="status" id="status" role="status" aria-live="polite">等待与原对话绑定…</p>
 </main>
 <script type="application/json" data-card-manifest>{"spec":"1.0","display":{"preferredWidthPx":600,"styleProfile":"custom"},"toolBindings":{}}</script>
@@ -36,6 +37,8 @@
   // 用严格布尔比较判，卡片永远停在「正在与原对话绑定」。认两种写法。
   const yes=v=>v===true||v==='true'||v===1||v==='1';
   const expiresAt=num(snapshot.expiresAt);
+  // 没有 state 时模板自带的 expiresAt 是 0，那不代表「1970 年过期」，当无期限信息处理。
+  const hasLimit=Number.isFinite(expiresAt)&&expiresAt>0;
   // options 偶尔被包成 {item:[...]}（调用方传错形状），别让整张卡没选项。
   // 宿主还会把数组再包一层，{item:{item:[...]}} 也得认出来。
   function unwrapOptions(value){
@@ -85,8 +88,35 @@
   let home='',ready=false,sent=false,transferred=false;
   function renderStatus(status,error=''){try{void Promise.resolve(window.card?.state.set('zhiyiRender',{askId:snapshot.askId,status,error})).catch(()=>{})}catch{}}
   const status=$('status'),note=$('note'),confirm=$('confirm'),selectionHint=$('selection-hint');
+  const deadline=$('deadline'),renew=$('renew');
   const controls=[...buttons,confirm,$('decline'),note];
-  function isUsable(){return ready&&!sent&&!transferred&&Number.isFinite(expiresAt)&&Date.now()<expiresAt}
+  // 2026-11-12 实机：这张卡原先没有定时器，过期后只有用户点一下选项，`updateSelection`
+  // 才会顺带把确认键置灰；状态栏还停在「选好后点确认发送」。看到的就是一颗灰按钮加一句
+  // 过期前的提示，像卡坏了。现在每秒自己走一次：到点就停表、置灰、把原因写明白，
+  // 不需要用户先点一下才知道。
+  const pad=n=>String(n).padStart(2,'0');
+  const clockText=ts=>{const d=new Date(ts);return `${pad(d.getHours())}:${pad(d.getMinutes())}`};
+  const leftText=left=>{const total=Math.max(0,Math.ceil(left/1000));return total>=60?`${Math.floor(total/60)} 分 ${total%60} 秒`:`${total} 秒`};
+  let clockTimer=0,emitOk=false,renewPressed=false;
+  function stopClock(){if(clockTimer){clearInterval(clockTimer);clockTimer=0}}
+  function paintDeadline(){
+    if(!deadline)return;
+    if(sent||transferred){deadline.hidden=true;return}
+    const left=hasLimit?expiresAt-Date.now():NaN;
+    deadline.hidden=false;
+    if(!(left>0)){
+      deadline.className='deadline expired';
+      const when=hasLimit?`在 ${clockText(expiresAt)} 过期`:'没有带有效期';
+      deadline.textContent=renewPressed
+        ?`这道题${when}，已经停用；已请伙伴重新发一道。`
+        :`这道题${when}，服务端不再接受这张卡的答案，需要重新发问。`;
+      return;
+    }
+    deadline.className=left<=60_000?'deadline urgent':'deadline';
+    deadline.textContent=`有效期到 ${clockText(expiresAt)}，还剩 ${leftText(left)}`;
+  }
+  function tick(){paintDeadline();if(!hasLimit||Date.now()>=expiresAt){stopClock();refresh()}}
+  function isUsable(){return ready&&!sent&&!transferred&&hasLimit&&Date.now()<expiresAt}
   function updateSelection(){
     buttons.forEach((button,index)=>{
       const checked=selected.has(index);
@@ -103,13 +133,21 @@
     confirm.disabled=!isUsable()||(selected.size?selected.size<minSelections:!note.value.trim());
   }
   function refresh(){
-    const expired=!Number.isFinite(expiresAt)||Date.now()>=expiresAt;
+    const expired=!hasLimit||Date.now()>=expiresAt;
     const usable=ready&&!sent&&!transferred&&!expired;
     controls.forEach(item=>item.disabled=!usable);
     updateSelection();
+    paintDeadline();
+    if(sent||transferred||expired)stopClock();
+    else if(!clockTimer)clockTimer=setInterval(tick,1000);
+    const canRenew=expired&&!sent&&!transferred&&emitOk&&!renewPressed&&!!snapshot.askId;
+    if(renew){renew.hidden=!canRenew;renew.disabled=!canRenew}
     if(transferred)status.textContent='已转入原生询问，请在输入框上方作答。';
-    else if(expired)status.textContent='这道题已过期，请在对话里重新发问。';
     else if(sent)status.textContent='已送达原对话，等伙伴接话。';
+    else if(renewPressed)status.textContent='已请伙伴重新发一道；这张卡不再接受作答。';
+    else if(expired)status.textContent=hasLimit
+      ?'这道题已过期，这张卡不能再提交；请在对话里说一句「重新发一道」。'
+      :'这张卡没有带有效期信息，不能作答；请在对话里重新发问。';
     else if(!ready)status.textContent='正在与原对话绑定，暂不能作答。';
     else status.textContent='选好后点「确认发送」；关闭卡片不算作答。';
   }
@@ -130,6 +168,16 @@
     else void send('custom',note.value.trim());
   });
   note.addEventListener('input',updateSelection);
+  // 过期后唯一的出口：把「想再来一道」送到对话里。它只是一次请求，不是选择，
+  // 也不能让旧卡复活；新卡由伙伴重新调 Ask 生成（新 askId、新有效期）。
+  renew?.addEventListener('click',()=>{
+    if(renewPressed||isUsable())return;
+    renewPressed=true;refresh();
+    const payload={askId:snapshot.askId,title:heading,question:questionText};
+    if(hasLimit)payload.expiredAt=expiresAt;
+    const finish=fail=>{if(fail)renewPressed=false;refresh();status.textContent=fail?'没送出去；请直接在对话里说一句「重新发一道」。':'已请伙伴重新发一道；这张卡不再接受作答。'};
+    Promise.resolve(window.card.emit('zhiyi_ask_expired',payload,home)).then(result=>finish(!(result&&result.ok===true)),()=>finish(true));
+  });
   $('decline').addEventListener('click',()=>void send('rejected',''));
   function applyData(data){
     if(data&&yes(data.fallback)&&data.askId===snapshot.askId){transferred=true;ready=false;renderStatus('fallback');refresh();return}
@@ -153,10 +201,12 @@
   // 伙伴那边接不接得住是另一回事。写进 state，让伙伴能查这张卡到底走到哪一步。
   async function markSent(){try{await window.card.state.set('zhiyiAnswerSent',true)}catch{}}
   refresh();
-  if(!window.card){status.textContent='这张卡需要 Hana 才能送回选择。';return}
+  if(!window.card){stopClock();if(deadline)deadline.hidden=true;status.textContent='这张卡需要 Hana 才能送回选择。';return}
+  if(typeof window.addEventListener==='function'){window.addEventListener('pagehide',stopClock);window.addEventListener('beforeunload',stopClock)}
   renderStatus('awaiting_binding');
   Promise.all([window.card.capabilities(),window.card.data.get(),window.card.state.get('zhiyiAnswerSent')]).then(([caps,doc,previous])=>{
-    if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){renderStatus('failed','host_unavailable');status.textContent='卡片回传不可用；请在对话里说明。';return}
+    if(caps?.ok!==true||caps.result?.capabilities?.emit!=='available'||doc?.ok!==true){renderStatus('failed','host_unavailable');stopClock();if(deadline)deadline.hidden=true;status.textContent='卡片回传不可用；请在对话里说明。';return}
+    emitOk=true;
     sent=previous?.ok===true&&previous.result?.value===true;
     applyData(doc.result?.data);
     window.card.data.onChange(()=>{void pullData()});
