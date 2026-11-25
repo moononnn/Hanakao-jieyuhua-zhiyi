@@ -73,7 +73,7 @@
 
 ## 2026-11-22 发布 0.4.1（整理版先给结论、子代理不再附整理）
 
-- 发布材料：`manifest.json` 0.4.1；`CHANGELOG.md` 新增 0.4.1 条目；`PENDING_CHANGES.md` 清空待发并把头部更新为上次发布 0.4.1；发行说明 `release-notes-v0.4.1.md`。另修一处会被隐私红线拦下的测试夹具：`tests/reply-reading.test.js` 里两条子代理路径样例从 `C:\Users\me\...` 改成 `D:\hana-home\...`，断言语义不变。
+- 发布材料：`manifest.json` 0.4.1；`CHANGELOG.md` 新增 0.4.1 条目；`PENDING_CHANGES.md` 清空待发并把头部更新为上次发布 0.4.1；发行说明 `release-notes-v0.4.1.md`。另修一处会被隐私红线拦下的测试夹具：`tests/reply-reading.test.js` 里两条子代理路径样例从带用户目录的绝对路径改成中性 home 路径样例，断言语义不变。
 - 发布边界：工作树有七项长期未提交的本地改动（`PENDING_CHANGES.md`、`PUBLISHING.md`、`recipes/zhiyi-ask/SKILL.md`、`recipes/zhiyi-ask/assets/ask.card.html`、`skills/zhiyi-ask-handoff/SKILL.md`、`tests/card-template.test.js`、`ui/assets/input-icon-pink.png`），本轮未获合并或改写授权。按 0.4.0 的做法先用 `git stash` 暂存（`hold-7-local-files-for-release-0.4.1`），发布完成后按发布前记录的 SHA-256 逐一恢复并核对；包内配方三文件与 HEAD、v0.4.0 tag 逐字节一致，实验改动没进包。
 - 正式入口 preflight 通过，只有既有的「README 没提到的 capability」提醒，无阻断。
 - 正式入口 verify：`node --test` 892 项，890 通过 / 0 失败 / 2 既有跳过；`node tests/python-tests.mjs` 126 项，125 通过 / 1 既有跳过。
