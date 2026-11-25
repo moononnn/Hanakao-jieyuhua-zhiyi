@@ -1,5 +1,67 @@
 # 测试
 
+## 2026-11-25 关机提醒恢复整行长条（0.4.1-dev.11，未发布）
+
+- 作者看 dev.10 实机（右列半宽、左下留白）后拍板：改回整行长条，反正点了关机才出现。`.shutdown-warning` `grid-column: 2 → 1 / -1`；默认隐藏与仅 armed 展开不变。
+- 断言更新：须 `grid-column: 1 / -1` + `display: none` + armed 相邻兄弟展开；不得 hover/focus。用例改名「点了关机才整行展开」。`tests/suggest-panel-ui.test.js` 11/11。全量 923 项 921 过 0 失败 2 既有跳过。
+- 未验证：作者实机整行长条展开观感。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 关机提醒改「点了才展开」（0.4.1-dev.10，未发布）
+
+- 反馈：dev.9 悬停即展开，作者实机嫌「太跳」。改为仅 `[data-armed="1"]`（点了关机开启）才展开警告；再点取消即收。撤掉 hover/focus 选择器与四事件重量监听；armed 变化的高度回落复用 refreshShutdownState 里的 `setPanelHeight(measureToolsPageHeight())`。
+- 断言更新：须 armed 相邻兄弟展开；不得 hover/focus 展开；不得 mouseenter/mouseleave/focus/blur 监听；HTML 仍含浓缩 hint。`tests/suggest-panel-ui.test.js` 11/11。全量 923 项 921 过 0 失败 2 既有跳过。
+- 未验证：作者实机点关机后警告展开/取消收起的观感与高度回落。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 关机保存提醒归属修复（0.4.1-dev.9，未发布）
+
+- 问题：`.shutdown-warning` 原 `grid-column:1/-1` 整行，压在最后一行（随手记＋关机）底下，归属糊。讨论三方案后作者选 3：平时收、交互才展开。
+- 实现：警告改 `grid-column:2`（右列、关机正下方）+ 默认 `display:none`；`#toggle-shutdown:hover / :focus-visible / [data-armed="1"]` 的相邻兄弟选择器展开。关机 hint 浓缩「Hana 干完才关 · 先存好别的」顶提前量；警告 strong 改「关机前请先存好别的：」。关机按钮加 mouseenter/mouseleave/focus/blur → `setPanelHeight(measureToolsPageHeight())`（仅 tools 页 grid 子视图），展开不裁。
+- 新增用例「关机保存提醒只属关机」：CSS 不得整行、须右列+默认隐藏+悬停/armed 展开；HTML 含浓缩 hint；JS 含四事件重量。`tests/suggest-panel-ui.test.js` + `quick-notes-ui.test.js` 32/32。全量 923 项 921 过 0 失败 2 既有跳过。
+- 未验证：作者实机悬停/聚焦关机时警告展开观感、展开后面板高度回落是否顺滑、暗色下警告对比度。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 点分组标记自动收起新建区（0.4.1-dev.8，未发布）
+
+- 需求：作者——点分组标签意味着想看已记录的东西，应直接进入输入框缩小态。chip 点击除 setGroup 外主动 `setCollapsed(true)`。
+- 坑与修：筛选重建列表会把 scrollTop 夹回 0，补一个 `top<=1` 滚动事件，被「滚回顶展开」误判成用户回顶、刚收起又弹回。加 `holdExpandUntil = Date.now()+400` 保护期，展开分支加 `Date.now() > holdExpandUntil` 条件；保护期只影响这次程序性夹顶，之后真滚回顶照常展开。
+- 沙盘 `?group=1&notrans=1`：点「茶话会」→ before10/after4/dropdown茶话会/pressed true/**collapsed true**；再点取消 → after10/dropdown空/collapsed true。截图可见「＋ 记一笔」条 + 高列表。
+- 测试：dev.5 那条展开断言同步为含保护期的新判断；新增 chip 收起与保护期断言。`tests/quick-notes-ui.test.js` 21/21。全量 `node --test tests/*.test.js` 922 项 920 过 0 失败 2 既有跳过。
+- 未验证：作者实机手点 chip 的收起观感、筛选后列表不可滚时靠「＋ 记一笔」展开的路径。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 列表分组标记可点筛选（0.4.1-dev.7，未发布）
+
+- 需求：作者截图批注——列表里的分组标记（茶话会/知意 等 chip）只有样子、不能点。改为按钮：点一下只看该组、再点取消，与「全部分组」下拉同步。
+- 实现：`buildListItem` 分组 chip 改 `button(..., "notes-chip notes-chip-group")`，点击 `setGroup(state.group===item.group ? "" : item.group)`，带 `aria-pressed` 与 title。CSS 新增 `.notes-chip-group`（font:inherit/cursor:pointer）、:hover、`[aria-pressed="true"]` 实心选中态；`quick-notes.css` 与 HTML 内联两份逐字相同（同步测试盯）。
+- 顺带修：`paintGroupFilter` 原本「分组集合不变就早退」，选中值不同步，chip 筛选时下拉不跳；改为选项按需重建、选中值每次 render 都跟。
+- 沙盘 `?group=1&notrans=1`：点「茶话会」chip → before10/after4/dropdown茶话会/pressed true；再点 → after10/dropdown空。
+- 新增用例「列表分组标记可点」：源码含 chip 按钮与 setGroup 切换、aria-pressed；CSS 含 cursor:pointer 与选中态。全量 `node --test tests/*.test.js` 922 项 920 过 0 失败 2 既有跳过。
+- 未验证：作者实机重载后手点 chip 的观感与暗色下选中态对比度。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 「记一笔」展开后可再收起（0.4.1-dev.6，未发布）
+
+- 需求：作者验收 dev.5（下滚收起并保持）后提——点「＋ 记一笔」变回大输入框后，再往下滚也应能收回去。旧代码 newbar 点击 `armed=false` 把收起武装关了，展开后下滚不回收。
+- 修法：newbar 点击改 `armed=true`；展开只把列表帽子 282→140、scrollTop 向下夹（dir<0），不会刚展开就误收。新增回归断言：源码不得保留 `armed=false; setCollapsed(false); input.focus();` 旧块。
+- 沙盘：`preview/notes-smoke` 起 http.server，导入真实 quick-notes.js，`requestAnimationFrame` 换定时器以跑无头虚拟时间。`?newbar=1&notrans=1` 四态：expanded(collapsed:false,edH142) → collapsed(true,edH0,newbar34,list247) → after-newbar(false,edH142) → re-collapsed(true,edH0,list247)。点记一笔展开后再下滚确实重新收起。
+- 全量：`node --test tests/*.test.js` 921 项，919 通过 / 0 失败 / 2 既有跳过；`node --check ui/assets/quick-notes.js` 通过。
+- 未验证：作者实机重载后手滚复验「展开→下滚→再收起」手感。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-25 随手记收起「弹回」修复（0.4.1-dev.5，未发布）
+
+- 现象：dev.4 在作者实机「往下滚输入框不收」。先排除缓存：HTML 侧探针报 `inline:true / viewMax:360px`，JS 侧探针报 `viewH:360 / listH:108 / edH:142`，证明 HTML 与 quick-notes.js 都是新文档、几何正确；早先动图里的超高卡片是重载前赖着的旧 iframe。
+- 定位：滚动轨迹探针（30 次采样带方向）看到 `top45→100` 期间 `is-collapsed` 持续为 true，但一旦 `dir` 翻负（哪怕 -3px）立刻弹回展开；收起瞬间几何探针量到输入框真实在缩（edH 142→116、opacity 1→0.64、newbar 0→6）。结论：收起生效，是「见 dir<0 就展开」被布局补出的向上抖动骗到，反复弹回。
+- 修法：`onListScroll` 展开分支由 `collapsed && (dir < 0 || top <= 1)` 改为 `collapsed && top <= 1`，只认真正滚回顶；注释同步。新增回归断言：源码须含 `else if (collapsed && top <= 1)`、不得含 `collapsed && (dir < 0`。
+- 全量：`node --test tests/*.test.js` 921 项，919 通过 / 0 失败 / 2 既有跳过。`node --check` index.js / quick-notes.js / quick-notes-routes.js 通过。
+- 探针纪律：本轮四颗探针（html-diag / notes-diag / scroll-diag / collapse-diag）只往 `sdk.logger.info` 写一行，不落库不改状态；定位后已全部拆除（前端 show() 探针、HTML 内联探针、后端 `_diag` 路由与 GET 日志），源码回到无探针状态。
+- 未验证：作者重载后肉眼复验「下滚收起并保持、滚回顶展开」的观感；窄屏与几百条滚动性能仍沿用 dev.4 的未验状态。仅本机开发存档，未推送、未打 tag、未上市场。
+
+## 2026-11-24 随手记列表让位与翻页（0.4.1-dev.4，未发布）
+
+- 全量：`node --test` 920 项，918 通过 / 0 失败 / 2 既有跳过（跳过项为原有基线）。新增 `tests/quick-notes-ui.test.js` 四项：分组筛选只认当前分组、选项来自已有笔记；分页一次 10 条、快到底才续、没有更多时不再加；换页签/搜字/换组都回第一页；重新读取后回第一页且空分组被放掉；滚轮收起相关源码断言（有 `is-collapsed`、`COLLAPSE_AFTER`、`collapseFocus`，且收起不进草稿/存储）。
+- 真实视图沙盘：本机起 `python -m http.server`（根 = `.hanako`），把真实 `ui/assets/quick-notes.js` 导入一个只含真页面结构的 HTML，假宿主 API 回 25 条；`requestAnimationFrame` 换成定时器以便无头虚拟时间跑。结果：首页 10 条、末尾「还有 15 条」、往下滚后 `is-collapsed` 为真、滚到底自动续到 20 条、回顶部恢复展开、切「茶话会」后 7 条。浏览器控制台未见异常，临时沙盘目录已删。
+- 几何复核（真版截图）：9 条数据下展开时新建区 142px、列表 108px；收起后新建区 0、「＋ 记一笔」34px、列表 216px。第一版漏了 `.notes-view.is-collapsed .notes-editor` 这条规则（只放出了新条、没把上面那片收掉），已补上并复测。
+- 缓存绕行验证：真实页面（内联样式）跑无头：p1 展开 view=360/ed=142/list=108/grid=141.98；p2 收起后 ed=0/list=216/grid=0px，列表仍能滚（scrollTop 已到 415/631）；p3 回顶恢复展开；控制台无错。
+- 已知宿主问题：作者实机重载后出现「HTML/JS 已更新、样式表仍旧」（卡片高度远超 360、列表无帽子、面板滑不动）。换外部文件名无效，最终改为内联进 HTML；若仍复现，则说明宿主连 HTML 一起缓存或另有资源版本口径，需另查。
+- 未验证：真机输入面板里面板高度的回落时机与动画观感；窄屏（320px）工具条换行后的样子；几百条真实条目时的滚动表现；系统减弱动态效果下的实际表现（已写 `prefers-reduced-motion` 关闭过渡，未实机看）。
+
 ## 2026-11-23 整理表达的证据与执行者边界（0.4.1-dev.1）
 
 - 作者阅读 `ayghri/i-have-adhd` 的分析后确认本机优化：先答对应判断/结果，已完成、失败和未验分清；未知或候选原因不改写成确定因果，不硬凑根因或修法；部分成功保留数量和限定范围；保留原文执行者与授权条件，原文交给助手的排查不推给作者，不凭空定行动人；没有未结事项不硬派任务，不猜时间、不追加支线。
